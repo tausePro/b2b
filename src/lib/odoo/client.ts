@@ -1,0 +1,634 @@
+/**
+ * Cliente Odoo 18 - XML-RPC con API Key
+ * Protocolo oficial: xmlrpc/2/common (auth) + xmlrpc/2/object (datos)
+ * Soporta autenticación por API Key (recomendado) o password
+ * Documentación: https://www.odoo.com/documentation/18.0/developer/reference/external_api.html
+ */
+
+export interface OdooConfig {
+  url: string;
+  db: string;
+  username: string;
+  password: string;
+  apiKey?: string;
+}
+
+export interface OdooSession {
+  uid: number;
+  config: OdooConfig;
+}
+
+// =============================================
+// XML-RPC Transport
+// =============================================
+
+function buildXmlRpcCall(method: string, params: unknown[]): string {
+  const encodeValue = (val: unknown): string => {
+    if (val === null || val === undefined) return '<value><boolean>0</boolean></value>';
+    if (typeof val === 'boolean') return `<value><boolean>${val ? 1 : 0}</boolean></value>`;
+    if (typeof val === 'number') {
+      if (Number.isInteger(val)) return `<value><int>${val}</int></value>`;
+      return `<value><double>${val}</double></value>`;
+    }
+    if (typeof val === 'string') {
+      const escaped = val
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+      return `<value><string>${escaped}</string></value>`;
+    }
+    if (Array.isArray(val)) {
+      const items = val.map((v) => `<data>${encodeValue(v)}</data>`).join('');
+      return `<value><array><data>${val.map(encodeValue).join('')}</data></array></value>`;
+    }
+    if (typeof val === 'object') {
+      const members = Object.entries(val as Record<string, unknown>)
+        .map(([k, v]) => `<member><name>${k}</name>${encodeValue(v)}</member>`)
+        .join('');
+      return `<value><struct>${members}</struct></value>`;
+    }
+    return `<value><string>${String(val)}</string></value>`;
+  };
+
+  const paramsXml = params.map((p) => `<param>${encodeValue(p)}</param>`).join('');
+  return `<?xml version="1.0"?><methodCall><methodName>${method}</methodName><params>${paramsXml}</params></methodCall>`;
+}
+
+// =============================================
+// Parser XML-RPC robusto basado en tokenización
+// Maneja correctamente estructuras anidadas
+// =============================================
+
+interface XmlToken {
+  type: 'open' | 'close' | 'selfclose' | 'text';
+  tag?: string;
+  content?: string;
+}
+
+function tokenizeXml(xml: string): XmlToken[] {
+  const tokens: XmlToken[] = [];
+  let i = 0;
+  while (i < xml.length) {
+    if (xml[i] === '<') {
+      const end = xml.indexOf('>', i);
+      if (end === -1) break;
+      const raw = xml.slice(i + 1, end);
+      if (raw.startsWith('/')) {
+        tokens.push({ type: 'close', tag: raw.slice(1).trim() });
+      } else if (raw.endsWith('/')) {
+        tokens.push({ type: 'selfclose', tag: raw.slice(0, -1).trim() });
+      } else if (raw.startsWith('?') || raw.startsWith('!')) {
+        // skip PI and comments
+      } else {
+        tokens.push({ type: 'open', tag: raw.trim() });
+      }
+      i = end + 1;
+    } else {
+      const end = xml.indexOf('<', i);
+      const text = end === -1 ? xml.slice(i) : xml.slice(i, end);
+      const trimmed = text.trim();
+      if (trimmed) tokens.push({ type: 'text', content: trimmed });
+      i = end === -1 ? xml.length : end;
+    }
+  }
+  return tokens;
+}
+
+function parseTokens(tokens: XmlToken[], pos: { i: number }): unknown {
+  const token = tokens[pos.i];
+  if (!token) return null;
+
+  if (token.type === 'selfclose') {
+    if (token.tag === 'nil') { pos.i++; return null; }
+    pos.i++;
+    return null;
+  }
+
+  if (token.type !== 'open') return null;
+
+  const tag = token.tag!;
+  pos.i++;
+
+  if (tag === 'value') {
+    const next = tokens[pos.i];
+    let result: unknown;
+
+    if (!next) { result = null; }
+    else if (next.type === 'text') {
+      // <value>texto</value> — string implícito
+      result = next.content!
+        .replace(/&amp;/g, '&').replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>').replace(/&quot;/g, '"');
+      pos.i++;
+    } else if (next.type === 'selfclose' && next.tag === 'nil') {
+      result = null;
+      pos.i++;
+    } else if (next.type === 'open') {
+      result = parseTokens(tokens, pos);
+    } else {
+      result = null;
+    }
+
+    // consume </value>
+    if (tokens[pos.i]?.type === 'close' && tokens[pos.i]?.tag === 'value') pos.i++;
+    return result;
+  }
+
+  if (tag === 'int' || tag === 'i4' || tag === 'i8') {
+    const t = tokens[pos.i];
+    const v = t?.type === 'text' ? parseInt(t.content!, 10) : 0;
+    if (t?.type === 'text') pos.i++;
+    if (tokens[pos.i]?.type === 'close') pos.i++;
+    return v;
+  }
+
+  if (tag === 'double') {
+    const t = tokens[pos.i];
+    const v = t?.type === 'text' ? parseFloat(t.content!) : 0;
+    if (t?.type === 'text') pos.i++;
+    if (tokens[pos.i]?.type === 'close') pos.i++;
+    return v;
+  }
+
+  if (tag === 'boolean') {
+    const t = tokens[pos.i];
+    const v = t?.type === 'text' ? t.content === '1' : false;
+    if (t?.type === 'text') pos.i++;
+    if (tokens[pos.i]?.type === 'close') pos.i++;
+    return v;
+  }
+
+  if (tag === 'string') {
+    const t = tokens[pos.i];
+    let v = '';
+    if (t?.type === 'text') {
+      v = t.content!.replace(/&amp;/g, '&').replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>').replace(/&quot;/g, '"');
+      pos.i++;
+    }
+    if (tokens[pos.i]?.type === 'close' && tokens[pos.i]?.tag === 'string') pos.i++;
+    return v;
+  }
+
+  if (tag === 'nil') {
+    if (tokens[pos.i]?.type === 'close') pos.i++;
+    return null;
+  }
+
+  if (tag === 'array') {
+    // consume <data>
+    if (tokens[pos.i]?.type === 'open' && tokens[pos.i]?.tag === 'data') pos.i++;
+    const items: unknown[] = [];
+    while (pos.i < tokens.length) {
+      const cur = tokens[pos.i];
+      if (cur?.type === 'close' && (cur.tag === 'data' || cur.tag === 'array')) break;
+      if (cur?.type === 'open' && cur.tag === 'value') {
+        items.push(parseTokens(tokens, pos));
+      } else {
+        pos.i++;
+      }
+    }
+    // consume </data> and </array>
+    if (tokens[pos.i]?.type === 'close' && tokens[pos.i]?.tag === 'data') pos.i++;
+    if (tokens[pos.i]?.type === 'close' && tokens[pos.i]?.tag === 'array') pos.i++;
+    return items;
+  }
+
+  if (tag === 'struct') {
+    const obj: Record<string, unknown> = {};
+    while (pos.i < tokens.length) {
+      const cur = tokens[pos.i];
+      if (cur?.type === 'close' && cur.tag === 'struct') break;
+      if (cur?.type === 'open' && cur.tag === 'member') {
+        pos.i++; // consume <member>
+        // <name>
+        let key = '';
+        if (tokens[pos.i]?.type === 'open' && tokens[pos.i]?.tag === 'name') {
+          pos.i++;
+          if (tokens[pos.i]?.type === 'text') { key = tokens[pos.i].content!; pos.i++; }
+          if (tokens[pos.i]?.type === 'close' && tokens[pos.i]?.tag === 'name') pos.i++;
+        }
+        // <value>
+        let val: unknown = null;
+        if (tokens[pos.i]?.type === 'open' && tokens[pos.i]?.tag === 'value') {
+          val = parseTokens(tokens, pos);
+        }
+        obj[key] = val;
+        // consume </member>
+        if (tokens[pos.i]?.type === 'close' && tokens[pos.i]?.tag === 'member') pos.i++;
+      } else {
+        pos.i++;
+      }
+    }
+    if (tokens[pos.i]?.type === 'close' && tokens[pos.i]?.tag === 'struct') pos.i++;
+    return obj;
+  }
+
+  // tag desconocido: consumir hasta el cierre
+  while (pos.i < tokens.length) {
+    const cur = tokens[pos.i];
+    if (cur?.type === 'close' && cur.tag === tag) { pos.i++; break; }
+    pos.i++;
+  }
+  return null;
+}
+
+function parseXmlRpcResponse(xml: string): unknown {
+  if (xml.includes('<fault>')) {
+    const faultMatch = xml.match(/<string>([^<]*)<\/string>/);
+    throw new Error(`Odoo XML-RPC Fault: ${faultMatch?.[1] || 'Error desconocido'}`);
+  }
+
+  const tokens = tokenizeXml(xml);
+
+  // Buscar el primer <value> dentro de <params><param>
+  let paramStart = -1;
+  for (let i = 0; i < tokens.length; i++) {
+    if (tokens[i].type === 'open' && tokens[i].tag === 'value') {
+      paramStart = i;
+      break;
+    }
+  }
+
+  if (paramStart === -1) throw new Error('Respuesta XML-RPC inválida: no se encontró <value>');
+
+  const pos = { i: paramStart };
+  return parseTokens(tokens, pos);
+}
+
+async function xmlRpcCall(
+  endpoint: string,
+  method: string,
+  params: unknown[]
+): Promise<unknown> {
+  const body = buildXmlRpcCall(method, params);
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/xml; charset=utf-8' },
+    body,
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(`HTTP ${response.status}: ${text.substring(0, 300)}`);
+  }
+
+  const xml = await response.text();
+  return parseXmlRpcResponse(xml);
+}
+
+// =============================================
+// Config helpers
+// =============================================
+
+export function getConfigFromEnv(): OdooConfig | null {
+  const url = process.env.ODOO_URL;
+  const db = process.env.ODOO_DB;
+  const username = process.env.ODOO_USERNAME;
+  const password = process.env.ODOO_PASSWORD;
+  const apiKey = process.env.ODOO_API_KEY;
+
+  if (!url || !db || !username || !password) return null;
+  return { url, db, username, password, apiKey };
+}
+
+export function configFromParams(params: {
+  url: string;
+  db: string;
+  username: string;
+  password: string;
+  apiKey?: string;
+}): OdooConfig {
+  return { ...params };
+}
+
+function getConfig(): OdooConfig {
+  const config = getConfigFromEnv();
+  if (!config) {
+    throw new Error('Faltan variables de entorno ODOO_URL, ODOO_DB, ODOO_USERNAME o ODOO_PASSWORD');
+  }
+  return config;
+}
+
+// =============================================
+// Autenticación
+// =============================================
+
+export async function authenticate(cfg?: OdooConfig): Promise<OdooSession> {
+  const config = cfg || getConfig();
+  const endpoint = `${config.url}/xmlrpc/2/common`;
+
+  // authenticate() siempre usa password (no API Key)
+  const uid = await xmlRpcCall(endpoint, 'authenticate', [
+    config.db,
+    config.username,
+    config.password,
+    {},
+  ]) as number;
+
+  if (!uid || typeof uid !== 'number' || uid === 0) {
+    throw new Error(`Autenticación fallida. UID recibido: ${uid}. Verifica credenciales y DB.`);
+  }
+
+  return { uid, config };
+}
+
+export async function getServerVersion(cfg?: OdooConfig): Promise<unknown> {
+  const config = cfg || getConfig();
+  return xmlRpcCall(`${config.url}/xmlrpc/2/common`, 'version', []);
+}
+
+// =============================================
+// execute_kw — método base para todas las queries
+// =============================================
+
+async function executeKw(
+  session: OdooSession,
+  model: string,
+  method: string,
+  args: unknown[],
+  kwargs: Record<string, unknown> = {}
+): Promise<unknown> {
+  // Odoo 18: execute_kw usa password (la API Key se usa solo si está habilitada en el perfil)
+  const credential = session.config.password;
+  return xmlRpcCall(
+    `${session.config.url}/xmlrpc/2/object`,
+    'execute_kw',
+    [session.config.db, session.uid, credential, model, method, args, kwargs]
+  );
+}
+
+// =============================================
+// Métodos genéricos
+// =============================================
+
+export async function searchRead(
+  model: string,
+  domain: unknown[] = [],
+  fields: string[] = [],
+  options: { limit?: number; offset?: number; order?: string; config?: OdooConfig; session?: OdooSession } = {}
+): Promise<Record<string, unknown>[]> {
+  const session = options.session || await authenticate(options.config);
+  const kwargs: Record<string, unknown> = {};
+  if (fields.length > 0) kwargs.fields = fields;
+  if (options.limit !== undefined) kwargs.limit = options.limit;
+  if (options.offset !== undefined) kwargs.offset = options.offset;
+  if (options.order) kwargs.order = options.order;
+
+  const result = await executeKw(session, model, 'search_read', [domain], kwargs);
+  return result as Record<string, unknown>[];
+}
+
+export async function searchCount(
+  model: string,
+  domain: unknown[] = [],
+  session?: OdooSession,
+  cfg?: OdooConfig
+): Promise<number> {
+  const s = session || await authenticate(cfg);
+  const result = await executeKw(s, model, 'search_count', [domain]);
+  return result as number;
+}
+
+export async function read(
+  model: string,
+  ids: number[],
+  fields: string[] = [],
+  session?: OdooSession,
+  cfg?: OdooConfig
+): Promise<Record<string, unknown>[]> {
+  const s = session || await authenticate(cfg);
+  const kwargs: Record<string, unknown> = {};
+  if (fields.length > 0) kwargs.fields = fields;
+  const result = await executeKw(s, model, 'read', [ids], kwargs);
+  return result as Record<string, unknown>[];
+}
+
+export async function fieldsGet(
+  model: string,
+  attributes: string[] = ['string', 'type', 'required'],
+  session?: OdooSession,
+  cfg?: OdooConfig
+): Promise<Record<string, unknown>> {
+  const s = session || await authenticate(cfg);
+  const result = await executeKw(s, model, 'fields_get', [], { attributes });
+  return result as Record<string, unknown>;
+}
+
+// =============================================
+// Métodos de negocio específicos para Imprima B2B
+// =============================================
+
+export interface OdooPartner {
+  id: number;
+  name: string;
+  email: string | false;
+  phone: string | false;
+  vat: string | false;
+  city: string | false;
+  category_id: number[];
+  child_ids: number[];
+  parent_id: [number, string] | false;
+  user_id: [number, string] | false;
+  type: string | false;
+  is_company: boolean;
+  active: boolean;
+  customer_rank: number;
+}
+
+export interface OdooProduct {
+  id: number;
+  name: string;
+  description_sale: string | false;
+  list_price: number;
+  uom_name: string;
+  categ_id: [number, string];
+  product_tag_ids: number[];
+  active: boolean;
+  sale_ok: boolean;
+  image_128: string | false;
+  default_code: string | false;
+}
+
+export interface OdooProductTag {
+  id: number;
+  name: string;
+  color: number;
+}
+
+export interface OdooCategory {
+  id: number;
+  name: string;
+  complete_name: string;
+  parent_id: [number, string] | false;
+}
+
+export async function getClientes(
+  session: OdooSession,
+  options: { limit?: number; offset?: number } = {}
+): Promise<OdooPartner[]> {
+  const result = await searchRead(
+    'res.partner',
+    [['active', '=', true]],
+    ['id', 'name', 'email', 'phone', 'vat', 'city', 'category_id', 'child_ids', 'parent_id', 'user_id', 'type', 'is_company', 'active', 'customer_rank'],
+    { limit: options.limit ?? 200, offset: options.offset ?? 0, order: 'name asc', session }
+  );
+  return result as unknown as OdooPartner[];
+}
+
+export async function getProductos(
+  session: OdooSession,
+  options: { tagIds?: number[]; categIds?: number[]; limit?: number; offset?: number } = {}
+): Promise<OdooProduct[]> {
+  const domain: unknown[] = [['sale_ok', '=', true], ['active', '=', true]];
+  if (options.tagIds && options.tagIds.length > 0) {
+    domain.push(['product_tag_ids', 'in', options.tagIds]);
+  }
+  if (options.categIds && options.categIds.length > 0) {
+    domain.push(['categ_id', 'in', options.categIds]);
+  }
+
+  const result = await searchRead(
+    'product.template',
+    domain,
+    ['id', 'name', 'description_sale', 'list_price', 'uom_name', 'categ_id', 'product_tag_ids', 'active', 'sale_ok', 'image_128', 'default_code'],
+    { limit: options.limit ?? 200, offset: options.offset ?? 0, order: 'name asc', session }
+  );
+  return result as unknown as OdooProduct[];
+}
+
+export async function getProductosByPartner(
+  session: OdooSession,
+  partnerId: number,
+  options: { limit?: number; offset?: number; categIds?: number[] } = {}
+): Promise<OdooProduct[]> {
+  const partners = await read(
+    'res.partner',
+    [partnerId],
+    ['id', 'name', 'category_id'],
+    session
+  );
+
+  if (!partners.length) return [];
+
+  const partner = partners[0];
+  // category_id en res.partner son las etiquetas del cliente (res.partner.category)
+  // Se usan como filtro de product_tag_ids en productos
+  const tagIds = Array.isArray(partner.category_id) ? (partner.category_id as number[]) : [];
+
+  if (!tagIds.length) {
+    // Si el partner no tiene etiquetas, devolver todos los productos
+    return getProductos(session, {
+      limit: options.limit,
+      offset: options.offset,
+      categIds: options.categIds,
+    });
+  }
+
+  return getProductos(session, {
+    tagIds,
+    limit: options.limit,
+    offset: options.offset,
+    categIds: options.categIds,
+  });
+}
+
+export async function getEtiquetasProducto(
+  session: OdooSession
+): Promise<OdooProductTag[]> {
+  // En Odoo 18 el modelo es product.tag (product_tag_ids en product.template)
+  const result = await searchRead(
+    'product.tag',
+    [],
+    ['id', 'name', 'color'],
+    { order: 'name asc', session }
+  );
+  return result as unknown as OdooProductTag[];
+}
+
+export async function getCategoriasProducto(
+  session: OdooSession
+): Promise<OdooCategory[]> {
+  const result = await searchRead(
+    'product.category',
+    [],
+    ['id', 'name', 'complete_name', 'parent_id'],
+    { order: 'complete_name asc', session }
+  );
+  return result as unknown as OdooCategory[];
+}
+
+export async function getEtiquetasCliente(
+  session: OdooSession
+): Promise<{ id: number; name: string; color: number }[]> {
+  const result = await searchRead(
+    'res.partner.category',
+    [],
+    ['id', 'name', 'color'],
+    { order: 'name asc', session }
+  );
+  return result as unknown as { id: number; name: string; color: number }[];
+}
+
+// =============================================
+// Test de conexión completo
+// =============================================
+
+export async function testConnectionWithConfig(cfg: OdooConfig): Promise<{
+  success: boolean;
+  version?: unknown;
+  uid?: number;
+  partners_count?: number;
+  products_count?: number;
+  sample_partners?: Record<string, unknown>[];
+  sample_products?: Record<string, unknown>[];
+  sale_orders_count?: number;
+  sample_orders?: Record<string, unknown>[];
+  error?: string;
+}> {
+  try {
+    let version: unknown;
+    try {
+      version = await getServerVersion(cfg);
+    } catch {
+      version = { server_version: 'desconocida' };
+    }
+
+    const session = await authenticate(cfg);
+
+    const [partners_count, products_count, sale_orders_count] = await Promise.all([
+      searchCount('res.partner', [['active', '=', true]], session),
+      searchCount('product.template', [['sale_ok', '=', true]], session),
+      searchCount('sale.order', [], session),
+    ]);
+
+    const [sample_partners, sample_products, sample_orders] = await Promise.all([
+      searchRead('res.partner', [['active', '=', true]], ['id', 'name', 'email', 'vat', 'city', 'customer_rank'], { limit: 5, order: 'name asc', session }),
+      searchRead('product.template', [['sale_ok', '=', true]], ['id', 'name', 'list_price', 'categ_id', 'product_tag_ids'], { limit: 5, order: 'name asc', session }),
+      searchRead('sale.order', [], ['id', 'name', 'partner_id', 'date_order', 'state', 'amount_total'], { limit: 5, order: 'date_order desc', session }),
+    ]);
+
+    return {
+      success: true,
+      version,
+      uid: session.uid,
+      partners_count,
+      products_count,
+      sample_partners,
+      sample_products,
+      sale_orders_count,
+      sample_orders,
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export async function testConnection(): Promise<ReturnType<typeof testConnectionWithConfig>> {
+  return testConnectionWithConfig(getConfig());
+}

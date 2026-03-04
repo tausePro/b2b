@@ -1,0 +1,1317 @@
+'use client';
+
+import { useState, useEffect, useMemo } from 'react';
+import { useParams } from 'next/navigation';
+import { createClient } from '@/lib/supabase/client';
+import Link from 'next/link';
+import {
+  Building2,
+  Loader2,
+  Palette,
+  Scale,
+  RefreshCw,
+  Users,
+  Search,
+  Package,
+  Tag as TagIcon,
+  Upload,
+  Info,
+  Pencil,
+  Trash2,
+  Plus,
+  ArrowLeft,
+  Save,
+  X,
+} from 'lucide-react';
+
+interface Empresa {
+  id: string;
+  nombre: string;
+  nit: string | null;
+  odoo_partner_id: number | null;
+  odoo_comercial_id: number | null;
+  odoo_comercial_nombre: string | null;
+  activa: boolean;
+  slug: string | null;
+  created_at: string;
+}
+
+interface EmpresaConfig {
+  id: string;
+  empresa_id: string;
+  color_primario: string | null;
+  logo_url: string | null;
+  requiere_aprobacion: boolean;
+  monto_aprobacion: number | null;
+  control_presupuesto: boolean;
+  odoo_partner_id: string | null;
+  odoo_pricelist_id: string | null;
+  modulos_activos: string[];
+  configuracion_extra?: Record<string, unknown>;
+}
+
+interface Usuario {
+  id: string;
+  nombre: string;
+  apellido: string;
+  email: string;
+  rol: string;
+  activo: boolean;
+}
+
+interface Sede {
+  id: string;
+  nombre: string;
+  ciudad: string | null;
+}
+
+interface Asesor {
+  id: string;
+  nombre: string;
+  apellido: string;
+  email: string;
+  activo: boolean;
+  odoo_user_id: number | null;
+}
+
+interface AsesorAsignacion {
+  usuario_id: string;
+}
+
+interface ProductoEmpresaOdoo {
+  id: number;
+  name: string;
+  description_sale: string | false;
+  list_price: number;
+  uom_name: string;
+  categ_id: [number, string] | false;
+  product_tag_ids: number[];
+  product_tags?: [number, string][];
+  image_128: string | false;
+  default_code: string | false;
+  active: boolean;
+  sale_ok: boolean;
+}
+
+type CategoriaAutorizada = 'aseo' | 'papeleria' | 'cafeteria' | 'personalizados';
+
+function mapCategoriaAutorizada(nombreCategoria: string | null | undefined): CategoriaAutorizada {
+  const categoria = (nombreCategoria || '').toLowerCase();
+
+  if (categoria.includes('aseo') || categoria.includes('limpieza') || categoria.includes('hig')) {
+    return 'aseo';
+  }
+  if (categoria.includes('papel') || categoria.includes('escrit') || categoria.includes('oficina')) {
+    return 'papeleria';
+  }
+  if (categoria.includes('cafe') || categoria.includes('cafeter') || categoria.includes('alimento')) {
+    return 'cafeteria';
+  }
+
+  return 'personalizados';
+}
+
+const supabase = createClient();
+
+const sectionNav = [
+  { id: 'branding', label: 'Marca Visual', icon: Palette },
+  { id: 'logic', label: 'Reglas de Negocio', icon: Scale },
+  { id: 'odoo', label: 'Integración Odoo', icon: RefreshCw },
+  { id: 'productos', label: 'Productos Odoo', icon: Package },
+  { id: 'estructura', label: 'Empresas y Sucursales', icon: Building2 },
+  { id: 'asesores', label: 'Asesores y Clientes', icon: Users },
+  { id: 'users', label: 'Gestión de Usuarios', icon: Users },
+];
+
+export default function EmpresaConfigPage() {
+  const params = useParams();
+  const empresaId = params.id as string;
+
+  const [empresa, setEmpresa] = useState<Empresa | null>(null);
+  const [config, setConfig] = useState<EmpresaConfig | null>(null);
+  const [usuarios, setUsuarios] = useState<Usuario[]>([]);
+  const [sedes, setSedes] = useState<Sede[]>([]);
+  const [asesores, setAsesores] = useState<Asesor[]>([]);
+  const [asesoresAsignados, setAsesoresAsignados] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [savingAsesores, setSavingAsesores] = useState(false);
+  const [productosOdoo, setProductosOdoo] = useState<ProductoEmpresaOdoo[]>([]);
+  const [loadingProductosOdoo, setLoadingProductosOdoo] = useState(false);
+  const [errorProductosOdoo, setErrorProductosOdoo] = useState<string | null>(null);
+  const [avisoProductosOdoo, setAvisoProductosOdoo] = useState<string | null>(null);
+  const [productosAutorizadosSeleccionados, setProductosAutorizadosSeleccionados] = useState<Set<number>>(new Set());
+  const [savingProductosPortal, setSavingProductosPortal] = useState(false);
+  const [restringirCatalogoPortal, setRestringirCatalogoPortal] = useState(false);
+  const [mostrarPreciosCompradorPortal, setMostrarPreciosCompradorPortal] = useState(false);
+  const [mostrarPreciosAprobadorPortal, setMostrarPreciosAprobadorPortal] = useState(true);
+  const [busquedaProducto, setBusquedaProducto] = useState('');
+  const [categoriaProductoFiltro, setCategoriaProductoFiltro] = useState<number | 'todos'>('todos');
+  const [etiquetaProductoFiltro, setEtiquetaProductoFiltro] = useState<number | 'todos'>('todos');
+  const [activeSection, setActiveSection] = useState('branding');
+  const [toast, setToast] = useState<string | null>(null);
+
+  const partnerIdProductos = useMemo(() => {
+    const partnerDesdeConfig = Number(config?.odoo_partner_id);
+    if (Number.isFinite(partnerDesdeConfig) && partnerDesdeConfig > 0) {
+      return partnerDesdeConfig;
+    }
+    return empresa?.odoo_partner_id ?? null;
+  }, [config?.odoo_partner_id, empresa?.odoo_partner_id]);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      const [empresaRes, configRes, usuariosRes, sedesRes, asesoresRes, asignacionesRes, productosAuthRes] = await Promise.allSettled([
+        supabase.from('empresas').select('*').eq('id', empresaId).single(),
+        supabase.from('empresa_configs').select('*').eq('empresa_id', empresaId).single(),
+        supabase.from('usuarios').select('id, nombre, apellido, email, rol, activo').eq('empresa_id', empresaId),
+        supabase.from('sedes').select('id, nombre_sede, ciudad').eq('empresa_id', empresaId),
+        supabase
+          .from('usuarios')
+          .select('id, nombre, apellido, email, activo, odoo_user_id')
+          .eq('rol', 'asesor')
+          .eq('activo', true)
+          .order('nombre'),
+        supabase
+          .from('asesor_empresas')
+          .select('usuario_id')
+          .eq('empresa_id', empresaId)
+          .eq('activo', true),
+        supabase
+          .from('productos_autorizados')
+          .select('odoo_product_id, activo')
+          .eq('empresa_id', empresaId),
+      ]);
+
+      if (empresaRes.status === 'fulfilled' && empresaRes.value.data) {
+        setEmpresa(empresaRes.value.data as Empresa);
+      }
+      if (configRes.status === 'fulfilled' && configRes.value.data) {
+        const rawConfig = configRes.value.data;
+        // Si modulos_activos viene como objeto JSON (ej: {"presupuestos": true, "aprobaciones": true})
+        // lo convertimos a array de strings para la UI
+        let modulosArray: string[] = [];
+        if (Array.isArray(rawConfig.modulos_activos)) {
+          modulosArray = rawConfig.modulos_activos;
+        } else if (typeof rawConfig.modulos_activos === 'object' && rawConfig.modulos_activos !== null) {
+          modulosArray = Object.entries(rawConfig.modulos_activos)
+            .filter(([, isActive]) => isActive)
+            .map(([key]) => key);
+        }
+        
+        setConfig({
+          ...rawConfig,
+          modulos_activos: modulosArray,
+          configuracion_extra:
+            rawConfig.configuracion_extra && typeof rawConfig.configuracion_extra === 'object'
+              ? rawConfig.configuracion_extra
+              : {},
+        } as EmpresaConfig);
+
+        const extra =
+          rawConfig.configuracion_extra && typeof rawConfig.configuracion_extra === 'object'
+            ? (rawConfig.configuracion_extra as Record<string, unknown>)
+            : {};
+        setRestringirCatalogoPortal(Boolean(extra.restringir_catalogo_portal));
+        setMostrarPreciosCompradorPortal(
+          typeof extra.mostrar_precios_comprador === 'boolean' ? extra.mostrar_precios_comprador : false
+        );
+        setMostrarPreciosAprobadorPortal(
+          typeof extra.mostrar_precios_aprobador === 'boolean' ? extra.mostrar_precios_aprobador : true
+        );
+      }
+      if (usuariosRes.status === 'fulfilled' && usuariosRes.value.data) {
+        setUsuarios(usuariosRes.value.data as Usuario[]);
+      }
+      if (sedesRes.status === 'fulfilled' && sedesRes.value.data) {
+        // Mapear nombre_sede a nombre para la UI
+        const sedesData = sedesRes.value.data.map((s: { id: string; nombre_sede: string; ciudad: string | null }) => ({
+          id: s.id,
+          nombre: s.nombre_sede,
+          ciudad: s.ciudad,
+        }));
+        setSedes(sedesData);
+      }
+
+      if (asesoresRes.status === 'fulfilled' && asesoresRes.value.data) {
+        setAsesores(asesoresRes.value.data as Asesor[]);
+      }
+
+      if (asignacionesRes.status === 'fulfilled' && asignacionesRes.value.data) {
+        setAsesoresAsignados(
+          (asignacionesRes.value.data as AsesorAsignacion[]).map((asignacion) => asignacion.usuario_id)
+        );
+      }
+
+      if (productosAuthRes.status === 'fulfilled' && productosAuthRes.value.data) {
+        const idsActivos = (productosAuthRes.value.data as { odoo_product_id: number; activo: boolean }[])
+          .filter((item) => item.activo)
+          .map((item) => item.odoo_product_id);
+        setProductosAutorizadosSeleccionados(new Set(idsActivos));
+      }
+
+      setLoading(false);
+    };
+
+    fetchData();
+  }, [empresaId]);
+
+  useEffect(() => {
+    const partnerId = partnerIdProductos;
+
+    if (!partnerId) {
+      setProductosOdoo([]);
+      setErrorProductosOdoo(null);
+      setAvisoProductosOdoo(null);
+      return;
+    }
+
+    const fetchProductosOdoo = async () => {
+      setLoadingProductosOdoo(true);
+      setErrorProductosOdoo(null);
+      setAvisoProductosOdoo(null);
+
+      try {
+        const paramsPartner = new URLSearchParams({
+          partner_id: String(partnerId),
+          limit: '500',
+          include_tag_names: 'true',
+        });
+
+        const resPartner = await fetch(`/api/odoo/productos?${paramsPartner.toString()}`);
+        const dataPartner = await resPartner.json();
+
+        if (!resPartner.ok) {
+          throw new Error(dataPartner.error || 'No se pudieron cargar productos desde Odoo');
+        }
+
+        const productosPartner = (dataPartner.productos || []) as ProductoEmpresaOdoo[];
+
+        if (productosPartner.length > 0) {
+          setProductosOdoo(productosPartner);
+          return;
+        }
+
+        const paramsGeneral = new URLSearchParams({
+          limit: '500',
+          include_tag_names: 'true',
+        });
+
+        const resGeneral = await fetch(`/api/odoo/productos?${paramsGeneral.toString()}`);
+        const dataGeneral = await resGeneral.json();
+
+        if (!resGeneral.ok) {
+          throw new Error(dataGeneral.error || 'No se pudo cargar catálogo general desde Odoo');
+        }
+
+        const productosGenerales = (dataGeneral.productos || []) as ProductoEmpresaOdoo[];
+        setProductosOdoo(productosGenerales);
+        if (productosGenerales.length > 0) {
+          setAvisoProductosOdoo(
+            `El partner Odoo ${partnerId} no devolvió coincidencias por etiquetas. Se muestra catálogo general para diagnóstico.`
+          );
+        }
+      } catch (err) {
+        setErrorProductosOdoo(err instanceof Error ? err.message : 'Error cargando productos Odoo');
+      } finally {
+        setLoadingProductosOdoo(false);
+      }
+    };
+
+    fetchProductosOdoo();
+  }, [partnerIdProductos]);
+
+  const handleSave = async () => {
+    if (!config) return;
+    setSaving(true);
+
+    const configuracionExtraBase =
+      config.configuracion_extra && typeof config.configuracion_extra === 'object'
+        ? config.configuracion_extra
+        : {};
+    const configuracionExtraPortal = {
+      ...configuracionExtraBase,
+      restringir_catalogo_portal: restringirCatalogoPortal,
+      mostrar_precios_comprador: mostrarPreciosCompradorPortal,
+      mostrar_precios_aprobador: mostrarPreciosAprobadorPortal,
+    };
+
+    const { error } = await supabase
+      .from('empresa_configs')
+      .update({
+        color_primario: config.color_primario,
+        logo_url: config.logo_url,
+        requiere_aprobacion: config.requiere_aprobacion,
+        monto_aprobacion: config.monto_aprobacion,
+        control_presupuesto: config.control_presupuesto,
+        odoo_partner_id: config.odoo_partner_id,
+        odoo_pricelist_id: config.odoo_pricelist_id,
+        modulos_activos: config.modulos_activos,
+        configuracion_extra: configuracionExtraPortal,
+      })
+      .eq('empresa_id', empresaId);
+
+    let partnerUpdateError: string | null = null;
+    const partnerDesdeConfig = Number(config.odoo_partner_id);
+    if (Number.isFinite(partnerDesdeConfig) && partnerDesdeConfig > 0) {
+      const { error: empresaUpdateError } = await supabase
+        .from('empresas')
+        .update({ odoo_partner_id: partnerDesdeConfig })
+        .eq('id', empresaId);
+
+      if (empresaUpdateError) {
+        partnerUpdateError = empresaUpdateError.message;
+      } else {
+        setEmpresa((prev) => (prev ? { ...prev, odoo_partner_id: partnerDesdeConfig } : prev));
+      }
+    }
+
+    setSaving(false);
+
+    if (!error && !partnerUpdateError) {
+      setConfig((prev) => (prev ? { ...prev, configuracion_extra: configuracionExtraPortal } : prev));
+      setToast('Cambios guardados correctamente.');
+    } else {
+      setToast(partnerUpdateError || error?.message || 'No se pudieron guardar todos los cambios.');
+    }
+    setTimeout(() => setToast(null), 3000);
+  };
+
+  const handleGuardarAsesores = async () => {
+    setSavingAsesores(true);
+
+    const { data: actuales, error: actualesError } = await supabase
+      .from('asesor_empresas')
+      .select('usuario_id, activo')
+      .eq('empresa_id', empresaId);
+
+    if (actualesError) {
+      setSavingAsesores(false);
+      setToast('No se pudieron cargar las asignaciones actuales de asesores.');
+      setTimeout(() => setToast(null), 3000);
+      return;
+    }
+
+    const selectedSet = new Set(asesoresAsignados);
+
+    if (asesoresAsignados.length > 0) {
+      const payload = asesoresAsignados.map((asesorId) => ({
+        usuario_id: asesorId,
+        empresa_id: empresaId,
+        activo: true,
+      }));
+
+      const { error: upsertError } = await supabase
+        .from('asesor_empresas')
+        .upsert(payload, { onConflict: 'usuario_id,empresa_id' });
+
+      if (upsertError) {
+        setSavingAsesores(false);
+        setToast('No se pudo guardar la asignación de asesores.');
+        setTimeout(() => setToast(null), 3000);
+        return;
+      }
+    }
+
+    const activosNoSeleccionados = (actuales || [])
+      .filter((row: { usuario_id: string; activo: boolean }) => row.activo && !selectedSet.has(row.usuario_id))
+      .map((row: { usuario_id: string; activo: boolean }) => row.usuario_id);
+
+    if (activosNoSeleccionados.length > 0) {
+      const { error: deactivateError } = await supabase
+        .from('asesor_empresas')
+        .update({ activo: false })
+        .eq('empresa_id', empresaId)
+        .in('usuario_id', activosNoSeleccionados);
+
+      if (deactivateError) {
+        setSavingAsesores(false);
+        setToast('No se pudo actualizar la desasignación de asesores.');
+        setTimeout(() => setToast(null), 3000);
+        return;
+      }
+    }
+
+    setSavingAsesores(false);
+    setToast('Asignación de asesores actualizada correctamente.');
+    setTimeout(() => setToast(null), 3000);
+  };
+
+  const handleToggleProductoAutorizado = (productoId: number) => {
+    setProductosAutorizadosSeleccionados((prev) => {
+      const next = new Set(prev);
+      if (next.has(productoId)) {
+        next.delete(productoId);
+      } else {
+        next.add(productoId);
+      }
+      return next;
+    });
+  };
+
+  const handleGuardarReglasPortal = async () => {
+    if (!config) return;
+
+    setSavingProductosPortal(true);
+
+    const configuracionExtraBase =
+      config.configuracion_extra && typeof config.configuracion_extra === 'object'
+        ? config.configuracion_extra
+        : {};
+    const configuracionExtraPortal = {
+      ...configuracionExtraBase,
+      restringir_catalogo_portal: restringirCatalogoPortal,
+      mostrar_precios_comprador: mostrarPreciosCompradorPortal,
+      mostrar_precios_aprobador: mostrarPreciosAprobadorPortal,
+    };
+
+    const seleccionados = Array.from(productosAutorizadosSeleccionados);
+
+    const { data: existentes, error: existentesError } = await supabase
+      .from('productos_autorizados')
+      .select('odoo_product_id, activo')
+      .eq('empresa_id', empresaId);
+
+    if (existentesError) {
+      setSavingProductosPortal(false);
+      setToast('No se pudieron cargar los productos autorizados actuales.');
+      setTimeout(() => setToast(null), 3000);
+      return;
+    }
+
+    const payload = seleccionados.map((productId) => {
+      const producto = productosOdoo.find((item) => item.id === productId);
+      const categoriaNombre = Array.isArray(producto?.categ_id) ? producto.categ_id[1] : null;
+
+      return {
+        empresa_id: empresaId,
+        odoo_product_id: productId,
+        categoria: mapCategoriaAutorizada(categoriaNombre),
+        activo: true,
+      };
+    });
+
+    if (payload.length > 0) {
+      const { error: upsertError } = await supabase
+        .from('productos_autorizados')
+        .upsert(payload, { onConflict: 'empresa_id,odoo_product_id' });
+
+      if (upsertError) {
+        setSavingProductosPortal(false);
+        setToast('No se pudieron guardar los productos visibles en portal.');
+        setTimeout(() => setToast(null), 3000);
+        return;
+      }
+    }
+
+    const seleccionSet = new Set(seleccionados);
+    const desactivarIds = (existentes || [])
+      .filter((item: { odoo_product_id: number; activo: boolean }) => item.activo && !seleccionSet.has(item.odoo_product_id))
+      .map((item: { odoo_product_id: number; activo: boolean }) => item.odoo_product_id);
+
+    if (desactivarIds.length > 0) {
+      const { error: desactivarError } = await supabase
+        .from('productos_autorizados')
+        .update({ activo: false })
+        .eq('empresa_id', empresaId)
+        .in('odoo_product_id', desactivarIds);
+
+      if (desactivarError) {
+        setSavingProductosPortal(false);
+        setToast('No se pudieron desactivar productos fuera de la selección.');
+        setTimeout(() => setToast(null), 3000);
+        return;
+      }
+    }
+
+    const { error: configError } = await supabase
+      .from('empresa_configs')
+      .update({ configuracion_extra: configuracionExtraPortal })
+      .eq('empresa_id', empresaId);
+
+    setSavingProductosPortal(false);
+
+    if (configError) {
+      setToast('Productos guardados, pero falló la actualización de reglas de precios del portal.');
+      setTimeout(() => setToast(null), 3000);
+      return;
+    }
+
+    setConfig((prev) => (prev ? { ...prev, configuracion_extra: configuracionExtraPortal } : prev));
+    setToast('Reglas del portal actualizadas correctamente.');
+    setTimeout(() => setToast(null), 3000);
+  };
+
+  const categoriasMap = new Map<number, string>();
+  productosOdoo.forEach((producto) => {
+    if (Array.isArray(producto.categ_id)) {
+      categoriasMap.set(producto.categ_id[0], producto.categ_id[1]);
+    }
+  });
+  const categoriasProductoDisponibles = Array.from(categoriasMap.entries());
+
+  const etiquetasProductoDisponibles = Array.from(
+    new Map(
+      productosOdoo.flatMap((producto) => {
+        if (Array.isArray(producto.product_tags) && producto.product_tags.length > 0) {
+          return producto.product_tags;
+        }
+        return (producto.product_tag_ids || []).map((tagId) => [tagId, `Etiqueta ${tagId}`] as [number, string]);
+      })
+    ).entries()
+  );
+
+  const productosFiltrados = productosOdoo.filter((producto) => {
+    const q = busquedaProducto.trim().toLowerCase();
+    if (q) {
+      const matchBusqueda =
+        producto.name.toLowerCase().includes(q) ||
+        (typeof producto.default_code === 'string' && producto.default_code.toLowerCase().includes(q)) ||
+        (typeof producto.description_sale === 'string' && producto.description_sale.toLowerCase().includes(q));
+
+      if (!matchBusqueda) return false;
+    }
+
+    if (categoriaProductoFiltro !== 'todos') {
+      if (!Array.isArray(producto.categ_id) || producto.categ_id[0] !== categoriaProductoFiltro) {
+        return false;
+      }
+    }
+
+    if (etiquetaProductoFiltro !== 'todos') {
+      if (!(producto.product_tag_ids || []).includes(etiquetaProductoFiltro)) {
+        return false;
+      }
+    }
+
+    return true;
+  });
+
+  const asesorCoincideComercial = Boolean(
+    empresa?.odoo_comercial_id && asesores.some((asesor) => asesor.odoo_user_id === empresa.odoo_comercial_id)
+  );
+
+  const totalSeleccionadosPortal = productosAutorizadosSeleccionados.size;
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!empresa) {
+    return (
+      <div className="text-center py-20">
+        <p className="text-slate-500">Empresa no encontrada.</p>
+        <Link href="/admin/empresas" className="text-primary text-sm font-medium mt-2 inline-block">Volver a empresas</Link>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {/* Top Header */}
+      <div className="flex flex-wrap justify-between items-center gap-4 mb-8">
+        <div>
+          <nav className="flex text-xs font-medium text-slate-400 mb-1">
+            <Link href="/admin/empresas" className="hover:text-primary transition">Clientes</Link>
+            <span className="mx-2">/</span>
+            <span className="hover:text-primary cursor-pointer transition">{empresa.nombre}</span>
+            <span className="mx-2">/</span>
+            <span className="text-primary">Configuración</span>
+          </nav>
+          <h1 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+            Configuración de Cliente: {empresa.nombre}
+          </h1>
+        </div>
+        <div className="flex items-center gap-3">
+          <Link href="/admin/empresas" className="px-4 py-2 text-sm font-semibold text-slate-600 hover:text-slate-900 transition flex items-center gap-1">
+            <ArrowLeft className="w-4 h-4" />
+            Volver
+          </Link>
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="flex items-center gap-2 bg-primary hover:bg-primary-dark text-white px-5 py-2 rounded-lg text-sm font-semibold shadow-md shadow-primary/20 transition-all active:scale-95 disabled:opacity-50"
+          >
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            Guardar Cambios
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+        {/* Sidebar Navigation */}
+        <aside className="hidden lg:block lg:col-span-3">
+          <nav className="sticky top-24 space-y-1">
+            {sectionNav.map((section) => {
+              const Icon = section.icon;
+              return (
+                <a
+                  key={section.id}
+                  href={`#${section.id}`}
+                  onClick={() => setActiveSection(section.id)}
+                  className={`group flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-lg transition-colors ${
+                    activeSection === section.id
+                      ? 'bg-primary/10 text-primary'
+                      : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  <Icon className="w-5 h-5" />
+                  {section.label}
+                </a>
+              );
+            })}
+          </nav>
+        </aside>
+
+        {/* Configuration Forms */}
+        <div className="col-span-1 lg:col-span-9 space-y-8">
+          {/* Section 1: Marca Visual */}
+          <section id="branding" className="scroll-mt-24 bg-white rounded-xl shadow-sm border border-border overflow-hidden">
+            <div className="px-6 py-5 border-b border-border bg-slate-50/50 flex justify-between items-center">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">Marca Visual</h2>
+                <p className="text-sm text-slate-500 mt-1">Personalice la apariencia del portal del cliente.</p>
+              </div>
+              <Palette className="w-5 h-5 text-slate-400" />
+            </div>
+            <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-8">
+              {/* Logo Upload */}
+              <div className="space-y-4">
+                <label className="block text-sm font-medium text-slate-700">Logotipo de la Empresa</label>
+                <div className="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-slate-300 border-dashed rounded-lg hover:border-primary transition-colors cursor-pointer group bg-slate-50">
+                  <div className="space-y-2 text-center">
+                    <div className="mx-auto h-16 w-16 bg-white rounded-full flex items-center justify-center shadow-sm">
+                      {config?.logo_url ? (
+                        <img src={config.logo_url} alt="Logo" className="h-8 opacity-80 group-hover:opacity-100 transition-opacity" />
+                      ) : (
+                        <Upload className="w-6 h-6 text-slate-400" />
+                      )}
+                    </div>
+                    <div className="flex text-sm text-slate-600 justify-center">
+                      <span className="font-medium text-primary hover:text-primary-dark cursor-pointer">Subir un archivo</span>
+                      <p className="pl-1">o arrastrar y soltar</p>
+                    </div>
+                    <p className="text-xs text-slate-500">PNG, JPG, GIF hasta 2MB</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Color Picker */}
+              <div className="space-y-6">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Color Primario</label>
+                  <div className="flex items-center gap-3">
+                    <div
+                      className="h-10 w-10 rounded-lg border border-border shadow-inner"
+                      style={{ backgroundColor: config?.color_primario || '#000000' }}
+                    />
+                    <input
+                      className="flex-1 rounded-lg border border-border bg-white text-slate-900 focus:ring-primary focus:border-primary text-sm p-2.5"
+                      type="text"
+                      value={config?.color_primario || '#000000'}
+                      onChange={(e) => config && setConfig({ ...config, color_primario: e.target.value })}
+                    />
+                  </div>
+                  <p className="text-xs text-slate-500 mt-2">Este color se usará para botones y elementos activos.</p>
+                </div>
+                {/* Preview */}
+                <div className="p-4 rounded-lg bg-slate-100 border border-border">
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Vista Previa</p>
+                  <button
+                    className="w-full text-white px-4 py-2 rounded text-sm font-medium shadow-sm hover:opacity-90 transition"
+                    style={{ backgroundColor: config?.color_primario || '#000000' }}
+                  >
+                    Botón de Ejemplo
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* Section 2: Reglas de Negocio */}
+          <section id="logic" className="scroll-mt-24 bg-white rounded-xl shadow-sm border border-border overflow-hidden">
+            <div className="px-6 py-5 border-b border-border bg-slate-50/50 flex justify-between items-center">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">Reglas de Negocio</h2>
+                <p className="text-sm text-slate-500 mt-1">Defina los flujos de aprobación y límites.</p>
+              </div>
+              <Scale className="w-5 h-5 text-slate-400" />
+            </div>
+            <div className="divide-y divide-border">
+              {/* Aprobación de Gerente */}
+              <div className="p-6 flex items-start justify-between gap-4">
+                <div className="flex-1">
+                  <h3 className="text-base font-semibold text-slate-900">Requerir Aprobación de Gerente</h3>
+                  <p className="text-sm text-slate-500 mt-1">Los pedidos superiores a cierto monto requerirán aprobación manual.</p>
+                  {config?.requiere_aprobacion && (
+                    <div className="mt-4 flex items-center gap-3">
+                      <span className="text-sm font-medium text-slate-600">Monto mínimo: $</span>
+                      <input
+                        className="w-40 rounded-lg border border-border bg-white text-slate-900 focus:ring-primary focus:border-primary text-sm p-2"
+                        type="number"
+                        value={config?.monto_aprobacion || 0}
+                        onChange={(e) => config && setConfig({ ...config, monto_aprobacion: Number(e.target.value) })}
+                      />
+                    </div>
+                  )}
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    className="sr-only peer"
+                    checked={config?.requiere_aprobacion || false}
+                    onChange={(e) => config && setConfig({ ...config, requiere_aprobacion: e.target.checked })}
+                  />
+                  <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary/50 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary" />
+                </label>
+              </div>
+
+              {/* Control de Presupuesto */}
+              <div className="p-6 flex items-start justify-between gap-4">
+                <div className="flex-1">
+                  <h3 className="text-base font-semibold text-slate-900">Control de Presupuesto Mensual</h3>
+                  <p className="text-sm text-slate-500 mt-1">Impedir compras si se excede el presupuesto asignado a la sucursal.</p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    className="sr-only peer"
+                    checked={config?.control_presupuesto || false}
+                    onChange={(e) => config && setConfig({ ...config, control_presupuesto: e.target.checked })}
+                  />
+                  <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary/50 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary" />
+                </label>
+              </div>
+            </div>
+          </section>
+
+          {/* Section 3: Integración Odoo */}
+          <section id="odoo" className="scroll-mt-24 bg-white rounded-xl shadow-sm border border-border overflow-hidden">
+            <div className="px-6 py-5 border-b border-border bg-slate-50/50 flex justify-between items-center">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">Integración Odoo</h2>
+                <p className="text-sm text-slate-500 mt-1">Conexión con el sistema ERP para sincronización.</p>
+              </div>
+              <RefreshCw className="w-5 h-5 text-slate-400" />
+            </div>
+            <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="col-span-1 md:col-span-2 bg-blue-50 border border-blue-200 rounded-lg p-4 flex gap-3">
+                <Info className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+                <div>
+                  <h4 className="text-sm font-bold text-blue-800">Estado de Conexión</h4>
+                  <p className="text-xs text-blue-700 mt-1">Sin configurar para esta empresa.</p>
+                </div>
+                <button className="ml-auto text-xs font-semibold text-blue-700 hover:text-blue-900 underline whitespace-nowrap">Probar Conexión</button>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Odoo Partner ID</label>
+                <div className="relative rounded-md shadow-sm">
+                  <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+                    <span className="text-slate-500 text-sm">#</span>
+                  </div>
+                  <input
+                    className="block w-full rounded-lg border border-border pl-7 py-2.5 bg-white text-slate-900 focus:ring-primary focus:border-primary text-sm"
+                    type="number"
+                    placeholder="10452"
+                    value={config?.odoo_partner_id || ''}
+                    onChange={(e) => config && setConfig({ ...config, odoo_partner_id: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Lista de Precios ID</label>
+                <input
+                  className="block w-full rounded-lg border border-border py-2.5 px-3 bg-white text-slate-900 focus:ring-primary focus:border-primary text-sm"
+                  type="text"
+                  placeholder="public_pricelist_empresa"
+                  value={config?.odoo_pricelist_id || ''}
+                  onChange={(e) => config && setConfig({ ...config, odoo_pricelist_id: e.target.value })}
+                />
+              </div>
+
+              <div className="col-span-1 md:col-span-2">
+                <label className="block text-sm font-medium text-slate-700 mb-2">Comercial asignado en Odoo</label>
+                <div className="rounded-lg border border-border bg-slate-50 p-3">
+                  {empresa.odoo_comercial_id ? (
+                    <>
+                      <p className="text-sm font-medium text-slate-900">{empresa.odoo_comercial_nombre || 'Comercial sin nombre'}</p>
+                      <p className="text-xs text-slate-500 font-mono mt-1">ID Odoo: {empresa.odoo_comercial_id}</p>
+                    </>
+                  ) : (
+                    <p className="text-sm text-slate-500">Sin comercial asignado desde Odoo.</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="col-span-1 md:col-span-2">
+                <label className="block text-sm font-medium text-slate-700 mb-2">Categorías Autorizadas</label>
+                <div className="p-3 border border-border rounded-lg bg-white min-h-[80px]">
+                  <div className="flex flex-wrap gap-2">
+                    {(config?.modulos_activos || []).map((mod) => (
+                      <span key={mod} className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-3 py-1 text-sm font-medium text-primary border border-primary/20">
+                        {mod}
+                        <button
+                          onClick={() => config && setConfig({ ...config, modulos_activos: config.modulos_activos.filter(m => m !== mod) })}
+                          className="group relative -mr-1 h-3.5 w-3.5 rounded-sm hover:bg-primary/20"
+                        >
+                          <X className="h-3.5 w-3.5 stroke-primary/70" />
+                        </button>
+                      </span>
+                    ))}
+                    <input
+                      className="border-0 bg-transparent p-0 text-sm placeholder:text-slate-400 focus:ring-0 w-32"
+                      placeholder="+ Agregar categoría"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && e.currentTarget.value.trim() && config) {
+                          setConfig({ ...config, modulos_activos: [...config.modulos_activos, e.currentTarget.value.trim()] });
+                          e.currentTarget.value = '';
+                        }
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* Section 4: Empresas y Sucursales */}
+          <section id="productos" className="scroll-mt-24 bg-white rounded-xl shadow-sm border border-border overflow-hidden">
+            <div className="px-6 py-5 border-b border-border bg-slate-50/50 flex justify-between items-center">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">Productos Odoo disponibles</h2>
+                <p className="text-sm text-slate-500 mt-1">
+                  Catálogo filtrado por partner Odoo del cliente, con imagen, categoría y etiquetas.
+                </p>
+              </div>
+              <Package className="w-5 h-5 text-slate-400" />
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="rounded-lg border border-border bg-slate-50 p-4 space-y-3">
+                <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">Reglas de visualización del portal cliente</p>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Define si el catálogo se restringe a selección y quién ve precios en el portal de esta empresa.
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleGuardarReglasPortal}
+                    disabled={savingProductosPortal || loadingProductosOdoo}
+                    className="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-white hover:bg-primary/90 disabled:opacity-50"
+                  >
+                    {savingProductosPortal ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                    Guardar reglas portal
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+                  <label className="flex items-center justify-between rounded-lg border border-border bg-white px-3 py-2">
+                    <span className="text-slate-700">Restringir catálogo a selección</span>
+                    <input
+                      type="checkbox"
+                      checked={restringirCatalogoPortal}
+                      onChange={(e) => setRestringirCatalogoPortal(e.target.checked)}
+                    />
+                  </label>
+                  <label className="flex items-center justify-between rounded-lg border border-border bg-white px-3 py-2">
+                    <span className="text-slate-700">Precios visibles para sucursales</span>
+                    <input
+                      type="checkbox"
+                      checked={mostrarPreciosCompradorPortal}
+                      onChange={(e) => setMostrarPreciosCompradorPortal(e.target.checked)}
+                    />
+                  </label>
+                  <label className="flex items-center justify-between rounded-lg border border-border bg-white px-3 py-2">
+                    <span className="text-slate-700">Precios visibles para aprobador</span>
+                    <input
+                      type="checkbox"
+                      checked={mostrarPreciosAprobadorPortal}
+                      onChange={(e) => setMostrarPreciosAprobadorPortal(e.target.checked)}
+                    />
+                  </label>
+                </div>
+
+                <p className="text-xs text-slate-500">
+                  Seleccionados para portal: <strong>{totalSeleccionadosPortal}</strong>. Si no activas la restricción,
+                  el portal seguirá mostrando todo el catálogo.
+                </p>
+              </div>
+
+              {!empresa.odoo_partner_id ? (
+                <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center">
+                  <p className="text-sm text-slate-500">Esta empresa no tiene configurado Odoo Partner ID.</p>
+                </div>
+              ) : loadingProductosOdoo ? (
+                <div className="flex items-center justify-center py-10">
+                  <Loader2 className="w-6 h-6 animate-spin text-primary" />
+                </div>
+              ) : errorProductosOdoo ? (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {errorProductosOdoo}
+                </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+                    <div className="relative lg:col-span-1">
+                      <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <input
+                        type="text"
+                        value={busquedaProducto}
+                        onChange={(e) => setBusquedaProducto(e.target.value)}
+                        placeholder="Buscar por nombre, referencia o descripción"
+                        className="w-full rounded-lg border border-border bg-white py-2.5 pl-9 pr-3 text-sm text-slate-900"
+                      />
+                    </div>
+
+                    <select
+                      value={categoriaProductoFiltro}
+                      onChange={(e) => setCategoriaProductoFiltro(e.target.value === 'todos' ? 'todos' : Number(e.target.value))}
+                      className="rounded-lg border border-border bg-white py-2.5 px-3 text-sm text-slate-700"
+                    >
+                      <option value="todos">Todas las categorías</option>
+                      {categoriasProductoDisponibles.map(([categoriaId, categoriaNombre]) => (
+                        <option key={categoriaId} value={categoriaId}>
+                          {categoriaNombre}
+                        </option>
+                      ))}
+                    </select>
+
+                    <select
+                      value={etiquetaProductoFiltro}
+                      onChange={(e) => setEtiquetaProductoFiltro(e.target.value === 'todos' ? 'todos' : Number(e.target.value))}
+                      className="rounded-lg border border-border bg-white py-2.5 px-3 text-sm text-slate-700"
+                    >
+                      <option value="todos">Todas las etiquetas</option>
+                      {etiquetasProductoDisponibles.map(([etiquetaId, etiquetaNombre]) => (
+                        <option key={etiquetaId} value={etiquetaId}>
+                          {etiquetaNombre}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="flex items-center justify-between text-xs text-slate-500">
+                    <span>Partner Odoo: {partnerIdProductos}</span>
+                    <span>
+                      Mostrando {productosFiltrados.length} de {productosOdoo.length} productos
+                    </span>
+                  </div>
+
+                  {avisoProductosOdoo && (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+                      {avisoProductosOdoo}
+                    </div>
+                  )}
+
+                  {productosFiltrados.length === 0 ? (
+                    <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center">
+                      <p className="text-sm text-slate-500">No hay productos que cumplan los filtros actuales.</p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                      {productosFiltrados.map((producto) => (
+                        <article key={producto.id} className="rounded-xl border border-border bg-white overflow-hidden relative">
+                          <div className="h-40 bg-slate-50 flex items-center justify-center border-b border-border">
+                            <label className="absolute z-10 right-2 top-2 inline-flex items-center gap-1 rounded-full bg-white/95 px-2 py-1 text-[11px] font-medium text-slate-700 border border-border">
+                              <input
+                                type="checkbox"
+                                checked={productosAutorizadosSeleccionados.has(producto.id)}
+                                onChange={() => handleToggleProductoAutorizado(producto.id)}
+                              />
+                              Portal
+                            </label>
+
+                            {producto.image_128 ? (
+                              <img
+                                src={`data:image/png;base64,${producto.image_128}`}
+                                alt={producto.name}
+                                className="h-full w-full object-contain p-3"
+                              />
+                            ) : (
+                              <div className="text-xs text-slate-400">Sin imagen</div>
+                            )}
+                          </div>
+
+                          <div className="p-4 space-y-2">
+                            <div className="flex items-start justify-between gap-3">
+                              <h3 className="text-sm font-semibold text-slate-900 leading-5">{producto.name}</h3>
+                              <span className="text-xs font-medium text-primary whitespace-nowrap">
+                                {new Intl.NumberFormat('es-CO', {
+                                  style: 'currency',
+                                  currency: 'COP',
+                                  maximumFractionDigits: 0,
+                                }).format(producto.list_price || 0)}
+                              </span>
+                            </div>
+
+                            <p className="text-xs text-slate-500">
+                              Ref: {typeof producto.default_code === 'string' ? producto.default_code : '—'}
+                            </p>
+
+                            {Array.isArray(producto.categ_id) && (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-1 text-xs text-slate-700">
+                                <Package className="w-3 h-3" />
+                                {producto.categ_id[1]}
+                              </span>
+                            )}
+
+                            <div className="flex flex-wrap gap-1.5 pt-1">
+                              {(Array.isArray(producto.product_tags) ? producto.product_tags : []).map(([tagId, tagName]) => (
+                                <span
+                                  key={`${producto.id}-${tagId}`}
+                                  className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary"
+                                >
+                                  <TagIcon className="w-3 h-3" />
+                                  {tagName}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </section>
+
+          {/* Section 4: Empresas y Sucursales */}
+          <section id="estructura" className="scroll-mt-24 bg-white rounded-xl shadow-sm border border-border overflow-hidden">
+            <div className="px-6 py-5 border-b border-border bg-slate-50/50 flex justify-between items-center">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">Empresas y Sucursales</h2>
+                <p className="text-sm text-slate-500 mt-1">
+                  Visualiza cómo quedó estructurado el cliente en la plataforma (aunque en Odoo venga como contactos o empresas separadas).
+                </p>
+              </div>
+              <Building2 className="w-5 h-5 text-slate-400" />
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="rounded-lg border border-border bg-slate-50 px-4 py-3">
+                  <p className="text-xs text-slate-500 uppercase tracking-wide">Empresa</p>
+                  <p className="text-sm font-semibold text-slate-900 mt-1">{empresa.nombre}</p>
+                </div>
+                <div className="rounded-lg border border-border bg-slate-50 px-4 py-3">
+                  <p className="text-xs text-slate-500 uppercase tracking-wide">NIT</p>
+                  <p className="text-sm font-semibold text-slate-900 mt-1">{empresa.nit || '—'}</p>
+                </div>
+                <div className="rounded-lg border border-border bg-slate-50 px-4 py-3">
+                  <p className="text-xs text-slate-500 uppercase tracking-wide">Sedes registradas</p>
+                  <p className="text-sm font-semibold text-slate-900 mt-1">{sedes.length}</p>
+                </div>
+              </div>
+
+              {sedes.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center">
+                  <p className="text-sm text-slate-500">No hay sedes asociadas todavía.</p>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Puedes importarlas desde Odoo en la vista de importar clientes usando el modo &quot;Importar como sede&quot;.
+                  </p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto rounded-lg border border-border">
+                  <table className="min-w-full divide-y divide-border text-sm">
+                    <thead className="bg-slate-50">
+                      <tr>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Sede</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Ciudad</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border bg-white">
+                      {sedes.map((sede) => (
+                        <tr key={sede.id}>
+                          <td className="px-4 py-3 font-medium text-slate-900">{sede.nombre}</td>
+                          <td className="px-4 py-3 text-slate-600">{sede.ciudad || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </section>
+
+          {/* Section 5: Asesores y Clientes */}
+          <section id="asesores" className="scroll-mt-24 bg-white rounded-xl shadow-sm border border-border overflow-hidden">
+            <div className="px-6 py-5 border-b border-border bg-slate-50/50 flex justify-between items-center">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">Asesores y Clientes</h2>
+                <p className="text-sm text-slate-500 mt-1">
+                  Gestiona manualmente qué asesores atienden esta empresa, incluso si Odoo no está perfectamente organizado.
+                </p>
+              </div>
+              <Users className="w-5 h-5 text-slate-400" />
+            </div>
+
+            <div className="p-6 space-y-4">
+              {empresa.odoo_comercial_id && !asesorCoincideComercial && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+                  <p className="text-sm text-amber-800">
+                    Comercial Odoo detectado: <strong>{empresa.odoo_comercial_nombre || 'Sin nombre'}</strong> (ID {empresa.odoo_comercial_id}).
+                  </p>
+                  <p className="text-xs text-amber-700 mt-1">
+                    No existe un asesor local activo con ese <code>odoo_user_id</code>. Crea/edita el asesor y asigna ese ID para vinculación automática.
+                  </p>
+                </div>
+              )}
+
+              {asesores.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center">
+                  <p className="text-sm text-slate-500">No hay asesores activos disponibles para asignar.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {asesores.map((asesor) => {
+                    const selected = asesoresAsignados.includes(asesor.id);
+                    return (
+                      <label
+                        key={asesor.id}
+                        className={`flex items-center justify-between rounded-lg border px-4 py-3 cursor-pointer transition-colors ${
+                          selected ? 'border-primary bg-primary/5' : 'border-border bg-white hover:bg-slate-50'
+                        }`}
+                      >
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900">
+                            {asesor.nombre} {asesor.apellido}
+                          </p>
+                          <p className="text-xs text-slate-500">{asesor.email}</p>
+                          <p className="text-xs text-slate-400 mt-0.5">
+                            {asesor.odoo_user_id ? `Odoo user: ${asesor.odoo_user_id}` : 'Sin odoo_user_id'}
+                          </p>
+                        </div>
+                        <input
+                          type="checkbox"
+                          checked={selected}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setAsesoresAsignados((prev) => (prev.includes(asesor.id) ? prev : [...prev, asesor.id]));
+                            } else {
+                              setAsesoresAsignados((prev) => prev.filter((id) => id !== asesor.id));
+                            }
+                          }}
+                          className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                        />
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+
+              <div className="flex justify-end">
+                <button
+                  onClick={handleGuardarAsesores}
+                  disabled={savingAsesores}
+                  className="inline-flex items-center gap-2 bg-slate-800 hover:bg-slate-900 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50"
+                >
+                  {savingAsesores ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                  Guardar Asesores
+                </button>
+              </div>
+            </div>
+          </section>
+
+          {/* Section 6: Gestión de Usuarios */}
+          <section id="users" className="scroll-mt-24 bg-white rounded-xl shadow-sm border border-border overflow-hidden">
+            <div className="px-6 py-5 border-b border-border bg-slate-50/50 flex flex-wrap justify-between items-center gap-4">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">Gestión de Usuarios</h2>
+                <p className="text-sm text-slate-500 mt-1">Administre el acceso de gerentes y personal de sucursal.</p>
+              </div>
+              <button className="flex items-center gap-2 bg-white border border-border hover:border-primary text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold transition hover:text-primary shadow-sm">
+                <Plus className="w-4 h-4" />
+                Agregar Usuario
+              </button>
+            </div>
+
+            {usuarios.length === 0 ? (
+              <div className="p-12 text-center">
+                <Users className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+                <p className="text-sm text-slate-500">No hay usuarios registrados para esta empresa.</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-border">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Usuario</th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Rol</th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Estado</th>
+                      <th className="relative px-6 py-3"><span className="sr-only">Acciones</span></th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-border">
+                    {usuarios.map((usuario) => {
+                      const initials = `${usuario.nombre[0]}${usuario.apellido[0]}`.toUpperCase();
+                      return (
+                        <tr key={usuario.id} className="hover:bg-slate-50 transition-colors">
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="flex items-center">
+                              <div className="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold text-sm">
+                                {initials}
+                              </div>
+                              <div className="ml-4">
+                                <div className="text-sm font-bold text-slate-900">{usuario.nombre} {usuario.apellido}</div>
+                                <div className="text-sm text-slate-500">{usuario.email}</div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="text-sm text-slate-900 font-medium capitalize">{usuario.rol.replace('_', ' ')}</div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full border ${
+                              usuario.activo
+                                ? 'bg-green-100 text-green-800 border-green-200'
+                                : 'bg-slate-100 text-slate-800 border-slate-200'
+                            }`}>
+                              {usuario.activo ? 'Activo' : 'Pendiente'}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                            <button className="text-slate-400 hover:text-primary transition-colors mx-2">
+                              <Pencil className="w-4 h-4" />
+                            </button>
+                            <button className="text-slate-400 hover:text-red-600 transition-colors mx-2">
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+
+          <div className="h-12" />
+        </div>
+      </div>
+
+      {/* Toast Notification */}
+      {toast && (
+        <div className="fixed bottom-6 right-6 z-50">
+          <div className="bg-white border-l-4 border-primary shadow-lg rounded-r-lg p-4 flex items-start gap-3 max-w-sm">
+            <Save className="w-5 h-5 text-primary mt-0.5 flex-shrink-0" />
+            <div>
+              <h4 className="text-sm font-bold text-slate-900">Cambios Guardados</h4>
+              <p className="text-xs text-slate-500 mt-1">{toast}</p>
+            </div>
+            <button onClick={() => setToast(null)} className="text-slate-400 hover:text-slate-600">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
