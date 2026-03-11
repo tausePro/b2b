@@ -10,7 +10,7 @@ import DashboardDireccion from '@/components/dashboards/DashboardDireccion';
 import { Loader2 } from 'lucide-react';
 
 export default function DashboardPage() {
-  const { user } = useAuth();
+  const { user, loading } = useAuth();
   const router = useRouter();
   const [isRedirecting, setIsRedirecting] = useState(false);
 
@@ -29,6 +29,15 @@ export default function DashboardPage() {
     }
   }, [user, router]);
 
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full mt-20 gap-4">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        <p className="text-muted">Cargando perfil...</p>
+      </div>
+    );
+  }
+
   if (!user) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-center space-y-4 mt-20">
@@ -43,7 +52,7 @@ export default function DashboardPage() {
     );
   }
 
-  if (isRedirecting) {
+  if (user.rol === 'super_admin' || isRedirecting) {
     return (
       <div className="flex flex-col items-center justify-center h-full mt-20 gap-4">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />

@@ -45,6 +45,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let mounted = true;
     let initialResolved = false;
+    let sessionSyncId = 0;
+
+    const fetchServerProfile = async (): Promise<User | null> => {
+      try {
+        const response = await fetch('/api/auth/perfil', {
+          method: 'GET',
+          credentials: 'include',
+          cache: 'no-store',
+        });
+
+        const result = (await response.json()) as {
+          profile?: Record<string, unknown>;
+          error?: string;
+          details?: unknown;
+        };
+
+        if (response.ok && result.profile) {
+          return mapProfileToUser(result.profile);
+        }
+
+        console.warn('[Auth] Fallback server-side de perfil falló:', result.error, result.details ?? null);
+      } catch (e) {
+        console.warn('[Auth] Excepción en fallback server-side de perfil:', e);
+      }
+
+      return null;
+    };
 
     const fetchProfile = async (authId: string): Promise<User | null> => {
       try {
@@ -70,6 +97,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.warn('[Auth] Query directa falló:', error?.message);
       } catch (e) {
         console.warn('[Auth] Query directa excepción:', e);
+      }
+
+      const serverProfile = await fetchServerProfile();
+      if (serverProfile) {
+        return serverProfile;
       }
 
       // Recuperación automática: si existe un usuario con el mismo email en public.usuarios
@@ -125,31 +157,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return null;
     };
 
-    const handleSession = async (session: { user: SupabaseUser } | null) => {
+    const handleSession = async (
+      session: { user: SupabaseUser } | null,
+      options: { allowServerFallback?: boolean } = {}
+    ) => {
+      const { allowServerFallback = true } = options;
+      const currentSyncId = ++sessionSyncId;
+
       if (!mounted) return;
 
       if (session?.user) {
         // getSession/get storage pueden traer sesiones viejas; validamos contra Auth server.
         const { data: validUserData, error: validUserError } = await supabase.auth.getUser();
-        const activeUser = validUserData?.user;
+        const activeUser = validUserData?.user ?? session.user;
 
-        if (validUserError || !activeUser) {
-          console.warn('[Auth] Sesión inválida o expirada. Se cerrará sesión local.', validUserError?.message);
-          await supabase.auth.signOut();
-          if (mounted) {
-            setSupabaseUser(null);
-            setUser(null);
-            setShowPricesOverride(null);
-            setLoading(false);
-          }
-          return;
+        if (validUserError) {
+          console.warn('[Auth] Validación getUser falló en cliente. Se usará la sesión disponible.', validUserError.message);
         }
 
         console.log('[Auth] Sesión activa:', activeUser.email, '| auth_id:', activeUser.id);
-        setSupabaseUser(activeUser);
         const profile = await fetchProfile(activeUser.id);
         const showPricesEmpresa = await resolveShowPricesByCompany(profile);
-        if (mounted) {
+        if (mounted && currentSyncId === sessionSyncId) {
+          setSupabaseUser(activeUser);
           setUser(profile);
           setShowPricesOverride(showPricesEmpresa);
           if (!profile) {
@@ -162,13 +192,61 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           }
         }
       } else {
-        console.log('[Auth] Sin sesión activa');
-        setSupabaseUser(null);
-        setUser(null);
-        setShowPricesOverride(null);
+        if (!allowServerFallback) {
+          console.log('[Auth] Sin sesión activa');
+          if (mounted && currentSyncId === sessionSyncId) {
+            setSupabaseUser(null);
+            setUser(null);
+            setShowPricesOverride(null);
+          }
+        } else {
+          const serverProfile = await fetchServerProfile();
+          const showPricesEmpresa = await resolveShowPricesByCompany(serverProfile);
+
+          if (mounted && currentSyncId === sessionSyncId) {
+            if (serverProfile) {
+              console.log('[Auth] Perfil resuelto desde sesión server-side');
+              setSupabaseUser(null);
+              setUser(serverProfile);
+              setShowPricesOverride(showPricesEmpresa);
+            } else {
+              console.log('[Auth] Sin sesión activa');
+              setSupabaseUser(null);
+              setUser(null);
+              setShowPricesOverride(null);
+            }
+          }
+        }
       }
 
-      if (mounted) setLoading(false);
+      if (mounted && currentSyncId === sessionSyncId) setLoading(false);
+    };
+
+    const bootstrapSession = async () => {
+      if (initialResolved || !mounted) return;
+
+      try {
+        const {
+          data: { session },
+          error,
+        } = await supabase.auth.getSession();
+
+        if (error) {
+          console.warn('[Auth] No se pudo resolver sesión inicial con getSession:', error.message);
+        }
+
+        if (!mounted || initialResolved) return;
+
+        initialResolved = true;
+        await handleSession(session);
+      } catch (e) {
+        console.warn('[Auth] Excepción resolviendo sesión inicial con getSession:', e);
+
+        if (!mounted || initialResolved) return;
+
+        initialResolved = true;
+        setLoading(false);
+      }
     };
 
     // onAuthStateChange dispara INITIAL_SESSION sincrónicamente al suscribirse
@@ -178,20 +256,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.log('[Auth] Evento:', event);
 
         if (event === 'INITIAL_SESSION') {
+          if (session?.user) {
+            initialResolved = true;
+            await handleSession(session);
+          }
+        } else if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
           initialResolved = true;
           await handleSession(session);
-        } else if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-          await handleSession(session);
         } else if (event === 'SIGNED_OUT') {
-          if (mounted) {
-            setSupabaseUser(null);
-            setUser(null);
-            setShowPricesOverride(null);
-            setLoading(false);
-          }
+          initialResolved = true;
+          await handleSession(null, { allowServerFallback: false });
         }
       }
     );
+
+    void bootstrapSession();
 
     // Fallback: si INITIAL_SESSION no dispara en 5s, forzar loading=false
     const timeout = setTimeout(() => {

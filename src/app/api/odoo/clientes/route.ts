@@ -1,12 +1,13 @@
 import { NextResponse } from 'next/server';
-import { authenticate, getClientes, getEtiquetasCliente, getConfigFromEnv } from '@/lib/odoo/client';
+import { authenticate, getClientes, getEtiquetasCliente } from '@/lib/odoo/client';
+import { getServerOdooConfig } from '@/lib/odoo/serverConfig';
 
 export async function GET() {
   try {
-    const config = getConfigFromEnv();
+    const config = await getServerOdooConfig();
     if (!config) {
       return NextResponse.json(
-        { error: 'Configuración de Odoo no encontrada en variables de entorno' },
+        { error: 'Configuración de Odoo no encontrada' },
         { status: 500 }
       );
     }

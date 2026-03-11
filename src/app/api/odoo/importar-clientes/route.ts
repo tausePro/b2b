@@ -1,5 +1,6 @@
 import { NextResponse, NextRequest } from 'next/server';
-import { authenticate, getClientes, getConfigFromEnv } from '@/lib/odoo/client';
+import { authenticate, getClientes } from '@/lib/odoo/client';
+import { getServerOdooConfig } from '@/lib/odoo/serverConfig';
 import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
@@ -144,7 +145,7 @@ async function sincronizarComercialYAsesor(
 export async function GET(request: NextRequest) {
   try {
     const includeContacts = request.nextUrl.searchParams.get('include_contacts') === 'true';
-    const config = getConfigFromEnv();
+    const config = await getServerOdooConfig();
     if (!config) {
       return NextResponse.json({ error: 'Configuración Odoo no encontrada' }, { status: 500 });
     }
@@ -259,7 +260,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'odoo_partner_id inválido' }, { status: 400 });
     }
 
-    const configOdoo = getConfigFromEnv();
+    const configOdoo = await getServerOdooConfig();
     if (!configOdoo) {
       return NextResponse.json({ error: 'Configuración Odoo no encontrada' }, { status: 500 });
     }

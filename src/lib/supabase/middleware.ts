@@ -25,22 +25,25 @@ export async function updateSession(request: NextRequest) {
     }
   );
 
-  const publicPaths = ['/login', '/auth/callback', '/api/odoo'];
+  const publicPaths = ['/login', '/auth/callback', '/api/odoo', '/api/auth'];
   const isPublicPath = publicPaths.some((path) =>
     request.nextUrl.pathname.startsWith(path)
   );
 
   try {
-    const { data: { session }, error } = await supabase.auth.getSession();
+    const {
+      data: { user },
+      error,
+    } = await supabase.auth.getUser();
 
-    if (!session && !isPublicPath) {
+    if (!user && !isPublicPath) {
       const url = request.nextUrl.clone();
       url.pathname = '/login';
       return NextResponse.redirect(url);
     }
     
     // Si hay sesión y está en el login, redirigir a dashboard
-    if (session && request.nextUrl.pathname === '/login') {
+    if (user && request.nextUrl.pathname === '/login') {
       const url = request.nextUrl.clone();
       url.pathname = '/dashboard';
       return NextResponse.redirect(url);

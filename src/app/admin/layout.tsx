@@ -56,21 +56,26 @@ export default function AdminLayout({
   children: React.ReactNode;
 }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const { user, loading, signOut } = useAuth();
+  const { user, supabaseUser, loading, signOut } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
 
   useEffect(() => {
     if (!loading) {
       if (!user) {
-        console.warn('[AdminLayout] Sin perfil de usuario, redirigiendo a /login');
-        router.replace('/login');
+        if (supabaseUser) {
+          console.warn('[AdminLayout] Sesión auth activa sin perfil. Redirigiendo a /dashboard');
+          router.replace('/dashboard');
+        } else {
+          console.warn('[AdminLayout] Sin sesión activa. Redirigiendo a /login');
+          router.replace('/login');
+        }
       } else if (user.rol !== 'super_admin') {
         console.warn('[AdminLayout] Rol no autorizado:', user.rol);
         router.replace('/dashboard');
       }
     }
-  }, [loading, user, router]);
+  }, [loading, user, supabaseUser, router]);
 
   if (loading) {
     return (
@@ -88,9 +93,12 @@ export default function AdminLayout({
       <div className="min-h-screen flex items-center justify-center bg-background-light">
         <div className="flex flex-col items-center gap-4 max-w-md text-center px-4">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
-          <p className="text-sm text-slate-500">Redirigiendo al login...</p>
-          <p className="text-xs text-slate-400">
-            Si esto persiste, verifica que tu usuario exista en la tabla <code className="bg-slate-100 px-1 rounded">usuarios</code> con rol <code className="bg-slate-100 px-1 rounded">super_admin</code>.
+          <p className="text-sm text-slate-500">
+            {user
+              ? 'Redirigiendo al panel autorizado...'
+              : supabaseUser
+                ? 'Redirigiendo al dashboard para resolver tu perfil...'
+                : 'Redirigiendo al inicio de sesión...'}
           </p>
         </div>
       </div>
