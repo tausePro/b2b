@@ -54,6 +54,15 @@ La política `pedido_items_insert` valida ahora la regla de catálogo restringid
 
 Migración: `supabase/migrations/012_blindaje_pedido_items_portal.sql`.
 
+## Recuperación automática de perfil Auth
+
+Se agregó una contingencia para el error **"Perfil no encontrado"** cuando el `auth.users.id` cambia pero `public.usuarios.auth_id` quedó desincronizado.
+
+- Nueva función RPC: `enlazar_mi_usuario_por_email()` (SECURITY DEFINER).
+- Esta función toma el email del JWT autenticado y relinka `usuarios.auth_id = auth.uid()` cuando encuentra el perfil por email.
+
+Migración: `supabase/migrations/013_auto_enlace_perfil_por_email.sql`.
+
 ## Portales cliente (comprador/aprobador)
 
 Mejoras implementadas en dashboard cliente:

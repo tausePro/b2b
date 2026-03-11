@@ -50,7 +50,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         const { data, error } = await supabase.rpc('get_mi_perfil');
         if (!error && data) {
-          return mapProfileToUser(data);
+          return mapProfileToUser(data as Record<string, unknown>);
         }
         console.warn('[Auth] RPC get_mi_perfil falló:', error?.message);
       } catch (e) {
@@ -62,7 +62,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           .from('usuarios')
           .select('*')
           .eq('auth_id', authId)
-          .single();
+          .maybeSingle();
 
         if (!error && data) {
           return mapProfileToUser(data as Record<string, unknown>);
@@ -70,6 +70,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.warn('[Auth] Query directa falló:', error?.message);
       } catch (e) {
         console.warn('[Auth] Query directa excepción:', e);
+      }
+
+      // Recuperación automática: si existe un usuario con el mismo email en public.usuarios
+      // pero auth_id quedó desincronizado, intentamos relinkearlo desde una RPC SECURITY DEFINER.
+      try {
+        const { data, error } = await supabase.rpc('enlazar_mi_usuario_por_email');
+        if (!error && data) {
+          console.warn('[Auth] Perfil recuperado por auto-enlace de auth_id/email');
+          return mapProfileToUser(data as Record<string, unknown>);
+        }
+        if (error) {
+          console.warn('[Auth] Auto-enlace de perfil no aplicado:', error.message);
+        }
+      } catch (e) {
+        console.warn('[Auth] Excepción en auto-enlace de perfil:', e);
       }
 
       return null;
@@ -114,16 +129,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!mounted) return;
 
       if (session?.user) {
-        console.log('[Auth] Sesión activa:', session.user.email, '| auth_id:', session.user.id);
-        setSupabaseUser(session.user);
-        const profile = await fetchProfile(session.user.id);
+        // getSession/get storage pueden traer sesiones viejas; validamos contra Auth server.
+        const { data: validUserData, error: validUserError } = await supabase.auth.getUser();
+        const activeUser = validUserData?.user;
+
+        if (validUserError || !activeUser) {
+          console.warn('[Auth] Sesión inválida o expirada. Se cerrará sesión local.', validUserError?.message);
+          await supabase.auth.signOut();
+          if (mounted) {
+            setSupabaseUser(null);
+            setUser(null);
+            setShowPricesOverride(null);
+            setLoading(false);
+          }
+          return;
+        }
+
+        console.log('[Auth] Sesión activa:', activeUser.email, '| auth_id:', activeUser.id);
+        setSupabaseUser(activeUser);
+        const profile = await fetchProfile(activeUser.id);
         const showPricesEmpresa = await resolveShowPricesByCompany(profile);
         if (mounted) {
           setUser(profile);
           setShowPricesOverride(showPricesEmpresa);
           if (!profile) {
             console.error(
-              '[Auth] ⚠️ PERFIL NO ENCONTRADO para auth_id:', session.user.id,
+              '[Auth] ⚠️ PERFIL NO ENCONTRADO para auth_id:', activeUser.id,
               '\n→ Ejecuta el seed SQL en Supabase SQL Editor para crear el registro en public.usuarios'
             );
           } else {
