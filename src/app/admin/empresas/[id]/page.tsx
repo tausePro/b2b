@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import Link from 'next/link';
@@ -32,6 +32,7 @@ interface Empresa {
   odoo_comercial_id: number | null;
   odoo_comercial_nombre: string | null;
   activa: boolean;
+  usa_sedes: boolean;
   slug: string | null;
   created_at: string;
 }
@@ -57,6 +58,7 @@ interface Usuario {
   email: string;
   rol: string;
   activo: boolean;
+  sede_id?: string | null;
 }
 
 interface Sede {
@@ -94,6 +96,25 @@ interface ProductoEmpresaOdoo {
 }
 
 type CategoriaAutorizada = 'aseo' | 'papeleria' | 'cafeteria' | 'personalizados';
+type UserRoleCliente = 'comprador' | 'aprobador';
+
+interface UserFormState {
+  nombre: string;
+  apellido: string;
+  email: string;
+  rol: UserRoleCliente;
+  sede_id: string;
+  password: string;
+}
+
+const initialUserFormState: UserFormState = {
+  nombre: '',
+  apellido: '',
+  email: '',
+  rol: 'comprador',
+  sede_id: '',
+  password: '',
+};
 
 function mapCategoriaAutorizada(nombreCategoria: string | null | undefined): CategoriaAutorizada {
   const categoria = (nombreCategoria || '').toLowerCase();
@@ -150,6 +171,10 @@ export default function EmpresaConfigPage() {
   const [etiquetaProductoFiltro, setEtiquetaProductoFiltro] = useState<number | 'todos'>('todos');
   const [activeSection, setActiveSection] = useState('branding');
   const [toast, setToast] = useState<string | null>(null);
+  const [showCreateUserModal, setShowCreateUserModal] = useState(false);
+  const [creatingUser, setCreatingUser] = useState(false);
+  const [createUserError, setCreateUserError] = useState<string | null>(null);
+  const [newUserForm, setNewUserForm] = useState<UserFormState>(initialUserFormState);
 
   const partnerIdProductos = useMemo(() => {
     const partnerDesdeConfig = Number(config?.odoo_partner_id);
@@ -159,102 +184,168 @@ export default function EmpresaConfigPage() {
     return empresa?.odoo_partner_id ?? null;
   }, [config?.odoo_partner_id, empresa?.odoo_partner_id]);
 
-  useEffect(() => {
-    const fetchData = async () => {
-      const [empresaRes, configRes, usuariosRes, sedesRes, asesoresRes, asignacionesRes, productosAuthRes] = await Promise.allSettled([
-        supabase.from('empresas').select('*').eq('id', empresaId).single(),
-        supabase.from('empresa_configs').select('*').eq('empresa_id', empresaId).single(),
-        supabase.from('usuarios').select('id, nombre, apellido, email, rol, activo').eq('empresa_id', empresaId),
-        supabase.from('sedes').select('id, nombre_sede, ciudad').eq('empresa_id', empresaId),
-        supabase
-          .from('usuarios')
-          .select('id, nombre, apellido, email, activo, odoo_user_id')
-          .eq('rol', 'asesor')
-          .eq('activo', true)
-          .order('nombre'),
-        supabase
-          .from('asesor_empresas')
-          .select('usuario_id')
-          .eq('empresa_id', empresaId)
-          .eq('activo', true),
-        supabase
-          .from('productos_autorizados')
-          .select('odoo_product_id, activo')
-          .eq('empresa_id', empresaId),
-      ]);
+  const fetchData = useCallback(async () => {
+    setLoading(true);
 
-      if (empresaRes.status === 'fulfilled' && empresaRes.value.data) {
-        setEmpresa(empresaRes.value.data as Empresa);
+    const [empresaRes, configRes, usuariosRes, sedesRes, asesoresRes, asignacionesRes, productosAuthRes] = await Promise.allSettled([
+      supabase.from('empresas').select('*').eq('id', empresaId).single(),
+      supabase.from('empresa_configs').select('*').eq('empresa_id', empresaId).single(),
+      supabase.from('usuarios').select('id, nombre, apellido, email, rol, activo, sede_id').eq('empresa_id', empresaId),
+      supabase.from('sedes').select('id, nombre_sede, ciudad').eq('empresa_id', empresaId),
+      supabase
+        .from('usuarios')
+        .select('id, nombre, apellido, email, activo, odoo_user_id')
+        .eq('rol', 'asesor')
+        .eq('activo', true)
+        .order('nombre'),
+      supabase
+        .from('asesor_empresas')
+        .select('usuario_id')
+        .eq('empresa_id', empresaId)
+        .eq('activo', true),
+      supabase
+        .from('productos_autorizados')
+        .select('odoo_product_id, activo')
+        .eq('empresa_id', empresaId),
+    ]);
+
+    if (empresaRes.status === 'fulfilled' && empresaRes.value.data) {
+      setEmpresa(empresaRes.value.data as Empresa);
+    }
+    if (configRes.status === 'fulfilled' && configRes.value.data) {
+      const rawConfig = configRes.value.data;
+      let modulosArray: string[] = [];
+      if (Array.isArray(rawConfig.modulos_activos)) {
+        modulosArray = rawConfig.modulos_activos;
+      } else if (typeof rawConfig.modulos_activos === 'object' && rawConfig.modulos_activos !== null) {
+        modulosArray = Object.entries(rawConfig.modulos_activos)
+          .filter(([, isActive]) => isActive)
+          .map(([key]) => key);
       }
-      if (configRes.status === 'fulfilled' && configRes.value.data) {
-        const rawConfig = configRes.value.data;
-        // Si modulos_activos viene como objeto JSON (ej: {"presupuestos": true, "aprobaciones": true})
-        // lo convertimos a array de strings para la UI
-        let modulosArray: string[] = [];
-        if (Array.isArray(rawConfig.modulos_activos)) {
-          modulosArray = rawConfig.modulos_activos;
-        } else if (typeof rawConfig.modulos_activos === 'object' && rawConfig.modulos_activos !== null) {
-          modulosArray = Object.entries(rawConfig.modulos_activos)
-            .filter(([, isActive]) => isActive)
-            .map(([key]) => key);
-        }
-        
-        setConfig({
-          ...rawConfig,
-          modulos_activos: modulosArray,
-          configuracion_extra:
-            rawConfig.configuracion_extra && typeof rawConfig.configuracion_extra === 'object'
-              ? rawConfig.configuracion_extra
-              : {},
-        } as EmpresaConfig);
-
-        const extra =
+      
+      setConfig({
+        ...rawConfig,
+        modulos_activos: modulosArray,
+        configuracion_extra:
           rawConfig.configuracion_extra && typeof rawConfig.configuracion_extra === 'object'
-            ? (rawConfig.configuracion_extra as Record<string, unknown>)
-            : {};
-        setRestringirCatalogoPortal(Boolean(extra.restringir_catalogo_portal));
-        setMostrarPreciosCompradorPortal(
-          typeof extra.mostrar_precios_comprador === 'boolean' ? extra.mostrar_precios_comprador : false
-        );
-        setMostrarPreciosAprobadorPortal(
-          typeof extra.mostrar_precios_aprobador === 'boolean' ? extra.mostrar_precios_aprobador : true
-        );
-      }
-      if (usuariosRes.status === 'fulfilled' && usuariosRes.value.data) {
-        setUsuarios(usuariosRes.value.data as Usuario[]);
-      }
-      if (sedesRes.status === 'fulfilled' && sedesRes.value.data) {
-        // Mapear nombre_sede a nombre para la UI
-        const sedesData = sedesRes.value.data.map((s: { id: string; nombre_sede: string; ciudad: string | null }) => ({
-          id: s.id,
-          nombre: s.nombre_sede,
-          ciudad: s.ciudad,
-        }));
-        setSedes(sedesData);
-      }
+            ? rawConfig.configuracion_extra
+            : {},
+      } as EmpresaConfig);
 
-      if (asesoresRes.status === 'fulfilled' && asesoresRes.value.data) {
-        setAsesores(asesoresRes.value.data as Asesor[]);
-      }
+      const extra =
+        rawConfig.configuracion_extra && typeof rawConfig.configuracion_extra === 'object'
+          ? (rawConfig.configuracion_extra as Record<string, unknown>)
+          : {};
+      setRestringirCatalogoPortal(Boolean(extra.restringir_catalogo_portal));
+      setMostrarPreciosCompradorPortal(
+        typeof extra.mostrar_precios_comprador === 'boolean' ? extra.mostrar_precios_comprador : false
+      );
+      setMostrarPreciosAprobadorPortal(
+        typeof extra.mostrar_precios_aprobador === 'boolean' ? extra.mostrar_precios_aprobador : true
+      );
+    }
+    if (usuariosRes.status === 'fulfilled' && usuariosRes.value.data) {
+      setUsuarios(usuariosRes.value.data as Usuario[]);
+    }
+    if (sedesRes.status === 'fulfilled' && sedesRes.value.data) {
+      const sedesData = sedesRes.value.data.map((s: { id: string; nombre_sede: string; ciudad: string | null }) => ({
+        id: s.id,
+        nombre: s.nombre_sede,
+        ciudad: s.ciudad,
+      }));
+      setSedes(sedesData);
+    }
 
-      if (asignacionesRes.status === 'fulfilled' && asignacionesRes.value.data) {
-        setAsesoresAsignados(
-          (asignacionesRes.value.data as AsesorAsignacion[]).map((asignacion) => asignacion.usuario_id)
-        );
-      }
+    if (asesoresRes.status === 'fulfilled' && asesoresRes.value.data) {
+      setAsesores(asesoresRes.value.data as Asesor[]);
+    }
 
-      if (productosAuthRes.status === 'fulfilled' && productosAuthRes.value.data) {
-        const idsActivos = (productosAuthRes.value.data as { odoo_product_id: number; activo: boolean }[])
-          .filter((item) => item.activo)
-          .map((item) => item.odoo_product_id);
-        setProductosAutorizadosSeleccionados(new Set(idsActivos));
-      }
+    if (asignacionesRes.status === 'fulfilled' && asignacionesRes.value.data) {
+      setAsesoresAsignados(
+        (asignacionesRes.value.data as AsesorAsignacion[]).map((asignacion) => asignacion.usuario_id)
+      );
+    }
 
-      setLoading(false);
-    };
+    if (productosAuthRes.status === 'fulfilled' && productosAuthRes.value.data) {
+      const idsActivos = (productosAuthRes.value.data as { odoo_product_id: number; activo: boolean }[])
+        .filter((item) => item.activo)
+        .map((item) => item.odoo_product_id);
+      setProductosAutorizadosSeleccionados(new Set(idsActivos));
+    }
 
-    fetchData();
+    setLoading(false);
   }, [empresaId]);
+
+  useEffect(() => {
+    void fetchData();
+  }, [fetchData]);
+
+  const closeCreateUserModal = () => {
+    setShowCreateUserModal(false);
+    setCreateUserError(null);
+    setNewUserForm(initialUserFormState);
+  };
+
+  const handleCreateUser = async () => {
+    if (!empresa) return;
+
+    const nombre = newUserForm.nombre.trim();
+    const apellido = newUserForm.apellido.trim();
+    const email = newUserForm.email.trim().toLowerCase();
+    const password = newUserForm.password;
+    const requiereSede = newUserForm.rol === 'comprador' && empresa.usa_sedes;
+
+    if (!nombre || !apellido || !email || !password) {
+      setCreateUserError('Completa nombre, apellido, email y contraseña temporal.');
+      return;
+    }
+
+    if (password.length < 8) {
+      setCreateUserError('La contraseña temporal debe tener al menos 8 caracteres.');
+      return;
+    }
+
+    if (requiereSede && !newUserForm.sede_id) {
+      setCreateUserError('Debes asignar una sede al usuario comprador.');
+      return;
+    }
+
+    setCreatingUser(true);
+    setCreateUserError(null);
+
+    try {
+      const response = await fetch(`/api/admin/empresas/${empresaId}/usuarios`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          nombre,
+          apellido,
+          email,
+          password,
+          rol: newUserForm.rol,
+          sede_id: newUserForm.rol === 'comprador' ? (newUserForm.sede_id || null) : null,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        setCreateUserError(result.error || 'No se pudo crear el usuario.');
+        return;
+      }
+
+      await fetchData();
+      closeCreateUserModal();
+      setToast(`Usuario ${result.usuario?.email || email} creado correctamente.`);
+      setTimeout(() => setToast(null), 3000);
+    } catch (error) {
+      setCreateUserError(error instanceof Error ? error.message : 'No se pudo crear el usuario.');
+    } finally {
+      setCreatingUser(false);
+    }
+  };
 
   useEffect(() => {
     const partnerId = partnerIdProductos;
@@ -1226,7 +1317,13 @@ export default function EmpresaConfigPage() {
                 <h2 className="text-lg font-bold text-slate-900">Gestión de Usuarios</h2>
                 <p className="text-sm text-slate-500 mt-1">Administre el acceso de gerentes y personal de sucursal.</p>
               </div>
-              <button className="flex items-center gap-2 bg-white border border-border hover:border-primary text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold transition hover:text-primary shadow-sm">
+              <button
+                onClick={() => {
+                  setCreateUserError(null);
+                  setShowCreateUserModal(true);
+                }}
+                className="flex items-center gap-2 bg-white border border-border hover:border-primary text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold transition hover:text-primary shadow-sm"
+              >
                 <Plus className="w-4 h-4" />
                 Agregar Usuario
               </button>
@@ -1297,7 +1394,148 @@ export default function EmpresaConfigPage() {
         </div>
       </div>
 
-      {/* Toast Notification */}
+      {showCreateUserModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 px-4">
+          <div className="w-full max-w-2xl rounded-2xl border border-border bg-white shadow-2xl">
+            <div className="flex items-start justify-between gap-4 border-b border-border px-6 py-5">
+              <div>
+                <h3 className="text-lg font-bold text-slate-900">Crear usuario cliente</h3>
+                <p className="mt-1 text-sm text-slate-500">
+                  El usuario se creará en autenticación y quedará asociado a {empresa.nombre}.
+                </p>
+              </div>
+              <button
+                onClick={closeCreateUserModal}
+                disabled={creatingUser}
+                className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-50 hover:text-slate-600"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="space-y-5 px-6 py-6">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-slate-700">Nombre</label>
+                  <input
+                    type="text"
+                    value={newUserForm.nombre}
+                    onChange={(e) => setNewUserForm((prev) => ({ ...prev, nombre: e.target.value }))}
+                    className="w-full rounded-lg border border-border bg-white px-3 py-2.5 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                    placeholder="Nombre"
+                  />
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-slate-700">Apellido</label>
+                  <input
+                    type="text"
+                    value={newUserForm.apellido}
+                    onChange={(e) => setNewUserForm((prev) => ({ ...prev, apellido: e.target.value }))}
+                    className="w-full rounded-lg border border-border bg-white px-3 py-2.5 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                    placeholder="Apellido"
+                  />
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-slate-700">Email</label>
+                  <input
+                    type="email"
+                    value={newUserForm.email}
+                    onChange={(e) => setNewUserForm((prev) => ({ ...prev, email: e.target.value }))}
+                    className="w-full rounded-lg border border-border bg-white px-3 py-2.5 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                    placeholder="usuario@empresa.com"
+                  />
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-slate-700">Rol</label>
+                  <select
+                    value={newUserForm.rol}
+                    onChange={(e) => {
+                      const rol = e.target.value as UserRoleCliente;
+                      setNewUserForm((prev) => ({
+                        ...prev,
+                        rol,
+                        sede_id: rol === 'comprador' ? prev.sede_id : '',
+                      }));
+                    }}
+                    className="w-full rounded-lg border border-border bg-white px-3 py-2.5 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                  >
+                    <option value="comprador">Comprador</option>
+                    <option value="aprobador">Aprobador</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-slate-700">Contraseña temporal</label>
+                  <input
+                    type="password"
+                    value={newUserForm.password}
+                    onChange={(e) => setNewUserForm((prev) => ({ ...prev, password: e.target.value }))}
+                    className="w-full rounded-lg border border-border bg-white px-3 py-2.5 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                    placeholder="Mínimo 8 caracteres"
+                  />
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-slate-700">
+                    Sede {empresa.usa_sedes && newUserForm.rol === 'comprador' ? '(obligatoria)' : '(opcional)'}
+                  </label>
+                  <select
+                    value={newUserForm.sede_id}
+                    onChange={(e) => setNewUserForm((prev) => ({ ...prev, sede_id: e.target.value }))}
+                    disabled={newUserForm.rol !== 'comprador' || sedes.length === 0}
+                    className="w-full rounded-lg border border-border bg-white px-3 py-2.5 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-slate-100 disabled:text-slate-400"
+                  >
+                    <option value="">
+                      {sedes.length === 0
+                        ? 'Sin sedes disponibles'
+                        : newUserForm.rol === 'comprador'
+                          ? 'Selecciona una sede'
+                          : 'No aplica para este rol'}
+                    </option>
+                    {sedes.map((sede) => (
+                      <option key={sede.id} value={sede.id}>
+                        {sede.nombre}{sede.ciudad ? ` · ${sede.ciudad}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600">
+                <p>
+                  La empresa {empresa.usa_sedes ? 'opera con sedes' : 'no exige sedes'}.
+                  {newUserForm.rol === 'comprador'
+                    ? ' Los compradores quedan listos para operar en su sede asignada.'
+                    : ' Los aprobadores se crean a nivel empresa.'}
+                </p>
+              </div>
+
+              {createUserError && (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {createUserError}
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-3 border-t border-border px-6 py-4">
+              <button
+                onClick={closeCreateUserModal}
+                disabled={creatingUser}
+                className="rounded-lg border border-border px-4 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleCreateUser}
+                disabled={creatingUser}
+                className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white transition hover:bg-primary-dark disabled:opacity-50"
+              >
+                {creatingUser ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                Crear usuario
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {toast && (
         <div className="fixed bottom-6 right-6 z-50">
           <div className="bg-white border-l-4 border-primary shadow-lg rounded-r-lg p-4 flex items-start gap-3 max-w-sm">
