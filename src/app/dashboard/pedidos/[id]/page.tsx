@@ -25,6 +25,7 @@ interface PedidoDetalle {
   id: string;
   numero: string;
   estado: string;
+  odoo_sale_order_id: number | null;
   valor_total_cop: number;
   total_items: number;
   comentarios_sede: string | null;
@@ -57,6 +58,16 @@ interface LogEntry {
   created_at: string;
 }
 
+interface OdooSaleOrderSummary {
+  id: number;
+  name: string | null;
+  state: string | null;
+  amountUntaxed: number;
+  amountTax: number;
+  amountTotal: number;
+  currencyName: string | null;
+}
+
 export default function DetallePedidoPage() {
   const { user, showPrices } = useAuth();
   const params = useParams();
@@ -66,6 +77,8 @@ export default function DetallePedidoPage() {
   const [pedido, setPedido] = useState<PedidoDetalle | null>(null);
   const [items, setItems] = useState<ItemDetalle[]>([]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [odooSummary, setOdooSummary] = useState<OdooSaleOrderSummary | null>(null);
+  const [loadingOdooSummary, setLoadingOdooSummary] = useState(false);
   const [loading, setLoading] = useState(true);
   const [procesando, setProcesando] = useState(false);
   const supabase = createClient();
@@ -74,6 +87,26 @@ export default function DetallePedidoPage() {
     fetchPedido();
   }, [pedidoId]);
 
+  const fetchOdooSummary = async (targetPedidoId: string) => {
+    setLoadingOdooSummary(true);
+
+    try {
+      const response = await fetch(`/api/pedidos/${targetPedidoId}/odoo-resumen`);
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload.details || payload.error || 'No se pudo cargar el resumen de Odoo.');
+      }
+
+      setOdooSummary((payload.odoo_sale_order || null) as OdooSaleOrderSummary | null);
+    } catch (error) {
+      console.error('Error cargando resumen de Odoo:', error);
+      setOdooSummary(null);
+    } finally {
+      setLoadingOdooSummary(false);
+    }
+  };
+
   const fetchPedido = async () => {
     setLoading(true);
 
@@ -81,7 +114,7 @@ export default function DetallePedidoPage() {
       supabase
         .from('pedidos')
         .select(`
-          id, numero, estado, valor_total_cop, total_items, comentarios_sede, comentarios_aprobador,
+          id, numero, estado, odoo_sale_order_id, valor_total_cop, total_items, comentarios_sede, comentarios_aprobador,
           excede_presupuesto, justificacion_exceso, fecha_creacion, updated_at,
           fecha_aprobacion, fecha_validacion,
           empresa:empresas(nombre),
@@ -102,7 +135,21 @@ export default function DetallePedidoPage() {
         .order('created_at', { ascending: false }),
     ]);
 
-    if (pedidoRes.data) setPedido(pedidoRes.data as unknown as PedidoDetalle);
+    if (pedidoRes.data) {
+      const pedidoData = pedidoRes.data as unknown as PedidoDetalle;
+      setPedido(pedidoData);
+
+      if (pedidoData.odoo_sale_order_id) {
+        await fetchOdooSummary(pedidoData.id);
+      } else {
+        setOdooSummary(null);
+        setLoadingOdooSummary(false);
+      }
+    } else {
+      setOdooSummary(null);
+      setLoadingOdooSummary(false);
+    }
+
     if (itemsRes.data) setItems(itemsRes.data as unknown as ItemDetalle[]);
     if (logsRes.data) setLogs(logsRes.data as LogEntry[]);
 
@@ -113,16 +160,35 @@ export default function DetallePedidoPage() {
     if (!user || !pedido) return;
     setProcesando(true);
 
+    if (accion === 'aprobar') {
+      try {
+        const response = await fetch(`/api/pedidos/${pedido.id}/aprobar`, {
+          method: 'POST',
+        });
+        const payload = await response.json();
+
+        if (!response.ok) {
+          throw new Error(payload.details || payload.error || 'No se pudo aprobar el pedido.');
+        }
+
+        if (payload.warning) {
+          console.warn('[DetallePedido] Advertencia al registrar trazabilidad:', payload.warning);
+        }
+
+        await fetchPedido();
+      } catch (error) {
+        console.error('Error aprobando pedido y enviando a Odoo:', error);
+        alert(error instanceof Error ? error.message : 'No se pudo aprobar el pedido y enviarlo a Odoo.');
+      } finally {
+        setProcesando(false);
+      }
+      return;
+    }
+
     const updates: Record<string, unknown> = {};
     let logDescripcion = '';
 
     switch (accion) {
-      case 'aprobar':
-        updates.estado = 'aprobado';
-        updates.aprobado_por = user.id;
-        updates.fecha_aprobacion = new Date().toISOString();
-        logDescripcion = 'Pedido aprobado por gerencia';
-        break;
       case 'rechazar':
         updates.estado = 'rechazado';
         logDescripcion = 'Pedido rechazado por gerencia';
@@ -183,7 +249,9 @@ export default function DetallePedidoPage() {
   }
 
   const canApprove = user?.rol === 'aprobador' && pedido.estado === 'en_aprobacion';
-  const canValidate = user?.rol === 'asesor' && pedido.estado === 'aprobado';
+  const canValidate = user?.rol === 'asesor' && pedido.estado === 'aprobado' && !pedido.odoo_sale_order_id;
+  const estadoVisual = pedido.odoo_sale_order_id ? 'procesado_odoo' : pedido.estado;
+  const subtotalVisual = odooSummary?.amountUntaxed ?? pedido.valor_total_cop;
 
   return (
     <div className="space-y-6">
@@ -196,7 +264,7 @@ export default function DetallePedidoPage() {
           <div>
             <div className="flex items-center gap-3">
               <h1 className="text-2xl font-bold text-foreground">{pedido.numero}</h1>
-              <StatusBadge estado={pedido.estado} />
+              <StatusBadge estado={estadoVisual} />
             </div>
             <p className="text-muted text-sm mt-0.5">
               Creado el {formatDateTime(pedido.fecha_creacion)}
@@ -293,7 +361,7 @@ export default function DetallePedidoPage() {
                   <tfoot>
                     <tr className="bg-background-light/50">
                       <td colSpan={3} />
-                      <td className="py-3 px-4 text-right font-semibold text-muted">Total</td>
+                      <td className="py-3 px-4 text-right font-semibold text-muted">Subtotal</td>
                       <td className="py-3 px-4 text-right font-bold text-lg text-primary">{formatCOP(pedido.valor_total_cop)}</td>
                     </tr>
                   </tfoot>
@@ -410,17 +478,30 @@ export default function DetallePedidoPage() {
               <div className="space-y-2">
                 <div className="flex justify-between text-sm">
                   <span className="text-muted">Subtotal</span>
-                  <span className="font-medium">{formatCOP(pedido.valor_total_cop)}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted">IVA (19%)</span>
-                  <span className="font-medium">{formatCOP(pedido.valor_total_cop * 0.19)}</span>
-                </div>
-                <div className="border-t border-border pt-2 flex justify-between">
-                  <span className="font-semibold text-foreground">Total</span>
-                  <span className="font-bold text-lg text-primary">{formatCOP(pedido.valor_total_cop * 1.19)}</span>
+                  <span className="font-medium">{formatCOP(subtotalVisual)}</span>
                 </div>
               </div>
+              {loadingOdooSummary ? (
+                <p className="text-xs text-muted mt-3">Cargando impuestos reales desde Odoo...</p>
+              ) : odooSummary ? (
+                <div className="space-y-2 mt-2">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted">Impuestos</span>
+                    <span className="font-medium">{formatCOP(odooSummary.amountTax)}</span>
+                  </div>
+                  <div className="border-t border-border pt-2 flex justify-between">
+                    <span className="font-semibold text-foreground">Total</span>
+                    <span className="font-bold text-lg text-primary">{formatCOP(odooSummary.amountTotal)}</span>
+                  </div>
+                  {odooSummary.name && (
+                    <p className="text-xs text-muted">Totales sincronizados desde Odoo ({odooSummary.name}).</p>
+                  )}
+                </div>
+              ) : (
+                <p className="text-xs text-muted mt-3">
+                  Los impuestos varían por producto y se calculan en Odoo al generar la cotización.
+                </p>
+              )}
             </div>
           )}
 
@@ -428,12 +509,13 @@ export default function DetallePedidoPage() {
           <div className="bg-white rounded-xl border border-border p-5">
             <h2 className="font-semibold text-foreground mb-3">Estado Actual</h2>
             <div className="flex items-center gap-2 mb-3">
-              <StatusBadge estado={pedido.estado} />
+              <StatusBadge estado={estadoVisual} />
             </div>
             <div className="space-y-1 text-xs text-muted">
               <p>Creado: {formatDateTime(pedido.fecha_creacion)}</p>
               {pedido.fecha_aprobacion && <p>Aprobado: {formatDateTime(pedido.fecha_aprobacion)}</p>}
               {pedido.fecha_validacion && <p>Validado: {formatDateTime(pedido.fecha_validacion)}</p>}
+              {pedido.odoo_sale_order_id && <p>Cotización Odoo ID: {pedido.odoo_sale_order_id}</p>}
               <p>Última actualización: {formatDateTime(pedido.updated_at)}</p>
             </div>
           </div>

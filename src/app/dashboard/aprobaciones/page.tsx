@@ -69,27 +69,27 @@ export default function AprobacionesPage() {
   const handleAprobar = async (pedidoId: string) => {
     if (!user) return;
     setProcesando(pedidoId);
-
-    const { error } = await supabase
-      .from('pedidos')
-      .update({
-        estado: 'aprobado',
-        aprobado_por: user.id,
-        fecha_aprobacion: new Date().toISOString(),
-      })
-      .eq('id', pedidoId);
-
-    if (!error) {
-      await supabase.from('logs_trazabilidad').insert({
-        pedido_id: pedidoId,
-        accion: 'aprobacion',
-        descripcion: 'Pedido aprobado por gerencia',
-        usuario_id: user.id,
-        usuario_nombre: `${user.nombre} ${user.apellido}`,
+    try {
+      const response = await fetch(`/api/pedidos/${pedidoId}/aprobar`, {
+        method: 'POST',
       });
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload.details || payload.error || 'No se pudo aprobar el pedido.');
+      }
+
+      if (payload.warning) {
+        console.warn('[Aprobaciones] Advertencia al registrar trazabilidad:', payload.warning);
+      }
+
       fetchPedidos();
+    } catch (error) {
+      console.error('Error aprobando pedido y enviando a Odoo:', error);
+      alert(error instanceof Error ? error.message : 'No se pudo aprobar el pedido y enviarlo a Odoo.');
+    } finally {
+      setProcesando(null);
     }
-    setProcesando(null);
   };
 
   const handleRechazar = async (pedidoId: string) => {

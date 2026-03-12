@@ -22,6 +22,7 @@ interface PedidoAsesor {
   id: string;
   numero: string;
   estado: string;
+  odoo_sale_order_id: number | null;
   valor_total_cop: number;
   total_items: number;
   comentarios_sede: string | null;
@@ -49,14 +50,18 @@ export default function GestionPedidosPage() {
     let query = supabase
       .from('pedidos')
       .select(`
-        id, numero, estado, valor_total_cop, total_items, comentarios_sede, fecha_creacion,
+        id, numero, estado, odoo_sale_order_id, valor_total_cop, total_items, comentarios_sede, fecha_creacion,
         empresa:empresas(nombre),
         sede:sedes(nombre_sede),
         creador:usuarios!pedidos_usuario_creador_id_fkey(nombre, apellido)
       `)
       .order('fecha_creacion', { ascending: false });
 
-    if (filtroEstado !== 'todos') {
+    if (filtroEstado === 'aprobado') {
+      query = query.eq('estado', 'aprobado').is('odoo_sale_order_id', null);
+    } else if (filtroEstado === 'procesado_odoo') {
+      query = query.not('odoo_sale_order_id', 'is', null);
+    } else if (filtroEstado !== 'todos') {
       query = query.eq('estado', filtroEstado);
     }
 
@@ -104,14 +109,14 @@ export default function GestionPedidosPage() {
       )
     : pedidos;
 
-  const porValidar = pedidos.filter((p) => p.estado === 'aprobado').length;
-  const validados = pedidos.filter((p) => p.estado === 'en_validacion_imprima' || p.estado === 'procesado_odoo').length;
+  const porValidar = pedidos.filter((p) => p.estado === 'aprobado' && !p.odoo_sale_order_id).length;
+  const validados = pedidos.filter((p) => p.estado === 'en_validacion_imprima' || p.estado === 'procesado_odoo' || Boolean(p.odoo_sale_order_id)).length;
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-foreground">Gestión de Pedidos</h1>
-        <p className="text-muted text-sm mt-1">Valida pedidos aprobados para sincronizar con Odoo</p>
+        <p className="text-muted text-sm mt-1">Revisa pedidos aprobados y su estado de envío a Odoo</p>
       </div>
 
       {/* KPIs */}
@@ -213,8 +218,8 @@ export default function GestionPedidosPage() {
                     <td className="py-3 px-4 text-muted">{formatDate(pedido.fecha_creacion)}</td>
                     <td className="py-3 px-4 text-right font-semibold">{formatCOP(pedido.valor_total_cop)}</td>
                     <td className="py-3 px-4 text-center">
-                      <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${getEstadoColor(pedido.estado)}`}>
-                        {getEstadoLabel(pedido.estado)}
+                      <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${getEstadoColor(pedido.odoo_sale_order_id ? 'procesado_odoo' : pedido.estado)}`}>
+                        {getEstadoLabel(pedido.odoo_sale_order_id ? 'procesado_odoo' : pedido.estado)}
                       </span>
                     </td>
                     <td className="py-3 px-4">
@@ -226,7 +231,7 @@ export default function GestionPedidosPage() {
                         >
                           <Eye className="w-4 h-4" />
                         </Link>
-                        {pedido.estado === 'aprobado' && (
+                        {pedido.estado === 'aprobado' && !pedido.odoo_sale_order_id && (
                           <button
                             onClick={() => handleValidar(pedido.id)}
                             disabled={procesando === pedido.id}

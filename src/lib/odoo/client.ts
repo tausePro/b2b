@@ -39,7 +39,6 @@ function buildXmlRpcCall(method: string, params: unknown[]): string {
       return `<value><string>${escaped}</string></value>`;
     }
     if (Array.isArray(val)) {
-      const items = val.map((v) => `<data>${encodeValue(v)}</data>`).join('');
       return `<value><array><data>${val.map(encodeValue).join('')}</data></array></value>`;
     }
     if (typeof val === 'object') {
@@ -406,6 +405,17 @@ export async function read(
   return result as Record<string, unknown>[];
 }
 
+export async function create(
+  model: string,
+  values: Record<string, unknown>,
+  session?: OdooSession,
+  cfg?: OdooConfig
+): Promise<number> {
+  const s = session || await authenticate(cfg);
+  const result = await executeKw(s, model, 'create', [values]);
+  return result as number;
+}
+
 export async function fieldsGet(
   model: string,
   attributes: string[] = ['string', 'type', 'required'],
@@ -465,6 +475,199 @@ export interface OdooCategory {
   parent_id: [number, string] | false;
 }
 
+export interface OdooPricelistItem {
+  id: number;
+  pricelist_id: [number, string] | false;
+  applied_on: string;
+  product_tmpl_id: [number, string] | false;
+  product_id: [number, string] | false;
+  categ_id: [number, string] | false;
+  compute_price: string;
+  fixed_price: number;
+  percent_price: number;
+  base: string;
+  min_quantity: number;
+}
+
+export interface OdooSaleOrderLineInput {
+  productTemplateId: number;
+  name: string;
+  quantity: number;
+  priceUnit: number;
+}
+
+export interface OdooSaleOrderResult {
+  id: number;
+  name: string | null;
+  state: string | null;
+  existing: boolean;
+}
+
+export interface OdooSaleOrderSummary {
+  id: number;
+  name: string | null;
+  state: string | null;
+  amountUntaxed: number;
+  amountTax: number;
+  amountTotal: number;
+  currencyName: string | null;
+}
+
+function formatOdooDatetime(date: Date | string): string {
+  const parsed = typeof date === 'string' ? new Date(date) : date;
+  const year = parsed.getUTCFullYear();
+  const month = String(parsed.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(parsed.getUTCDate()).padStart(2, '0');
+  const hours = String(parsed.getUTCHours()).padStart(2, '0');
+  const minutes = String(parsed.getUTCMinutes()).padStart(2, '0');
+  const seconds = String(parsed.getUTCSeconds()).padStart(2, '0');
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+}
+
+export async function createSaleOrderQuotation(
+  session: OdooSession,
+  params: {
+    partnerId: number;
+    clientReference: string;
+    lines: OdooSaleOrderLineInput[];
+    dateOrder?: string | null;
+    invoicePartnerId?: number | null;
+    shippingPartnerId?: number | null;
+    pricelistId?: number | null;
+    salespersonId?: number | null;
+    origin?: string | null;
+    note?: string | null;
+  }
+): Promise<OdooSaleOrderResult> {
+  if (!params.lines.length) {
+    throw new Error('No hay líneas para crear la cotización en Odoo.');
+  }
+
+  const existingOrders = await searchRead(
+    'sale.order',
+    [
+      ['partner_id', '=', params.partnerId],
+      ['client_order_ref', '=', params.clientReference],
+    ],
+    ['id', 'name', 'state'],
+    { limit: 1, order: 'id desc', session }
+  );
+
+  if (existingOrders.length > 0) {
+    const existingOrder = existingOrders[0];
+    return {
+      id: Number(existingOrder.id),
+      name: typeof existingOrder.name === 'string' ? existingOrder.name : null,
+      state: typeof existingOrder.state === 'string' ? existingOrder.state : null,
+      existing: true,
+    };
+  }
+
+  const templateIds = Array.from(new Set(params.lines.map((line) => line.productTemplateId)));
+  const productVariants = await searchRead(
+    'product.product',
+    [['product_tmpl_id', 'in', templateIds]],
+    ['id', 'product_tmpl_id'],
+    { session }
+  );
+
+  const variantByTemplateId = new Map<number, number>();
+  for (const variant of productVariants) {
+    if (!Array.isArray(variant.product_tmpl_id)) continue;
+    const templateId = Number(variant.product_tmpl_id[0]);
+    if (!variantByTemplateId.has(templateId)) {
+      variantByTemplateId.set(templateId, Number(variant.id));
+    }
+  }
+
+  const missingTemplateIds = templateIds.filter((templateId) => !variantByTemplateId.has(templateId));
+  if (missingTemplateIds.length > 0) {
+    throw new Error(`No se encontraron variantes Odoo para product.template: ${missingTemplateIds.join(', ')}`);
+  }
+
+  const orderLineCommands = params.lines.map((line) => {
+    const variantId = variantByTemplateId.get(line.productTemplateId);
+    if (!variantId) {
+      throw new Error(`No se encontró product.product para el template ${line.productTemplateId}.`);
+    }
+
+    return [
+      0,
+      0,
+      {
+        product_id: variantId,
+        product_template_id: line.productTemplateId,
+        name: line.name,
+        product_uom_qty: line.quantity,
+        price_unit: line.priceUnit,
+        customer_lead: 0,
+      },
+    ];
+  });
+
+  const orderValues: Record<string, unknown> = {
+    partner_id: params.partnerId,
+    partner_invoice_id: params.invoicePartnerId ?? params.partnerId,
+    partner_shipping_id: params.shippingPartnerId ?? params.partnerId,
+    client_order_ref: params.clientReference,
+    origin: params.origin ?? params.clientReference,
+    date_order: formatOdooDatetime(params.dateOrder ?? new Date()),
+    order_line: orderLineCommands,
+  };
+
+  if (params.pricelistId) {
+    orderValues.pricelist_id = params.pricelistId;
+  }
+
+  if (params.salespersonId) {
+    orderValues.user_id = params.salespersonId;
+  }
+
+  if (params.note) {
+    orderValues.note = params.note.replace(/\n/g, '<br/>');
+  }
+
+  const saleOrderId = await create('sale.order', orderValues, session);
+  const createdOrders = await read('sale.order', [saleOrderId], ['id', 'name', 'state'], session);
+  const createdOrder = createdOrders[0];
+
+  return {
+    id: saleOrderId,
+    name: createdOrder && typeof createdOrder.name === 'string' ? createdOrder.name : null,
+    state: createdOrder && typeof createdOrder.state === 'string' ? createdOrder.state : null,
+    existing: false,
+  };
+}
+
+export async function getSaleOrderSummary(
+  session: OdooSession,
+  saleOrderId: number
+): Promise<OdooSaleOrderSummary | null> {
+  const rows = await read(
+    'sale.order',
+    [saleOrderId],
+    ['id', 'name', 'state', 'amount_untaxed', 'amount_tax', 'amount_total', 'currency_id'],
+    session
+  );
+
+  const row = rows[0];
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: Number(row.id),
+    name: typeof row.name === 'string' ? row.name : null,
+    state: typeof row.state === 'string' ? row.state : null,
+    amountUntaxed: Number(row.amount_untaxed ?? 0),
+    amountTax: Number(row.amount_tax ?? 0),
+    amountTotal: Number(row.amount_total ?? 0),
+    currencyName: Array.isArray(row.currency_id) && typeof row.currency_id[1] === 'string'
+      ? row.currency_id[1]
+      : null,
+  };
+}
+
 export async function getClientes(
   session: OdooSession,
   options: { limit?: number; offset?: number } = {}
@@ -497,6 +700,179 @@ export async function getProductos(
     { limit: options.limit ?? 200, offset: options.offset ?? 0, order: 'name asc', session }
   );
   return result as unknown as OdooProduct[];
+}
+
+function applyPricelistRule(basePrice: number, rule: OdooPricelistItem | null | undefined): number {
+  if (!rule) return basePrice;
+  if (rule.compute_price === 'fixed' && typeof rule.fixed_price === 'number') {
+    return rule.fixed_price;
+  }
+  if (rule.compute_price === 'percentage' && typeof rule.percent_price === 'number') {
+    return Math.max(0, basePrice - (basePrice * rule.percent_price) / 100);
+  }
+  return basePrice;
+}
+
+function sortAndSliceProductos(
+  productos: OdooProduct[],
+  options: { limit?: number; offset?: number } = {}
+): OdooProduct[] {
+  const ordered = [...productos].sort((a, b) => a.name.localeCompare(b.name, 'es'));
+  const offset = options.offset ?? 0;
+  const limit = options.limit;
+  if (limit === undefined) {
+    return ordered.slice(offset);
+  }
+  return ordered.slice(offset, offset + limit);
+}
+
+export async function getProductosByPricelist(
+  session: OdooSession,
+  pricelistId: number,
+  options: { limit?: number; offset?: number; categIds?: number[] } = {}
+): Promise<OdooProduct[]> {
+  const pricelistItems = await searchRead(
+    'product.pricelist.item',
+    [['pricelist_id', '=', pricelistId]],
+    ['id', 'pricelist_id', 'applied_on', 'product_tmpl_id', 'product_id', 'categ_id', 'compute_price', 'fixed_price', 'percent_price', 'base', 'min_quantity'],
+    { order: 'applied_on asc,id asc', session }
+  ) as unknown as OdooPricelistItem[];
+
+  if (!pricelistItems.length) {
+    return [];
+  }
+
+  const explicitTemplateIds = new Set<number>();
+  const variantIds = new Set<number>();
+  const categoryIds = new Set<number>();
+  const explicitRules = new Map<number, OdooPricelistItem>();
+  const categoryRules = new Map<number, OdooPricelistItem>();
+  let globalRule: OdooPricelistItem | null = null;
+
+  for (const item of pricelistItems) {
+    if (item.applied_on === '3_global') {
+      globalRule = item;
+      continue;
+    }
+
+    if (item.applied_on === '2_product_category' && Array.isArray(item.categ_id)) {
+      const categoryId = item.categ_id[0];
+      categoryIds.add(categoryId);
+      categoryRules.set(categoryId, item);
+      continue;
+    }
+
+    if (item.applied_on === '1_product' && Array.isArray(item.product_tmpl_id)) {
+      const templateId = item.product_tmpl_id[0];
+      explicitTemplateIds.add(templateId);
+      explicitRules.set(templateId, item);
+      continue;
+    }
+
+    if (item.applied_on === '0_product_variant' && Array.isArray(item.product_id)) {
+      variantIds.add(item.product_id[0]);
+    }
+  }
+
+  if (variantIds.size > 0) {
+    const variantRows = await read(
+      'product.product',
+      Array.from(variantIds),
+      ['id', 'product_tmpl_id'],
+      session
+    );
+
+    const variantItemMap = new Map(
+      pricelistItems
+        .filter((item) => item.applied_on === '0_product_variant' && Array.isArray(item.product_id))
+        .map((item) => [Array.isArray(item.product_id) ? item.product_id[0] : 0, item])
+    );
+
+    for (const variant of variantRows) {
+      if (!Array.isArray(variant.product_tmpl_id)) continue;
+      const templateId = variant.product_tmpl_id[0] as number;
+      explicitTemplateIds.add(templateId);
+      const variantId = typeof variant.id === 'number' ? variant.id : 0;
+      const variantRule = variantItemMap.get(variantId);
+      if (variantRule) {
+        explicitRules.set(templateId, variantRule);
+      }
+    }
+  }
+
+  const productFields = ['id', 'name', 'description_sale', 'list_price', 'uom_name', 'categ_id', 'product_tag_ids', 'active', 'sale_ok', 'image_128', 'default_code'];
+  let productos: OdooProduct[] = [];
+
+  if (globalRule) {
+    productos = await getProductos(session, {
+      categIds: options.categIds,
+      limit: options.limit,
+      offset: options.offset,
+    });
+  } else {
+    const chunks: OdooProduct[][] = [];
+
+    if (explicitTemplateIds.size > 0) {
+      const explicitDomain: unknown[] = [
+        ['sale_ok', '=', true],
+        ['active', '=', true],
+        ['id', 'in', Array.from(explicitTemplateIds)],
+      ];
+      if (options.categIds && options.categIds.length > 0) {
+        explicitDomain.push(['categ_id', 'in', options.categIds]);
+      }
+
+      const explicitProducts = await searchRead(
+        'product.template',
+        explicitDomain,
+        productFields,
+        { order: 'name asc', session }
+      );
+      chunks.push(explicitProducts as unknown as OdooProduct[]);
+    }
+
+    if (categoryIds.size > 0) {
+      const allowedCategoryIds =
+        options.categIds && options.categIds.length > 0
+          ? Array.from(categoryIds).filter((categoryId) => options.categIds?.includes(categoryId))
+          : Array.from(categoryIds);
+
+      if (allowedCategoryIds.length > 0) {
+        const categoryProducts = await searchRead(
+          'product.template',
+          [['sale_ok', '=', true], ['active', '=', true], ['categ_id', 'in', allowedCategoryIds]],
+          productFields,
+          { order: 'name asc', session }
+        );
+        chunks.push(categoryProducts as unknown as OdooProduct[]);
+      }
+    }
+
+    const productosMap = new Map<number, OdooProduct>();
+    for (const chunk of chunks) {
+      for (const producto of chunk) {
+        productosMap.set(producto.id, producto);
+      }
+    }
+    productos = sortAndSliceProductos(Array.from(productosMap.values()), options);
+  }
+
+  return productos.map((producto) => {
+    const categoryId = Array.isArray(producto.categ_id) ? producto.categ_id[0] : null;
+    const appliedRule =
+      explicitRules.get(producto.id) ||
+      (categoryId ? categoryRules.get(categoryId) : undefined) ||
+      globalRule;
+
+    if (!appliedRule) {
+      return producto;
+    }
+
+    return {
+      ...producto,
+      list_price: applyPricelistRule(producto.list_price, appliedRule),
+    };
+  });
 }
 
 export async function getProductosByPartner(
