@@ -59,6 +59,7 @@ export default function ImportarClientesPage() {
   const [error, setError] = useState<string | null>(null);
   const [notaListado, setNotaListado] = useState<string | null>(null);
   const [busqueda, setBusqueda] = useState('');
+  const [busquedaAplicada, setBusquedaAplicada] = useState('');
   const [importState, setImportState] = useState<ImportState>({});
   const [empresaDestinoPorPartner, setEmpresaDestinoPorPartner] = useState<Record<number, string>>({});
   const [soloEmpresas, setSoloEmpresas] = useState(false);
@@ -66,18 +67,32 @@ export default function ImportarClientesPage() {
   const [soloNoImportados, setSoloNoImportados] = useState(true);
   const [requiereAprobacionImport, setRequiereAprobacionImport] = useState(true);
   const [usaSedesImport, setUsaSedesImport] = useState(true);
+  const [totalDisponibles, setTotalDisponibles] = useState(0);
+  const [totalPartnersOdoo, setTotalPartnersOdoo] = useState(0);
 
   const cargarClientes = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const query = mostrarContactos ? '?include_contacts=true' : '';
-      const res = await fetch(`/api/odoo/importar-clientes${query}`);
+      const params = new URLSearchParams();
+      if (mostrarContactos) {
+        params.set('include_contacts', 'true');
+      }
+      if (busquedaAplicada) {
+        params.set('q', busquedaAplicada);
+      }
+
+      const query = params.toString();
+      const res = await fetch(`/api/odoo/importar-clientes${query ? `?${query}` : ''}`, {
+        cache: 'no-store',
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Error cargando clientes');
       setClientes(data.clientes || []);
       setEmpresasLocales(data.empresas_locales || []);
       setNotaListado(data.nota || null);
+      setTotalDisponibles(typeof data.total_disponibles === 'number' ? data.total_disponibles : 0);
+      setTotalPartnersOdoo(typeof data.total_partners_odoo === 'number' ? data.total_partners_odoo : 0);
       setEmpresaDestinoPorPartner((prev) => {
         const next = { ...prev };
         (data.clientes || []).forEach((cliente: ClienteOdoo) => {
@@ -91,7 +106,15 @@ export default function ImportarClientesPage() {
       setError(err instanceof Error ? err.message : 'Error desconocido');
     }
     setLoading(false);
-  }, [mostrarContactos]);
+  }, [mostrarContactos, busquedaAplicada]);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setBusquedaAplicada(busqueda.trim());
+    }, 350);
+
+    return () => window.clearTimeout(timeout);
+  }, [busqueda]);
 
   useEffect(() => {
     cargarClientes();
@@ -239,15 +262,26 @@ export default function ImportarClientesPage() {
 
       {/* KPIs */}
       {!loading && !error && (
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <div className="bg-white border border-border rounded-xl p-4 shadow-sm">
             <div className="flex items-center gap-3">
               <div className="p-2 bg-blue-50 rounded-lg">
                 <Users className="w-5 h-5 text-blue-500" />
               </div>
               <div>
+                <p className="text-2xl font-bold text-slate-900">{totalPartnersOdoo}</p>
+                <p className="text-xs text-slate-500">Partners activos en Odoo</p>
+              </div>
+            </div>
+          </div>
+          <div className="bg-white border border-border rounded-xl p-4 shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-indigo-50 rounded-lg">
+                <Search className="w-5 h-5 text-indigo-500" />
+              </div>
+              <div>
                 <p className="text-2xl font-bold text-slate-900">{clientes.length}</p>
-                <p className="text-xs text-slate-500">Partners en Odoo</p>
+                <p className="text-xs text-slate-500">Resultados cargados</p>
               </div>
             </div>
           </div>
@@ -380,7 +414,7 @@ export default function ImportarClientesPage() {
       {!loading && !error && (
         <>
           <p className="text-xs text-slate-500">
-            Mostrando {clientesFiltrados.length} de {clientes.length} partners
+            Mostrando {clientesFiltrados.length} de {clientes.length} resultados cargados. Disponibles con los filtros actuales: {totalDisponibles}.
           </p>
           <div className="bg-white border border-border rounded-xl shadow-sm overflow-hidden">
             {clientesFiltrados.length === 0 ? (

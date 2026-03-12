@@ -1,5 +1,5 @@
 import { NextResponse, NextRequest } from 'next/server';
-import { authenticate, getClientes } from '@/lib/odoo/client';
+import { authenticate, searchCount, searchRead } from '@/lib/odoo/client';
 import { getServerOdooConfig } from '@/lib/odoo/serverConfig';
 import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
@@ -37,6 +37,22 @@ function normalizarTexto(value: string | null | undefined): string {
     .replace(/\s+/g, ' ')
     .trim();
 }
+
+type OdooPartnerListRow = {
+  id: number;
+  name: string;
+  email?: string | false;
+  phone?: string | false;
+  vat?: string | false;
+  city?: string | false;
+  category_id?: number[];
+  child_ids?: number[];
+  parent_id?: [number, string] | false;
+  user_id?: [number, string] | false;
+  type?: string | false;
+  is_company: boolean;
+  customer_rank?: number;
+};
 
 async function resolverAsesorLocal(
   supabaseAdmin: ReturnType<typeof getSupabaseAdmin>,
@@ -145,20 +161,49 @@ async function sincronizarComercialYAsesor(
 export async function GET(request: NextRequest) {
   try {
     const includeContacts = request.nextUrl.searchParams.get('include_contacts') === 'true';
+    const searchQuery = request.nextUrl.searchParams.get('q')?.trim() || '';
     const config = await getServerOdooConfig();
     if (!config) {
       return NextResponse.json({ error: 'Configuración Odoo no encontrada' }, { status: 500 });
     }
 
     const session = await authenticate(config);
-    const clientes = await getClientes(session, { limit: 200 });
+    const baseDomain: unknown[] = [['active', '=', true]];
+    const visibleDomain: unknown[] = [...baseDomain];
+
+    if (!includeContacts) {
+      visibleDomain.push(['is_company', '=', true]);
+    }
+
+    if (searchQuery) {
+      visibleDomain.push(
+        '|',
+        '|',
+        '|',
+        ['name', 'ilike', searchQuery],
+        ['vat', 'ilike', searchQuery],
+        ['email', 'ilike', searchQuery],
+        ['city', 'ilike', searchQuery]
+      );
+    }
+
+    const pageLimit = searchQuery ? 100 : 200;
+
+    const [clientes, totalPartnersOdoo, totalDisponibles] = await Promise.all([
+      searchRead(
+        'res.partner',
+        visibleDomain,
+        ['id', 'name', 'email', 'phone', 'vat', 'city', 'category_id', 'child_ids', 'parent_id', 'user_id', 'type', 'is_company', 'active', 'customer_rank'],
+        { limit: pageLimit, order: 'name asc', session }
+      ),
+      searchCount('res.partner', baseDomain, session),
+      searchCount('res.partner', visibleDomain, session),
+    ]);
     
-    // Traer las etiquetas de Odoo para poder mapear los nombres
     const { getEtiquetasCliente } = await import('@/lib/odoo/client');
     const etiquetas = await getEtiquetasCliente(session);
     const etiquetasMap = new Map(etiquetas.map(e => [e.id, e.name]));
 
-    // Obtener los odoo_partner_id ya importados en Supabase
     const supabase = await getSupabaseServer();
     const { data: empresasExistentes } = await supabase
       .from('empresas')
@@ -169,13 +214,9 @@ export async function GET(request: NextRequest) {
       (empresasExistentes || []).map((e) => [Number(e.odoo_partner_id), { id: e.id, nombre: e.nombre }])
     );
 
-    const partnerMap = new Map(clientes.map((partner) => [partner.id, partner]));
-
-    const partnersVisibles = includeContacts
-      ? clientes
-      : clientes.filter((c) => c.is_company);
-
-    const resultado = partnersVisibles.map((c) => {
+    const clientesOdoo = clientes as OdooPartnerListRow[];
+    const partnerMap = new Map(clientesOdoo.map((partner) => [partner.id, partner]));
+    const resultado = clientesOdoo.map((c) => {
       const parentOdooId = Array.isArray(c.parent_id) ? c.parent_id[0] : null;
       const parentPartner = parentOdooId ? partnerMap.get(parentOdooId) : null;
       const empresaLocal = empresasMap.get(c.id) || null;
@@ -196,8 +237,8 @@ export async function GET(request: NextRequest) {
       comercial_odoo_id: Array.isArray(c.user_id) ? c.user_id[0] : null,
       comercial_nombre: Array.isArray(c.user_id) ? c.user_id[1] : null,
       total_sucursales_odoo: Array.isArray(c.child_ids) ? c.child_ids.length : 0,
-      etiquetas: (c.category_id || []).map(id => [id, etiquetasMap.get(id) || `Etiqueta ${id}`]),
-      customer_rank: c.customer_rank,
+      etiquetas: (c.category_id || []).map((id: number) => [id, etiquetasMap.get(id) || `Etiqueta ${id}`]),
+      customer_rank: c.customer_rank ?? 0,
       ya_importado: Boolean(empresaLocal),
       empresa_local_id: empresaLocal?.id || null,
     };
@@ -206,16 +247,19 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       clientes: resultado,
       total: resultado.length,
+      total_disponibles: totalDisponibles,
       include_contacts: includeContacts,
-      total_partners_odoo: clientes.length,
+      total_partners_odoo: totalPartnersOdoo,
       empresas_locales: (empresasExistentes || []).map((e) => ({
         id: e.id,
         nombre: e.nombre,
         odoo_partner_id: Number(e.odoo_partner_id),
       })),
-      nota: includeContacts
-        ? 'Se listan empresas y contactos. Los contactos pueden importarse como sedes de una empresa existente.'
-        : 'Se listan únicamente partners corporativos (is_company=true). Activa include_contacts para gestionar contactos/sucursales desde esta vista.'
+      nota: searchQuery
+        ? `Búsqueda en Odoo por "${searchQuery}". Se cargaron ${resultado.length} de ${totalDisponibles} resultados disponibles con los filtros actuales.`
+        : includeContacts
+          ? `Se listan empresas y contactos. Se cargó un lote inicial de ${resultado.length} de ${totalDisponibles} resultados disponibles. Usa la búsqueda para consultar Odoo por nombre, NIT, email o ciudad.`
+          : `Se listan únicamente partners corporativos (is_company=true). Se cargó un lote inicial de ${resultado.length} de ${totalDisponibles} resultados disponibles. Usa la búsqueda para consultar Odoo por nombre, NIT, email o ciudad.`
     });
   } catch (err) {
     console.error('[API /odoo/importar-clientes GET]', err);

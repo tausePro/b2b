@@ -163,63 +163,78 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     ) => {
       const { allowServerFallback = true } = options;
       const currentSyncId = ++sessionSyncId;
+      const safetyTimeout = setTimeout(() => {
+        if (mounted && currentSyncId === sessionSyncId) {
+          console.warn('[Auth] Timeout resolviendo sesión, forzando loading=false');
+          setLoading(false);
+        }
+      }, 7000);
 
       if (!mounted) return;
 
-      if (session?.user) {
-        // getSession/get storage pueden traer sesiones viejas; validamos contra Auth server.
-        const { data: validUserData, error: validUserError } = await supabase.auth.getUser();
-        const activeUser = validUserData?.user ?? session.user;
+      try {
+        if (session?.user) {
+          const { data: validUserData, error: validUserError } = await supabase.auth.getUser();
+          const activeUser = validUserData?.user ?? session.user;
 
-        if (validUserError) {
-          console.warn('[Auth] Validación getUser falló en cliente. Se usará la sesión disponible.', validUserError.message);
-        }
-
-        console.log('[Auth] Sesión activa:', activeUser.email, '| auth_id:', activeUser.id);
-        const profile = await fetchProfile(activeUser.id);
-        const showPricesEmpresa = await resolveShowPricesByCompany(profile);
-        if (mounted && currentSyncId === sessionSyncId) {
-          setSupabaseUser(activeUser);
-          setUser(profile);
-          setShowPricesOverride(showPricesEmpresa);
-          if (!profile) {
-            console.error(
-              '[Auth] ⚠️ PERFIL NO ENCONTRADO para auth_id:', activeUser.id,
-              '\n→ Ejecuta el seed SQL en Supabase SQL Editor para crear el registro en public.usuarios'
-            );
-          } else {
-            console.log('[Auth] Perfil cargado:', profile.email, '| rol:', profile.rol);
+          if (validUserError) {
+            console.warn('[Auth] Validación getUser falló en cliente. Se usará la sesión disponible.', validUserError.message);
           }
-        }
-      } else {
-        if (!allowServerFallback) {
-          console.log('[Auth] Sin sesión activa');
+
+          console.log('[Auth] Sesión activa:', activeUser.email, '| auth_id:', activeUser.id);
+          const profile = await fetchProfile(activeUser.id);
+          const showPricesEmpresa = await resolveShowPricesByCompany(profile);
           if (mounted && currentSyncId === sessionSyncId) {
-            setSupabaseUser(null);
-            setUser(null);
-            setShowPricesOverride(null);
+            setSupabaseUser(activeUser);
+            setUser(profile);
+            setShowPricesOverride(showPricesEmpresa);
+            if (!profile) {
+              console.error(
+                '[Auth] ⚠️ PERFIL NO ENCONTRADO para auth_id:', activeUser.id,
+                '\n→ Ejecuta el seed SQL en Supabase SQL Editor para crear el registro en public.usuarios'
+              );
+            } else {
+              console.log('[Auth] Perfil cargado:', profile.email, '| rol:', profile.rol);
+            }
           }
         } else {
-          const serverProfile = await fetchServerProfile();
-          const showPricesEmpresa = await resolveShowPricesByCompany(serverProfile);
-
-          if (mounted && currentSyncId === sessionSyncId) {
-            if (serverProfile) {
-              console.log('[Auth] Perfil resuelto desde sesión server-side');
-              setSupabaseUser(null);
-              setUser(serverProfile);
-              setShowPricesOverride(showPricesEmpresa);
-            } else {
-              console.log('[Auth] Sin sesión activa');
+          if (!allowServerFallback) {
+            console.log('[Auth] Sin sesión activa');
+            if (mounted && currentSyncId === sessionSyncId) {
               setSupabaseUser(null);
               setUser(null);
               setShowPricesOverride(null);
             }
+          } else {
+            const serverProfile = await fetchServerProfile();
+            const showPricesEmpresa = await resolveShowPricesByCompany(serverProfile);
+
+            if (mounted && currentSyncId === sessionSyncId) {
+              if (serverProfile) {
+                console.log('[Auth] Perfil resuelto desde sesión server-side');
+                setSupabaseUser(null);
+                setUser(serverProfile);
+                setShowPricesOverride(showPricesEmpresa);
+              } else {
+                console.log('[Auth] Sin sesión activa');
+                setSupabaseUser(null);
+                setUser(null);
+                setShowPricesOverride(null);
+              }
+            }
           }
         }
+      } catch (e) {
+        console.error('[Auth] Error resolviendo sesión:', e);
+        if (mounted && currentSyncId === sessionSyncId && !session?.user) {
+          setSupabaseUser(null);
+          setUser(null);
+          setShowPricesOverride(null);
+        }
+      } finally {
+        clearTimeout(safetyTimeout);
+        if (mounted && currentSyncId === sessionSyncId) setLoading(false);
       }
-
-      if (mounted && currentSyncId === sessionSyncId) setLoading(false);
     };
 
     const bootstrapSession = async () => {
@@ -250,22 +265,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
 
     // onAuthStateChange dispara INITIAL_SESSION sincrónicamente al suscribirse
+    const queueHandleSession = (
+      session: { user: SupabaseUser } | null,
+      options?: { allowServerFallback?: boolean }
+    ) => {
+      setTimeout(() => {
+        void handleSession(session, options);
+      }, 0);
+    };
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
+      (event, session) => {
         if (!mounted) return;
         console.log('[Auth] Evento:', event);
 
         if (event === 'INITIAL_SESSION') {
           if (session?.user) {
             initialResolved = true;
-            await handleSession(session);
+            queueHandleSession(session);
           }
         } else if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
           initialResolved = true;
-          await handleSession(session);
+          queueHandleSession(session);
         } else if (event === 'SIGNED_OUT') {
           initialResolved = true;
-          await handleSession(null, { allowServerFallback: false });
+          queueHandleSession(null, { allowServerFallback: false });
         }
       }
     );
