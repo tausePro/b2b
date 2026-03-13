@@ -55,7 +55,7 @@ export default function DashboardDireccion() {
 
       const [empresasRes, pedidosMesRes, asesoresRes, empresasListRes] = await Promise.allSettled([
         supabase.from('empresas').select('id', { count: 'exact', head: true }).eq('activa', true),
-        supabase.from('pedidos').select('valor_total_cop, empresa_id').gte('created_at', inicioMes),
+        supabase.from('pedidos').select('valor_total_cop, empresa_id').gte('fecha_creacion', inicioMes),
         supabase.from('usuarios').select('id', { count: 'exact', head: true }).eq('rol', 'asesor').eq('activo', true),
         supabase.from('empresas').select('id, nombre').eq('activa', true).order('nombre'),
       ]);
@@ -85,7 +85,7 @@ export default function DashboardDireccion() {
           empresas.slice(0, 10).map(async (emp) => {
             const [sedesRes, pedidosRes] = await Promise.allSettled([
               supabase.from('sedes').select('id', { count: 'exact', head: true }).eq('empresa_id', emp.id),
-              supabase.from('pedidos').select('valor_total_cop').eq('empresa_id', emp.id).gte('created_at', inicioMes),
+              supabase.from('pedidos').select('valor_total_cop').eq('empresa_id', emp.id).gte('fecha_creacion', inicioMes),
             ]);
 
             const sedes_count = sedesRes.status === 'fulfilled' ? (sedesRes.value.count ?? 0) : 0;
@@ -130,7 +130,7 @@ export default function DashboardDireccion() {
                 .from('pedidos')
                 .select('valor_total_cop')
                 .in('empresa_id', empresaIds)
-                .gte('created_at', inicioMes);
+                .gte('fecha_creacion', inicioMes);
 
               if (pedidos) {
                 pedidos_count = pedidos.length;

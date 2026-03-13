@@ -13,7 +13,7 @@ interface PedidoReciente {
   numero: string;
   estado: string;
   valor_total_cop: number | null;
-  created_at: string;
+  fecha_creacion: string;
 }
 
 const supabase = createClient();
@@ -48,9 +48,9 @@ export default function DashboardComprador() {
           .in('estado', ['borrador', 'en_aprobacion', 'aprobado', 'en_validacion_imprima']),
         supabase
           .from('pedidos')
-          .select('id, numero, estado, valor_total_cop, created_at')
+          .select('id, numero, estado, valor_total_cop, fecha_creacion')
           .eq('usuario_creador_id', user.id)
-          .order('created_at', { ascending: false })
+          .order('fecha_creacion', { ascending: false })
           .limit(5),
       ]);
 
@@ -113,7 +113,7 @@ export default function DashboardComprador() {
         />
         <KpiCard
           title="Último Pedido"
-          value={ultimoPedido ? formatTimeAgo(ultimoPedido.created_at) : 'Ninguno'}
+          value={ultimoPedido ? formatTimeAgo(ultimoPedido.fecha_creacion) : 'Ninguno'}
           subtitle={ultimoPedido?.numero || 'Sin pedidos aún'}
           icon={<Clock className="w-5 h-5" />}
         />
@@ -173,7 +173,7 @@ export default function DashboardComprador() {
                 <div key={pedido.id} className="px-5 py-3 flex items-center justify-between hover:bg-slate-50 transition-colors">
                   <div>
                     <p className="text-sm font-medium text-foreground">{pedido.numero}</p>
-                    <p className="text-xs text-muted">{formatTimeAgo(pedido.created_at)}</p>
+                    <p className="text-xs text-muted">{formatTimeAgo(pedido.fecha_creacion)}</p>
                   </div>
                   <div className="flex items-center gap-3">
                     <span className={cn('text-xs font-medium px-2 py-0.5 rounded-full', estado.color)}>

@@ -17,7 +17,7 @@ import {
   CheckCircle2,
   Clock,
 } from 'lucide-react';
-import { cn, formatCOP } from '@/lib/utils';
+import { cn, formatCOP, isPedidoPendienteComercial } from '@/lib/utils';
 
 interface ClienteAsignado {
   id: string;
@@ -38,6 +38,12 @@ interface ClienteAsignado {
   pedidos_pendientes: number;
   pedidos_mes: number;
   valor_mes: number;
+}
+
+interface PedidoPendienteCliente {
+  id: string;
+  estado: string;
+  odoo_sale_order_id: number | null;
 }
 
 const supabase = createClient();
@@ -113,14 +119,14 @@ export default function ClientesPage() {
                 .eq('empresa_id', emp.id),
               supabase
                 .from('pedidos')
-                .select('id', { count: 'exact', head: true })
+                .select('id, estado, odoo_sale_order_id')
                 .eq('empresa_id', emp.id)
                 .in('estado', ['borrador', 'en_aprobacion', 'aprobado', 'en_validacion_imprima']),
               supabase
                 .from('pedidos')
                 .select('valor_total_cop')
                 .eq('empresa_id', emp.id)
-                .gte('created_at', inicioMes),
+                .gte('fecha_creacion', inicioMes),
             ]);
 
           const config =
@@ -135,7 +141,11 @@ export default function ClientesPage() {
           const pedidos_total =
             pedidosTotalRes.status === 'fulfilled' ? (pedidosTotalRes.value.count ?? 0) : 0;
           const pedidos_pendientes =
-            pedidosPendRes.status === 'fulfilled' ? (pedidosPendRes.value.count ?? 0) : 0;
+            pedidosPendRes.status === 'fulfilled' && pedidosPendRes.value.data
+              ? (pedidosPendRes.value.data as unknown as PedidoPendienteCliente[]).filter((pedido) =>
+                  isPedidoPendienteComercial(pedido.estado, pedido.odoo_sale_order_id)
+                ).length
+              : 0;
 
           let pedidos_mes = 0;
           let valor_mes = 0;

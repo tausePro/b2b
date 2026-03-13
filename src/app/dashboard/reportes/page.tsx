@@ -3,12 +3,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { createClient } from '@/lib/supabase/client';
-import { formatCOP } from '@/lib/utils';
+import { formatCOP, getPedidoEstadoVisual } from '@/lib/utils';
 import { BarChart3, Loader2 } from 'lucide-react';
 
 interface ReportePedido {
   id: string;
   estado: string;
+  odoo_sale_order_id: number | null;
   valor_total_cop: number;
   fecha_creacion: string;
   sede: { nombre_sede: string } | null;
@@ -40,7 +41,7 @@ export default function ReportesPage() {
 
       let query = supabase
         .from('pedidos')
-        .select('id, estado, valor_total_cop, fecha_creacion, sede:sedes(nombre_sede)')
+        .select('id, estado, odoo_sale_order_id, valor_total_cop, fecha_creacion, sede:sedes(nombre_sede)')
         .gte('fecha_creacion', dateFrom.toISOString())
         .order('fecha_creacion', { ascending: false })
         .limit(500);
@@ -64,6 +65,7 @@ export default function ReportesPage() {
           return {
             id: String(item.id),
             estado: String(item.estado),
+            odoo_sale_order_id: item.odoo_sale_order_id == null ? null : Number(item.odoo_sale_order_id),
             valor_total_cop: Number(item.valor_total_cop || 0),
             fecha_creacion: String(item.fecha_creacion),
             sede: sedeNormalizada ? { nombre_sede: sedeNormalizada.nombre_sede } : null,
@@ -85,11 +87,12 @@ export default function ReportesPage() {
     const ticketPromedio = totalPedidos > 0 ? valorTotal / totalPedidos : 0;
 
     const porEstado = rows.reduce<Record<string, { count: number; valor: number }>>((acc, row) => {
-      if (!acc[row.estado]) {
-        acc[row.estado] = { count: 0, valor: 0 };
+      const estadoVisual = getPedidoEstadoVisual(row.estado, row.odoo_sale_order_id);
+      if (!acc[estadoVisual]) {
+        acc[estadoVisual] = { count: 0, valor: 0 };
       }
-      acc[row.estado].count += 1;
-      acc[row.estado].valor += row.valor_total_cop;
+      acc[estadoVisual].count += 1;
+      acc[estadoVisual].valor += row.valor_total_cop;
       return acc;
     }, {});
 

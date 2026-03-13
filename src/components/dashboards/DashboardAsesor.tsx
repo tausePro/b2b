@@ -3,8 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { createClient } from '@/lib/supabase/client';
-import { formatCOP } from '@/lib/utils';
-import { cn } from '@/lib/utils';
+import { cn, formatCOP, getPedidoEstadoVisual } from '@/lib/utils';
 import KpiCard from '@/components/ui/KpiCard';
 import Link from 'next/link';
 import {
@@ -17,16 +16,18 @@ import {
   Clock,
   CheckCircle2,
   Users,
+  Eye,
 } from 'lucide-react';
 
 interface PedidoReciente {
   id: string;
   numero: string;
   estado: string;
+  odoo_sale_order_id: number | null;
   valor_total_cop: number | null;
-  created_at: string;
+  fecha_creacion: string;
   empresa: { nombre: string } | null;
-  sede: { nombre: string } | null;
+  sede: { nombre_sede: string } | null;
 }
 
 interface ClienteResumen {
@@ -88,17 +89,18 @@ export default function DashboardAsesor() {
           .from('pedidos')
           .select('valor_total_cop')
           .in('empresa_id', empresaIds)
-          .gte('created_at', inicioMes),
+          .gte('fecha_creacion', inicioMes),
         supabase
           .from('pedidos')
           .select('id', { count: 'exact', head: true })
           .in('empresa_id', empresaIds)
-          .in('estado', ['borrador', 'en_aprobacion', 'aprobado', 'en_validacion_imprima']),
+          .in('estado', ['borrador', 'en_aprobacion', 'aprobado', 'en_validacion_imprima'])
+          .is('odoo_sale_order_id', null),
         supabase
           .from('pedidos')
-          .select('id, numero, estado, valor_total_cop, created_at, empresa:empresas(nombre), sede:sedes(nombre)')
+          .select('id, numero, estado, odoo_sale_order_id, valor_total_cop, fecha_creacion, empresa:empresas(nombre), sede:sedes(nombre_sede)')
           .in('empresa_id', empresaIds)
-          .order('created_at', { ascending: false })
+          .order('fecha_creacion', { ascending: false })
           .limit(10),
         supabase
           .from('empresas')
@@ -135,7 +137,8 @@ export default function DashboardAsesor() {
               .from('pedidos')
               .select('id', { count: 'exact', head: true })
               .eq('empresa_id', emp.id)
-              .in('estado', ['borrador', 'en_aprobacion', 'aprobado', 'en_validacion_imprima']);
+              .in('estado', ['borrador', 'en_aprobacion', 'aprobado', 'en_validacion_imprima'])
+              .is('odoo_sale_order_id', null);
 
             const { data: cfg } = await supabase
               .from('empresa_configs')
@@ -173,7 +176,7 @@ export default function DashboardAsesor() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-foreground">
-          Dashboard Asesor
+          Dashboard Comercial
         </h1>
         <p className="text-muted text-sm mt-1">
           Resumen de tu actividad comercial — {user?.nombre} {user?.apellido}
@@ -229,15 +232,20 @@ export default function DashboardAsesor() {
           ) : (
             <div className="divide-y divide-border">
               {pedidosRecientes.map((pedido) => {
-                const estado = ESTADO_LABELS[pedido.estado] || { label: pedido.estado, color: 'bg-slate-100 text-slate-600' };
+                const estadoVisual = getPedidoEstadoVisual(pedido.estado, pedido.odoo_sale_order_id);
+                const estado = ESTADO_LABELS[estadoVisual] || { label: estadoVisual, color: 'bg-slate-100 text-slate-600' };
                 return (
-                  <div key={pedido.id} className="px-5 py-3 flex items-center justify-between hover:bg-slate-50 transition-colors">
+                  <Link
+                    key={pedido.id}
+                    href={`/dashboard/pedidos/${pedido.id}`}
+                    className="px-5 py-3 flex items-center justify-between hover:bg-slate-50 transition-colors"
+                  >
                     <div className="flex items-center gap-3 min-w-0">
                       <div>
                         <p className="text-sm font-medium text-foreground">{pedido.numero}</p>
                         <p className="text-xs text-muted truncate">
                           {(pedido.empresa as unknown as { nombre: string })?.nombre || '—'}
-                          {pedido.sede && ` · ${(pedido.sede as unknown as { nombre: string }).nombre}`}
+                          {pedido.sede?.nombre_sede ? ` · ${pedido.sede.nombre_sede}` : ''}
                         </p>
                       </div>
                     </div>
@@ -250,8 +258,9 @@ export default function DashboardAsesor() {
                           {formatCOP(pedido.valor_total_cop)}
                         </span>
                       )}
+                      <Eye className="w-4 h-4 text-muted" />
                     </div>
-                  </div>
+                  </Link>
                 );
               })}
             </div>

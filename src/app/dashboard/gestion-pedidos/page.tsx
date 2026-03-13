@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { createClient } from '@/lib/supabase/client';
 import { formatCOP, formatDate, getEstadoColor, getEstadoLabel } from '@/lib/utils';
@@ -32,6 +32,14 @@ interface PedidoAsesor {
   creador: { nombre: string; apellido: string } | null;
 }
 
+interface PedidoResumenGestion {
+  id: string;
+  estado: string;
+  odoo_sale_order_id: number | null;
+  fecha_creacion: string;
+  fecha_validacion: string | null;
+}
+
 export default function GestionPedidosPage() {
   const { user } = useAuth();
   const [pedidos, setPedidos] = useState<PedidoAsesor[]>([]);
@@ -39,13 +47,20 @@ export default function GestionPedidosPage() {
   const [filtroEstado, setFiltroEstado] = useState<string>('aprobado');
   const [busqueda, setBusqueda] = useState('');
   const [procesando, setProcesando] = useState<string | null>(null);
+  const [porValidar, setPorValidar] = useState(0);
+  const [validadosHoy, setValidadosHoy] = useState(0);
+  const [totalPedidos, setTotalPedidos] = useState(0);
+  const [tiempoPromedioHoras, setTiempoPromedioHoras] = useState<number | null>(null);
   const supabase = createClient();
 
   useEffect(() => {
+    if (!user) return;
     fetchPedidos();
-  }, [filtroEstado]);
+  }, [filtroEstado, user]);
 
   const fetchPedidos = async () => {
+    if (!user) return;
+
     setLoading(true);
     let query = supabase
       .from('pedidos')
@@ -65,12 +80,68 @@ export default function GestionPedidosPage() {
       query = query.eq('estado', filtroEstado);
     }
 
-    const { data, error } = await query;
+    const [pedidosRes, resumenRes] = await Promise.all([
+      query,
+      supabase
+        .from('pedidos')
+        .select('id, estado, odoo_sale_order_id, fecha_creacion, fecha_validacion'),
+    ]);
+
+    const { data, error } = pedidosRes;
     if (error) {
       console.error('Error fetching pedidos:', error);
+      setPedidos([]);
     } else {
       setPedidos((data as unknown as PedidoAsesor[]) || []);
     }
+
+    if (resumenRes.error) {
+      console.error('Error fetching resumen de gestión:', resumenRes.error);
+      setPorValidar(0);
+      setValidadosHoy(0);
+      setTotalPedidos(0);
+      setTiempoPromedioHoras(null);
+    } else {
+      const resumenPedidos = (resumenRes.data as PedidoResumenGestion[] | null) ?? [];
+      const inicioHoy = new Date();
+      inicioHoy.setHours(0, 0, 0, 0);
+
+      setPorValidar(
+        resumenPedidos.filter((pedido) => pedido.estado === 'aprobado' && !pedido.odoo_sale_order_id).length
+      );
+      setValidadosHoy(
+        resumenPedidos.filter((pedido) => {
+          if (!pedido.fecha_validacion) return false;
+          const fechaValidacion = new Date(pedido.fecha_validacion);
+          return !Number.isNaN(fechaValidacion.getTime()) && fechaValidacion >= inicioHoy;
+        }).length
+      );
+      setTotalPedidos(resumenPedidos.length);
+
+      const duracionesHoras = resumenPedidos.flatMap((pedido) => {
+        if (!pedido.fecha_validacion) return [];
+
+        const fechaCreacion = new Date(pedido.fecha_creacion).getTime();
+        const fechaValidacion = new Date(pedido.fecha_validacion).getTime();
+
+        if (
+          Number.isNaN(fechaCreacion) ||
+          Number.isNaN(fechaValidacion) ||
+          fechaValidacion < fechaCreacion
+        ) {
+          return [];
+        }
+
+        return [(fechaValidacion - fechaCreacion) / (1000 * 60 * 60)];
+      });
+
+      setTiempoPromedioHoras(
+        duracionesHoras.length > 0
+          ? duracionesHoras.reduce((acumulado, duracion) => acumulado + duracion, 0) / duracionesHoras.length
+          : null
+      );
+    }
+
     setLoading(false);
   };
 
@@ -100,17 +171,31 @@ export default function GestionPedidosPage() {
     setProcesando(null);
   };
 
+  const tiempoPromedioLabel = useMemo(() => {
+    if (tiempoPromedioHoras == null) return '—';
+
+    if (tiempoPromedioHoras < 1) {
+      return `${Math.max(1, Math.round(tiempoPromedioHoras * 60))} min`;
+    }
+
+    if (tiempoPromedioHoras < 24) {
+      const precision = tiempoPromedioHoras >= 10 ? 0 : 1;
+      return `${tiempoPromedioHoras.toFixed(precision)} hrs`;
+    }
+
+    const tiempoPromedioDias = tiempoPromedioHoras / 24;
+    const precision = tiempoPromedioDias >= 10 ? 0 : 1;
+    return `${tiempoPromedioDias.toFixed(precision)} días`;
+  }, [tiempoPromedioHoras]);
+
   const pedidosFiltrados = busqueda.trim()
     ? pedidos.filter(
         (p) =>
           p.numero.toLowerCase().includes(busqueda.toLowerCase()) ||
-          p.empresa?.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
-          p.sede?.nombre_sede.toLowerCase().includes(busqueda.toLowerCase())
+          (p.empresa?.nombre || '').toLowerCase().includes(busqueda.toLowerCase()) ||
+          (p.sede?.nombre_sede || '').toLowerCase().includes(busqueda.toLowerCase())
       )
     : pedidos;
-
-  const porValidar = pedidos.filter((p) => p.estado === 'aprobado' && !p.odoo_sale_order_id).length;
-  const validados = pedidos.filter((p) => p.estado === 'en_validacion_imprima' || p.estado === 'procesado_odoo' || Boolean(p.odoo_sale_order_id)).length;
 
   return (
     <div className="space-y-6">
@@ -129,19 +214,19 @@ export default function GestionPedidosPage() {
         />
         <KpiCard
           title="Validados Hoy"
-          value={String(validados)}
+          value={String(validadosHoy)}
           subtitle="Listos para Odoo"
           icon={<CheckCircle className="w-5 h-5" />}
         />
         <KpiCard
           title="Total Pedidos"
-          value={String(pedidos.length)}
+          value={String(totalPedidos)}
           subtitle="En gestión"
           icon={<Package className="w-5 h-5" />}
         />
         <KpiCard
           title="Tiempo Promedio"
-          value="2.5 hrs"
+          value={tiempoPromedioLabel}
           subtitle="Validación"
           icon={<Clock className="w-5 h-5" />}
         />

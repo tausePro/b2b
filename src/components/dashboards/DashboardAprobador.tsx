@@ -20,10 +20,10 @@ interface PedidoPendiente {
   numero: string;
   estado: string;
   valor_total_cop: number | null;
-  created_at: string;
+  fecha_creacion: string;
   excede_presupuesto: boolean;
   usuario_creador: { nombre: string; apellido: string } | null;
-  sede: { nombre: string } | null;
+  sede: { nombre_sede: string } | null;
 }
 
 interface PresupuestoSede {
@@ -76,17 +76,17 @@ export default function DashboardAprobador() {
           .select('valor_total_cop')
           .eq('empresa_id', user.empresa_id)
           .eq('estado', 'aprobado')
-          .gte('created_at', inicioMes),
+          .gte('fecha_creacion', inicioMes),
         supabase
           .from('pedidos')
-          .select('id, numero, estado, valor_total_cop, created_at, excede_presupuesto, usuario_creador:usuarios!pedidos_usuario_creador_id_fkey(nombre, apellido), sede:sedes(nombre)')
+          .select('id, numero, estado, valor_total_cop, fecha_creacion, excede_presupuesto, usuario_creador:usuarios!pedidos_usuario_creador_id_fkey(nombre, apellido), sede:sedes(nombre_sede)')
           .eq('empresa_id', user.empresa_id)
           .eq('estado', 'en_aprobacion')
-          .order('created_at', { ascending: false })
+          .order('fecha_creacion', { ascending: false })
           .limit(10),
         supabase
           .from('presupuestos_mensuales')
-          .select('monto_inicial, monto_consumido, monto_disponible, sede:sedes(nombre)')
+          .select('monto_inicial, monto_consumido, monto_disponible, sede:sedes(nombre_sede)')
           .eq('mes', mesActual)
           .eq('anio', anioActual),
       ]);
@@ -114,7 +114,7 @@ export default function DashboardAprobador() {
       if (presupuestosRes.status === 'fulfilled' && presupuestosRes.value.data) {
         setPresupuestos(
           presupuestosRes.value.data.map((p: Record<string, unknown>) => ({
-            sede_nombre: (p.sede as { nombre: string } | null)?.nombre || 'Sin sede',
+            sede_nombre: (p.sede as { nombre_sede: string } | null)?.nombre_sede || 'Sin sede',
             monto_inicial: p.monto_inicial as number,
             monto_consumido: p.monto_consumido as number,
             monto_disponible: p.monto_disponible as number,
@@ -202,7 +202,7 @@ export default function DashboardAprobador() {
           <div className="divide-y divide-border">
             {pedidosPendientes.map((pedido) => {
               const creador = pedido.usuario_creador as unknown as { nombre: string; apellido: string } | null;
-              const sede = pedido.sede as unknown as { nombre: string } | null;
+              const sede = pedido.sede as unknown as { nombre_sede: string } | null;
               return (
                 <div key={pedido.id} className="px-5 py-3 flex items-center justify-between hover:bg-slate-50 transition-colors">
                   <div className="flex items-center gap-3 min-w-0">
@@ -215,8 +215,8 @@ export default function DashboardAprobador() {
                       </div>
                       <p className="text-xs text-muted truncate">
                         {creador ? `${creador.nombre} ${creador.apellido}` : '—'}
-                        {sede && ` · ${sede.nombre}`}
-                        {' · '}{formatTimeAgo(pedido.created_at)}
+                        {sede && ` · ${sede.nombre_sede}`}
+                        {' · '}{formatTimeAgo(pedido.fecha_creacion)}
                       </p>
                     </div>
                   </div>

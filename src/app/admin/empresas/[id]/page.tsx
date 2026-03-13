@@ -71,9 +71,10 @@ interface Asesor {
   id: string;
   nombre: string;
   apellido: string;
-  email: string;
+  email: string | null;
   activo: boolean;
   odoo_user_id: number | null;
+  auth_id: string | null;
 }
 
 interface AsesorAsignacion {
@@ -95,6 +96,27 @@ interface ProductoEmpresaOdoo {
   sale_ok: boolean;
 }
 
+interface OdooPartnerContext {
+  id: number;
+  name: string;
+  tag_ids: number[];
+  partner_tags: Array<{
+    id: number;
+    name: string;
+    color: number;
+  }>;
+  pricelist: {
+    id: number;
+    name: string;
+  } | null;
+}
+
+interface OdooProductTagOption {
+  id: number;
+  name: string;
+  color: number;
+}
+
 type CategoriaAutorizada = 'aseo' | 'papeleria' | 'cafeteria' | 'personalizados';
 type UserRoleCliente = 'comprador' | 'aprobador';
 
@@ -107,6 +129,10 @@ interface UserFormState {
   password: string;
 }
 
+interface ActivateAsesorAccessFormState {
+  password: string;
+}
+
 const initialUserFormState: UserFormState = {
   nombre: '',
   apellido: '',
@@ -115,6 +141,36 @@ const initialUserFormState: UserFormState = {
   sede_id: '',
   password: '',
 };
+
+const initialActivateAsesorAccessFormState: ActivateAsesorAccessFormState = {
+  password: '',
+};
+
+function getAsesorAccessMeta(asesor: Asesor) {
+  const email = asesor.email?.trim() ?? '';
+
+  if (!email) {
+    return {
+      label: 'Sin email',
+      badgeClassName: 'bg-amber-100 text-amber-800 border-amber-200',
+      description: 'Debe tener un email válido para activar acceso al portal.',
+    };
+  }
+
+  if (asesor.auth_id) {
+    return {
+      label: 'Acceso activo',
+      badgeClassName: 'bg-green-100 text-green-800 border-green-200',
+      description: 'El asesor ya puede ingresar al portal con su correo.',
+    };
+  }
+
+  return {
+    label: 'Sin acceso',
+    badgeClassName: 'bg-slate-100 text-slate-700 border-slate-200',
+    description: 'Perfil sincronizado desde Odoo pendiente de credenciales.',
+  };
+}
 
 function mapCategoriaAutorizada(nombreCategoria: string | null | undefined): CategoriaAutorizada {
   const categoria = (nombreCategoria || '').toLowerCase();
@@ -161,6 +217,8 @@ export default function EmpresaConfigPage() {
   const [loadingProductosOdoo, setLoadingProductosOdoo] = useState(false);
   const [errorProductosOdoo, setErrorProductosOdoo] = useState<string | null>(null);
   const [avisoProductosOdoo, setAvisoProductosOdoo] = useState<string | null>(null);
+  const [partnerOdooContext, setPartnerOdooContext] = useState<OdooPartnerContext | null>(null);
+  const [etiquetasProductoOdoo, setEtiquetasProductoOdoo] = useState<OdooProductTagOption[]>([]);
   const [productosAutorizadosSeleccionados, setProductosAutorizadosSeleccionados] = useState<Set<number>>(new Set());
   const [savingProductosPortal, setSavingProductosPortal] = useState(false);
   const [restringirCatalogoPortal, setRestringirCatalogoPortal] = useState(false);
@@ -175,6 +233,14 @@ export default function EmpresaConfigPage() {
   const [creatingUser, setCreatingUser] = useState(false);
   const [createUserError, setCreateUserError] = useState<string | null>(null);
   const [newUserForm, setNewUserForm] = useState<UserFormState>(initialUserFormState);
+  const [showActivateAsesorAccessModal, setShowActivateAsesorAccessModal] = useState(false);
+  const [activateAsesorAccessError, setActivateAsesorAccessError] = useState<string | null>(null);
+  const [activatingAsesorId, setActivatingAsesorId] = useState<string | null>(null);
+  const [syncingOdooAsesor, setSyncingOdooAsesor] = useState(false);
+  const [selectedAsesorForAccess, setSelectedAsesorForAccess] = useState<Asesor | null>(null);
+  const [activateAsesorAccessForm, setActivateAsesorAccessForm] = useState<ActivateAsesorAccessFormState>(
+    initialActivateAsesorAccessFormState
+  );
 
   const partnerIdProductos = useMemo(() => {
     const partnerDesdeConfig = Number(config?.odoo_partner_id);
@@ -194,7 +260,7 @@ export default function EmpresaConfigPage() {
       supabase.from('sedes').select('id, nombre_sede, ciudad').eq('empresa_id', empresaId),
       supabase
         .from('usuarios')
-        .select('id, nombre, apellido, email, activo, odoo_user_id')
+        .select('id, nombre, apellido, email, activo, odoo_user_id, auth_id')
         .eq('rol', 'asesor')
         .eq('activo', true)
         .order('nombre'),
@@ -286,6 +352,20 @@ export default function EmpresaConfigPage() {
     setNewUserForm(initialUserFormState);
   };
 
+  const closeActivateAsesorAccessModal = () => {
+    setShowActivateAsesorAccessModal(false);
+    setActivateAsesorAccessError(null);
+    setSelectedAsesorForAccess(null);
+    setActivateAsesorAccessForm(initialActivateAsesorAccessFormState);
+  };
+
+  const openActivateAsesorAccessModal = (asesor: Asesor) => {
+    setSelectedAsesorForAccess(asesor);
+    setActivateAsesorAccessError(null);
+    setActivateAsesorAccessForm(initialActivateAsesorAccessFormState);
+    setShowActivateAsesorAccessModal(true);
+  };
+
   const handleCreateUser = async () => {
     if (!empresa) return;
 
@@ -347,70 +427,167 @@ export default function EmpresaConfigPage() {
     }
   };
 
-  useEffect(() => {
+  const handleActivarAccesoAsesor = async () => {
+    if (!selectedAsesorForAccess) return;
+
+    const password = activateAsesorAccessForm.password;
+
+    if (password.length < 8) {
+      setActivateAsesorAccessError('La contraseña temporal debe tener al menos 8 caracteres.');
+      return;
+    }
+
+    setActivatingAsesorId(selectedAsesorForAccess.id);
+    setActivateAsesorAccessError(null);
+
+    try {
+      const response = await fetch(
+        `/api/admin/empresas/${empresaId}/asesores/${selectedAsesorForAccess.id}/activar-acceso`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            password,
+          }),
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        setActivateAsesorAccessError(result.error || 'No se pudo activar el acceso del asesor.');
+        return;
+      }
+
+      await fetchData();
+      closeActivateAsesorAccessModal();
+      setToast(result.message || `Acceso actualizado para ${selectedAsesorForAccess.email || 'el asesor'}.`);
+      setTimeout(() => setToast(null), 3000);
+    } catch (error) {
+      setActivateAsesorAccessError(
+        error instanceof Error ? error.message : 'No se pudo activar el acceso del asesor.'
+      );
+    } finally {
+      setActivatingAsesorId(null);
+    }
+  };
+
+  const handleSincronizarAsesorOdoo = async () => {
+    setSyncingOdooAsesor(true);
+
+    try {
+      const response = await fetch(`/api/admin/empresas/${empresaId}/asesores/sincronizar-odoo`, {
+        method: 'POST',
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        setToast(result.error || 'No se pudo sincronizar el asesor desde Odoo.');
+        setTimeout(() => setToast(null), 5000);
+        return;
+      }
+
+      await fetchData();
+
+      const asesorSincronizado = result.asesor as Asesor | undefined;
+
+      if (asesorSincronizado && !asesorSincronizado.auth_id) {
+        openActivateAsesorAccessModal(asesorSincronizado);
+      }
+
+      setToast(result.warning ? `${result.message} ${result.warning}` : result.message || 'Asesor sincronizado correctamente.');
+      setTimeout(() => setToast(null), 5000);
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : 'No se pudo sincronizar el asesor desde Odoo.');
+      setTimeout(() => setToast(null), 5000);
+    } finally {
+      setSyncingOdooAsesor(false);
+    }
+  };
+
+  const fetchProductosOdoo = useCallback(async () => {
     const partnerId = partnerIdProductos;
 
     if (!partnerId) {
       setProductosOdoo([]);
       setErrorProductosOdoo(null);
       setAvisoProductosOdoo(null);
+      setPartnerOdooContext(null);
+      setEtiquetasProductoOdoo([]);
       return;
     }
 
-    const fetchProductosOdoo = async () => {
-      setLoadingProductosOdoo(true);
-      setErrorProductosOdoo(null);
-      setAvisoProductosOdoo(null);
+    setLoadingProductosOdoo(true);
+    setErrorProductosOdoo(null);
+    setAvisoProductosOdoo(null);
 
-      try {
-        const paramsPartner = new URLSearchParams({
-          partner_id: String(partnerId),
-          limit: '500',
-          include_tag_names: 'true',
-        });
+    try {
+      const paramsPartner = new URLSearchParams({
+        partner_id: String(partnerId),
+        limit: '500',
+        include_tag_names: 'true',
+      });
 
-        const resPartner = await fetch(`/api/odoo/productos?${paramsPartner.toString()}`);
-        const dataPartner = await resPartner.json();
+      const resPartner = await fetch(`/api/odoo/productos?${paramsPartner.toString()}`);
+      const dataPartner = await resPartner.json();
 
-        if (!resPartner.ok) {
-          throw new Error(dataPartner.error || 'No se pudieron cargar productos desde Odoo');
-        }
-
-        const productosPartner = (dataPartner.productos || []) as ProductoEmpresaOdoo[];
-
-        if (productosPartner.length > 0) {
-          setProductosOdoo(productosPartner);
-          return;
-        }
-
-        const paramsGeneral = new URLSearchParams({
-          limit: '500',
-          include_tag_names: 'true',
-        });
-
-        const resGeneral = await fetch(`/api/odoo/productos?${paramsGeneral.toString()}`);
-        const dataGeneral = await resGeneral.json();
-
-        if (!resGeneral.ok) {
-          throw new Error(dataGeneral.error || 'No se pudo cargar catálogo general desde Odoo');
-        }
-
-        const productosGenerales = (dataGeneral.productos || []) as ProductoEmpresaOdoo[];
-        setProductosOdoo(productosGenerales);
-        if (productosGenerales.length > 0) {
-          setAvisoProductosOdoo(
-            `El partner Odoo ${partnerId} no devolvió coincidencias por etiquetas. Se muestra catálogo general para diagnóstico.`
-          );
-        }
-      } catch (err) {
-        setErrorProductosOdoo(err instanceof Error ? err.message : 'Error cargando productos Odoo');
-      } finally {
-        setLoadingProductosOdoo(false);
+      if (!resPartner.ok) {
+        throw new Error(dataPartner.error || 'No se pudieron cargar productos desde Odoo');
       }
-    };
 
-    fetchProductosOdoo();
+      setPartnerOdooContext((dataPartner.partner_context || null) as OdooPartnerContext | null);
+      setEtiquetasProductoOdoo(
+        Array.isArray(dataPartner.etiquetas_producto)
+          ? (dataPartner.etiquetas_producto as OdooProductTagOption[])
+          : []
+      );
+
+      const productosPartner = (dataPartner.productos || []) as ProductoEmpresaOdoo[];
+
+      if (productosPartner.length > 0) {
+        setProductosOdoo(productosPartner);
+        return;
+      }
+
+      const paramsGeneral = new URLSearchParams({
+        limit: '500',
+        include_tag_names: 'true',
+      });
+
+      const resGeneral = await fetch(`/api/odoo/productos?${paramsGeneral.toString()}`);
+      const dataGeneral = await resGeneral.json();
+
+      if (!resGeneral.ok) {
+        throw new Error(dataGeneral.error || 'No se pudo cargar catálogo general desde Odoo');
+      }
+
+      const productosGenerales = (dataGeneral.productos || []) as ProductoEmpresaOdoo[];
+      setEtiquetasProductoOdoo(
+        Array.isArray(dataGeneral.etiquetas_producto)
+          ? (dataGeneral.etiquetas_producto as OdooProductTagOption[])
+          : []
+      );
+      setProductosOdoo(productosGenerales);
+      if (productosGenerales.length > 0) {
+        setAvisoProductosOdoo(
+          `El partner Odoo ${partnerId} no devolvió coincidencias por etiquetas. Se muestra catálogo general para diagnóstico.`
+        );
+      }
+    } catch (err) {
+      setPartnerOdooContext(null);
+      setEtiquetasProductoOdoo([]);
+      setErrorProductosOdoo(err instanceof Error ? err.message : 'Error cargando productos Odoo');
+    } finally {
+      setLoadingProductosOdoo(false);
+    }
   }, [partnerIdProductos]);
+
+  useEffect(() => {
+    void fetchProductosOdoo();
+  }, [fetchProductosOdoo]);
 
   const handleSave = async () => {
     if (!config) return;
@@ -641,24 +818,31 @@ export default function EmpresaConfigPage() {
   });
   const categoriasProductoDisponibles = Array.from(categoriasMap.entries());
 
-  const etiquetasProductoDisponibles = Array.from(
-    new Map(
-      productosOdoo.flatMap((producto) => {
-        if (Array.isArray(producto.product_tags) && producto.product_tags.length > 0) {
-          return producto.product_tags;
-        }
-        return (producto.product_tag_ids || []).map((tagId) => [tagId, `Etiqueta ${tagId}`] as [number, string]);
-      })
-    ).entries()
-  );
+  const etiquetasProductoDisponibles =
+    etiquetasProductoOdoo.length > 0
+      ? etiquetasProductoOdoo.map((tag) => [tag.id, tag.name] as [number, string])
+      : Array.from(
+          new Map(
+            productosOdoo.flatMap((producto) => {
+              if (Array.isArray(producto.product_tags) && producto.product_tags.length > 0) {
+                return producto.product_tags;
+              }
+              return (producto.product_tag_ids || []).map((tagId) => [tagId, `Etiqueta ${tagId}`] as [number, string]);
+            })
+          ).entries()
+        );
 
   const productosFiltrados = productosOdoo.filter((producto) => {
     const q = busquedaProducto.trim().toLowerCase();
     if (q) {
+      const matchEtiquetas =
+        Array.isArray(producto.product_tags) &&
+        producto.product_tags.some(([, tagName]) => tagName.toLowerCase().includes(q));
       const matchBusqueda =
         producto.name.toLowerCase().includes(q) ||
         (typeof producto.default_code === 'string' && producto.default_code.toLowerCase().includes(q)) ||
-        (typeof producto.description_sale === 'string' && producto.description_sale.toLowerCase().includes(q));
+        (typeof producto.description_sale === 'string' && producto.description_sale.toLowerCase().includes(q)) ||
+        matchEtiquetas;
 
       if (!matchBusqueda) return false;
     }
@@ -924,6 +1108,15 @@ export default function EmpresaConfigPage() {
                   value={config?.odoo_pricelist_id || ''}
                   onChange={(e) => config && setConfig({ ...config, odoo_pricelist_id: e.target.value })}
                 />
+                <p className="mt-2 text-xs text-slate-500">
+                  {!partnerIdProductos
+                    ? 'Configura el Odoo Partner ID para consultar la lista de precios actual en Odoo.'
+                    : loadingProductosOdoo
+                      ? 'Consultando lista de precios actual en Odoo...'
+                      : partnerOdooContext?.pricelist
+                        ? `Actual en Odoo: ${partnerOdooContext.pricelist.name} (ID ${partnerOdooContext.pricelist.id})`
+                        : 'Actual en Odoo: sin lista de precios asignada para este partner.'}
+                </p>
               </div>
 
               <div className="col-span-1 md:col-span-2">
@@ -1035,7 +1228,75 @@ export default function EmpresaConfigPage() {
                 </p>
               </div>
 
-              {!empresa.odoo_partner_id ? (
+              <div className="rounded-lg border border-border bg-white p-4 space-y-4">
+                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">Contexto del cliente en Odoo</p>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Aquí ves la lista de precios y las etiquetas activas del partner. Estas etiquetas son las que se usan
+                      para filtrar el catálogo del cliente; el selector inferior filtra etiquetas de producto.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => void fetchProductosOdoo()}
+                    disabled={!partnerIdProductos || loadingProductosOdoo}
+                    className="inline-flex items-center gap-2 rounded-lg border border-border bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:border-primary hover:text-primary disabled:opacity-50"
+                  >
+                    {loadingProductosOdoo ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                    Actualizar desde Odoo
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div className="rounded-lg border border-border bg-slate-50 px-4 py-3">
+                    <p className="text-xs text-slate-500 uppercase tracking-wide">Partner Odoo</p>
+                    <p className="text-sm font-semibold text-slate-900 mt-1">
+                      {partnerOdooContext?.name || (partnerIdProductos ? `ID ${partnerIdProductos}` : 'Sin configurar')}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-border bg-slate-50 px-4 py-3">
+                    <p className="text-xs text-slate-500 uppercase tracking-wide">Lista de precios actual</p>
+                    <p className="text-sm font-semibold text-slate-900 mt-1">
+                      {partnerOdooContext?.pricelist ? partnerOdooContext.pricelist.name : 'Sin lista asignada'}
+                    </p>
+                    <p className="text-xs text-slate-500 mt-1">
+                      {partnerOdooContext?.pricelist ? `ID Odoo: ${partnerOdooContext.pricelist.id}` : 'Se consulta directo en Odoo'}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-border bg-slate-50 px-4 py-3">
+                    <p className="text-xs text-slate-500 uppercase tracking-wide">Etiquetas del cliente</p>
+                    <p className="text-sm font-semibold text-slate-900 mt-1">
+                      {partnerOdooContext?.partner_tags.length || 0}
+                    </p>
+                    <p className="text-xs text-slate-500 mt-1">Pulsa actualizar para releerlas desde Odoo.</p>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-dashed border-border bg-slate-50 px-4 py-3">
+                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Etiquetas activas del cliente en Odoo</p>
+                  {partnerOdooContext?.partner_tags.length ? (
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      {partnerOdooContext.partner_tags.map((tag) => (
+                        <span
+                          key={tag.id}
+                          className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary"
+                        >
+                          <TagIcon className="w-3 h-3" />
+                          {tag.name}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-xs text-slate-500">
+                      {partnerIdProductos
+                        ? 'Este partner no tiene etiquetas asignadas en Odoo o todavía no se han recargado.'
+                        : 'Configura primero el partner Odoo para consultar sus etiquetas.'}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {!partnerIdProductos ? (
                 <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center">
                   <p className="text-sm text-slate-500">Esta empresa no tiene configurado Odoo Partner ID.</p>
                 </div>
@@ -1079,7 +1340,7 @@ export default function EmpresaConfigPage() {
                       onChange={(e) => setEtiquetaProductoFiltro(e.target.value === 'todos' ? 'todos' : Number(e.target.value))}
                       className="rounded-lg border border-border bg-white py-2.5 px-3 text-sm text-slate-700"
                     >
-                      <option value="todos">Todas las etiquetas</option>
+                      <option value="todos">Todas las etiquetas de producto</option>
                       {etiquetasProductoDisponibles.map(([etiquetaId, etiquetaNombre]) => (
                         <option key={etiquetaId} value={etiquetaId}>
                           {etiquetaNombre}
@@ -1244,14 +1505,35 @@ export default function EmpresaConfigPage() {
             </div>
 
             <div className="p-6 space-y-4">
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+                <p className="text-sm text-slate-700">
+                  Los asesores se sincronizan desde Odoo como perfiles internos. Desde aquí puedes asignarlos a la
+                  empresa y activar su acceso al portal con una contraseña temporal.
+                </p>
+              </div>
+
               {empresa.odoo_comercial_id && !asesorCoincideComercial && (
                 <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
-                  <p className="text-sm text-amber-800">
-                    Comercial Odoo detectado: <strong>{empresa.odoo_comercial_nombre || 'Sin nombre'}</strong> (ID {empresa.odoo_comercial_id}).
-                  </p>
-                  <p className="text-xs text-amber-700 mt-1">
-                    No existe un asesor local activo con ese <code>odoo_user_id</code>. Crea/edita el asesor y asigna ese ID para vinculación automática.
-                  </p>
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                      <p className="text-sm text-amber-800">
+                        Comercial Odoo detectado: <strong>{empresa.odoo_comercial_nombre || 'Sin nombre'}</strong> (ID {empresa.odoo_comercial_id}).
+                      </p>
+                      <p className="text-xs text-amber-700 mt-1">
+                        No existe un asesor local activo con ese <code>odoo_user_id</code>. Puedes sincronizarlo ahora mismo desde Odoo y luego activar sus credenciales.
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleSincronizarAsesorOdoo}
+                      disabled={syncingOdooAsesor}
+                      className="inline-flex items-center justify-center gap-2 rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm font-semibold text-amber-800 transition hover:border-amber-400 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {syncingOdooAsesor ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                      Sincronizar asesor Odoo
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -1263,35 +1545,71 @@ export default function EmpresaConfigPage() {
                 <div className="space-y-3">
                   {asesores.map((asesor) => {
                     const selected = asesoresAsignados.includes(asesor.id);
+                    const accessMeta = getAsesorAccessMeta(asesor);
+                    const isOdooCommercial = Boolean(empresa.odoo_comercial_id && asesor.odoo_user_id === empresa.odoo_comercial_id);
+                    const hasValidEmail = Boolean(asesor.email?.trim());
                     return (
-                      <label
+                      <div
                         key={asesor.id}
-                        className={`flex items-center justify-between rounded-lg border px-4 py-3 cursor-pointer transition-colors ${
+                        className={`rounded-lg border px-4 py-3 transition-colors ${
                           selected ? 'border-primary bg-primary/5' : 'border-border bg-white hover:bg-slate-50'
                         }`}
                       >
-                        <div>
-                          <p className="text-sm font-semibold text-slate-900">
-                            {asesor.nombre} {asesor.apellido}
-                          </p>
-                          <p className="text-xs text-slate-500">{asesor.email}</p>
-                          <p className="text-xs text-slate-400 mt-0.5">
-                            {asesor.odoo_user_id ? `Odoo user: ${asesor.odoo_user_id}` : 'Sin odoo_user_id'}
-                          </p>
+                        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                          <div>
+                            <p className="text-sm font-semibold text-slate-900">
+                              {asesor.nombre} {asesor.apellido}
+                            </p>
+                            <p className="text-xs text-slate-500">{asesor.email || 'Sin email registrado'}</p>
+                            <p className="text-xs text-slate-400 mt-0.5">
+                              {asesor.odoo_user_id ? `Odoo user: ${asesor.odoo_user_id}` : 'Sin odoo_user_id'}
+                            </p>
+                            <div className="mt-2 flex flex-wrap items-center gap-2">
+                              <span className={`inline-flex rounded-full border px-2 py-1 text-[11px] font-semibold ${accessMeta.badgeClassName}`}>
+                                {accessMeta.label}
+                              </span>
+                              {selected && (
+                                <span className="inline-flex rounded-full border border-primary/20 bg-primary/10 px-2 py-1 text-[11px] font-semibold text-primary">
+                                  Asignado a esta empresa
+                                </span>
+                              )}
+                              {isOdooCommercial && (
+                                <span className="inline-flex rounded-full border border-blue-200 bg-blue-100 px-2 py-1 text-[11px] font-semibold text-blue-800">
+                                  Comercial Odoo detectado
+                                </span>
+                              )}
+                            </div>
+                            <p className="mt-2 text-xs text-slate-500">{accessMeta.description}</p>
+                          </div>
+
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                            <label className="inline-flex items-center gap-2 text-sm font-medium text-slate-700">
+                              <input
+                                type="checkbox"
+                                checked={selected}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setAsesoresAsignados((prev) => (prev.includes(asesor.id) ? prev : [...prev, asesor.id]));
+                                  } else {
+                                    setAsesoresAsignados((prev) => prev.filter((id) => id !== asesor.id));
+                                  }
+                                }}
+                                className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                              />
+                              Asignado
+                            </label>
+
+                            <button
+                              type="button"
+                              onClick={() => openActivateAsesorAccessModal(asesor)}
+                              disabled={!hasValidEmail || Boolean(activatingAsesorId)}
+                              className="inline-flex items-center justify-center rounded-lg border border-border bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {asesor.auth_id ? 'Restablecer acceso' : 'Activar acceso'}
+                            </button>
+                          </div>
                         </div>
-                        <input
-                          type="checkbox"
-                          checked={selected}
-                          onChange={(e) => {
-                            if (e.target.checked) {
-                              setAsesoresAsignados((prev) => (prev.includes(asesor.id) ? prev : [...prev, asesor.id]));
-                            } else {
-                              setAsesoresAsignados((prev) => prev.filter((id) => id !== asesor.id));
-                            }
-                          }}
-                          className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
-                        />
-                      </label>
+                      </div>
                     );
                   })}
                 </div>
@@ -1530,6 +1848,90 @@ export default function EmpresaConfigPage() {
               >
                 {creatingUser ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
                 Crear usuario
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showActivateAsesorAccessModal && selectedAsesorForAccess && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 px-4">
+          <div className="w-full max-w-xl rounded-2xl border border-border bg-white shadow-2xl">
+            <div className="flex items-start justify-between gap-4 border-b border-border px-6 py-5">
+              <div>
+                <h3 className="text-lg font-bold text-slate-900">
+                  {selectedAsesorForAccess.auth_id ? 'Restablecer acceso del asesor' : 'Activar acceso del asesor'}
+                </h3>
+                <p className="mt-1 text-sm text-slate-500">
+                  Se actualizarán las credenciales del perfil interno sincronizado desde Odoo.
+                </p>
+              </div>
+              <button
+                onClick={closeActivateAsesorAccessModal}
+                disabled={Boolean(activatingAsesorId)}
+                className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-50 hover:text-slate-600"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="space-y-5 px-6 py-6">
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+                <p className="text-sm font-semibold text-slate-900">
+                  {selectedAsesorForAccess.nombre} {selectedAsesorForAccess.apellido}
+                </p>
+                <p className="mt-1 text-xs text-slate-500">
+                  {selectedAsesorForAccess.email || 'Sin email registrado'}
+                </p>
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-700">Contraseña temporal</label>
+                <input
+                  type="password"
+                  value={activateAsesorAccessForm.password}
+                  onChange={(e) =>
+                    setActivateAsesorAccessForm((prev) => ({
+                      ...prev,
+                      password: e.target.value,
+                    }))
+                  }
+                  className="w-full rounded-lg border border-border bg-white px-3 py-2.5 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                  placeholder="Mínimo 8 caracteres"
+                />
+                <p className="mt-2 text-xs text-slate-500">
+                  {selectedAsesorForAccess.auth_id
+                    ? 'Se actualizará la contraseña actual y se mantendrá el mismo perfil interno.'
+                    : 'Se creará o enlazará el acceso del asesor usando este correo y el perfil interno existente.'}
+                </p>
+              </div>
+
+              {activateAsesorAccessError && (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {activateAsesorAccessError}
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-3 border-t border-border px-6 py-4">
+              <button
+                onClick={closeActivateAsesorAccessModal}
+                disabled={Boolean(activatingAsesorId)}
+                className="rounded-lg border border-border px-4 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleActivarAccesoAsesor}
+                disabled={Boolean(activatingAsesorId)}
+                className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white transition hover:bg-primary-dark disabled:opacity-50"
+              >
+                {activatingAsesorId === selectedAsesorForAccess.id ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Plus className="h-4 w-4" />
+                )}
+                {selectedAsesorForAccess.auth_id ? 'Actualizar acceso' : 'Activar acceso'}
               </button>
             </div>
           </div>

@@ -1,6 +1,7 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { authenticate, searchCount, searchRead } from '@/lib/odoo/client';
 import { getServerOdooConfig } from '@/lib/odoo/serverConfig';
+import { syncOdooAsesor } from '@/lib/odoo/syncOdooAsesor';
 import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
@@ -29,15 +30,6 @@ function getSupabaseAdmin() {
   );
 }
 
-function normalizarTexto(value: string | null | undefined): string {
-  return (value || '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
 type OdooPartnerListRow = {
   id: number;
   name: string;
@@ -53,109 +45,6 @@ type OdooPartnerListRow = {
   is_company: boolean;
   customer_rank?: number;
 };
-
-async function resolverAsesorLocal(
-  supabaseAdmin: ReturnType<typeof getSupabaseAdmin>,
-  comercialOdooId: number | null,
-  comercialOdooNombre: string | null
-): Promise<{ asesorId: string | null; aviso: string | null }> {
-  if (comercialOdooId) {
-    const { data: asesorPorId, error: asesorPorIdError } = await supabaseAdmin
-      .from('usuarios')
-      .select('id')
-      .eq('rol', 'asesor')
-      .eq('activo', true)
-      .eq('odoo_user_id', comercialOdooId)
-      .maybeSingle();
-
-    if (asesorPorIdError) {
-      console.error('[API /odoo/importar-clientes] Error buscando asesor por odoo_user_id:', asesorPorIdError.message);
-    }
-
-    if (asesorPorId?.id) {
-      return { asesorId: asesorPorId.id, aviso: null };
-    }
-  }
-
-  const comercialNormalizado = normalizarTexto(comercialOdooNombre);
-  if (comercialNormalizado) {
-    const { data: asesoresActivos, error: asesoresActivosError } = await supabaseAdmin
-      .from('usuarios')
-      .select('id, nombre, apellido')
-      .eq('rol', 'asesor')
-      .eq('activo', true);
-
-    if (asesoresActivosError) {
-      console.error('[API /odoo/importar-clientes] Error listando asesores para fallback por nombre:', asesoresActivosError.message);
-    } else {
-      const asesorMatch = (asesoresActivos || []).find((asesor) => {
-        const nombreCompleto = normalizarTexto(`${asesor.nombre || ''} ${asesor.apellido || ''}`);
-        return nombreCompleto === comercialNormalizado;
-      });
-
-      if (asesorMatch?.id) {
-        return {
-          asesorId: asesorMatch.id,
-          aviso: comercialOdooId
-            ? `Se asignó por coincidencia de nombre (${comercialOdooNombre}); actualiza odoo_user_id en el asesor para evitar ambigüedades.`
-            : null,
-        };
-      }
-    }
-  }
-
-  if (comercialOdooId || comercialOdooNombre) {
-    return {
-      asesorId: null,
-      aviso: comercialOdooId
-        ? `No existe asesor local activo con odoo_user_id=${comercialOdooId}.`
-        : `No existe asesor local activo con nombre "${comercialOdooNombre}".`,
-    };
-  }
-
-  return { asesorId: null, aviso: null };
-}
-
-async function sincronizarComercialYAsesor(
-  supabaseAdmin: ReturnType<typeof getSupabaseAdmin>,
-  empresaId: string,
-  comercialOdooId: number | null,
-  comercialOdooNombre: string | null
-): Promise<{ asesorAsignadoId: string | null; avisoComercial: string | null }> {
-  if (!comercialOdooId && !comercialOdooNombre) {
-    return { asesorAsignadoId: null, avisoComercial: null };
-  }
-
-  const { asesorId, aviso } = await resolverAsesorLocal(supabaseAdmin, comercialOdooId, comercialOdooNombre);
-
-  if (!asesorId) {
-    return { asesorAsignadoId: null, avisoComercial: aviso };
-  }
-
-  const { error: asignacionError } = await supabaseAdmin
-    .from('asesor_empresas')
-    .upsert(
-      {
-        usuario_id: asesorId,
-        empresa_id: empresaId,
-        activo: true,
-      },
-      { onConflict: 'usuario_id,empresa_id' }
-    );
-
-  if (asignacionError) {
-    console.error('[API /odoo/importar-clientes] Error asignando asesor automáticamente:', asignacionError.message);
-    return {
-      asesorAsignadoId: null,
-      avisoComercial: 'La empresa se importó, pero falló la asignación automática del asesor.',
-    };
-  }
-
-  return {
-    asesorAsignadoId: asesorId,
-    avisoComercial: aviso,
-  };
-}
 
 // GET: Listar partners de Odoo disponibles para importar
 export async function GET(request: NextRequest) {
@@ -426,14 +315,17 @@ export async function POST(request: NextRequest) {
           console.error('[API /odoo/importar-clientes] Error sincronizando comercial en empresa destino:', updateEmpresaDestinoError.message);
         }
 
-        const syncComercial = await sincronizarComercialYAsesor(
-          supabaseAdmin,
-          target_empresa_id,
+        const syncComercial = await syncOdooAsesor({
+          autoCreateIfMissing: true,
           comercialOdooId,
-          comercialOdooNombre
-        );
+          comercialOdooNombre,
+          empresaId: target_empresa_id,
+          odooConfig: configOdoo,
+          session: sessionOdoo,
+          supabaseAdmin,
+        });
         asesorAsignadoId = syncComercial.asesorAsignadoId;
-        avisoComercial = syncComercial.avisoComercial;
+        avisoComercial = syncComercial.aviso;
       }
 
       return NextResponse.json({
@@ -475,12 +367,15 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      const syncExistente = await sincronizarComercialYAsesor(
-        supabaseAdmin,
-        existente.id,
+      const syncExistente = await syncOdooAsesor({
+        autoCreateIfMissing: true,
         comercialOdooId,
-        comercialOdooNombre
-      );
+        comercialOdooNombre,
+        empresaId: existente.id,
+        odooConfig: configOdoo,
+        session: sessionOdoo,
+        supabaseAdmin,
+      });
 
       return NextResponse.json({
         success: true,
@@ -492,7 +387,7 @@ export async function POST(request: NextRequest) {
           ? { id: comercialOdooId, nombre: comercialOdooNombre }
           : null,
         asesor_asignado_id: syncExistente.asesorAsignadoId,
-        aviso_comercial: syncExistente.avisoComercial,
+        aviso_comercial: syncExistente.aviso,
         mensaje: 'Empresa ya importada. Se sincronizó comercial y asignación de asesor.',
       });
     }
@@ -542,14 +437,17 @@ export async function POST(request: NextRequest) {
     }
 
     // Intentar asignar automáticamente asesor local según comercial Odoo
-    const syncComercialNueva = await sincronizarComercialYAsesor(
-      supabaseAdmin,
-      empresa.id,
+    const syncComercialNueva = await syncOdooAsesor({
+      autoCreateIfMissing: true,
       comercialOdooId,
-      comercialOdooNombre
-    );
+      comercialOdooNombre,
+      empresaId: empresa.id,
+      odooConfig: configOdoo,
+      session: sessionOdoo,
+      supabaseAdmin,
+    });
     const asesorAsignadoId = syncComercialNueva.asesorAsignadoId;
-    const avisoComercial = syncComercialNueva.avisoComercial;
+    const avisoComercial = syncComercialNueva.aviso;
 
     // --- IMPORTAR SUCURSALES (SEDES) ---
     // Solo si la empresa operará con sedes
