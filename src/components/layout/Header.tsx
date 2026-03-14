@@ -2,7 +2,8 @@
 
 import { useAuth } from '@/contexts/AuthContext';
 import { useCart } from '@/contexts/CartContext';
-import { ROLE_CONFIG } from '@/types';
+import BrandMark from '@/components/ui/BrandMark';
+import { ROLE_CONFIG, type PortalBranding } from '@/types';
 import {
   Search,
   ShoppingCart,
@@ -17,9 +18,10 @@ import { useState } from 'react';
 
 interface HeaderProps {
   onToggleSidebar: () => void;
+  portalBranding?: PortalBranding | null;
 }
 
-export default function Header({ onToggleSidebar }: HeaderProps) {
+export default function Header({ onToggleSidebar, portalBranding }: HeaderProps) {
   const { user, signOut } = useAuth();
   const { totalItems } = useCart();
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -27,6 +29,9 @@ export default function Header({ onToggleSidebar }: HeaderProps) {
   if (!user) return null;
 
   const roleLabel = ROLE_CONFIG[user.rol].label;
+  const isClientPortal = Boolean(
+    portalBranding && (user.rol === 'comprador' || user.rol === 'aprobador')
+  );
 
   return (
     <header className="h-16 bg-white border-b border-border flex items-center justify-between px-4 lg:px-6 sticky top-0 z-30">
@@ -39,9 +44,37 @@ export default function Header({ onToggleSidebar }: HeaderProps) {
           <Menu className="w-5 h-5 text-muted" />
         </button>
 
-        <Link href="/dashboard" className="flex items-center gap-2 shrink-0">
-          <span className="text-xl font-bold text-primary">Imprima</span>
-          <span className="text-xs font-medium text-muted bg-background-light px-2 py-0.5 rounded-full">B2B</span>
+        <Link href="/dashboard" className="flex items-center gap-3 shrink-0">
+          {isClientPortal && portalBranding ? (
+            <>
+              <BrandMark
+                name={portalBranding.empresa_nombre}
+                logoUrl={portalBranding.logo_url}
+                color={portalBranding.color_primario}
+                className="h-10 w-10 rounded-xl border border-border bg-white p-1"
+                imageClassName="p-1"
+                initialsClassName="text-sm"
+              />
+              <div className="hidden sm:block min-w-0">
+                <p className="truncate text-sm font-bold text-foreground leading-tight">
+                  {portalBranding.empresa_nombre}
+                </p>
+                <div className="mt-0.5 flex items-center gap-2">
+                  <span className="text-[11px] font-medium text-primary">
+                    {portalBranding.slug || 'Portal cliente'}
+                  </span>
+                  <span className="rounded-full bg-background-light px-2 py-0.5 text-[11px] font-medium text-muted">
+                    B2B
+                  </span>
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              <span className="text-xl font-bold text-primary">Imprima</span>
+              <span className="text-xs font-medium text-muted bg-background-light px-2 py-0.5 rounded-full">B2B</span>
+            </>
+          )}
         </Link>
 
         <div className="hidden md:flex items-center flex-1 max-w-md ml-6">
@@ -109,6 +142,9 @@ export default function Header({ onToggleSidebar }: HeaderProps) {
                 <div className="px-4 py-2 border-b border-border">
                   <p className="text-sm font-medium">{user.nombre} {user.apellido}</p>
                   <p className="text-xs text-muted">{user.email}</p>
+                  {isClientPortal && portalBranding && (
+                    <p className="mt-1 text-xs text-muted">{portalBranding.empresa_nombre}</p>
+                  )}
                   <span className="inline-block mt-1 text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium">
                     {roleLabel}
                   </span>

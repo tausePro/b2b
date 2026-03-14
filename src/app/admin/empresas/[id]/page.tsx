@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, type ChangeEvent } from 'react';
 import { useParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import Link from 'next/link';
@@ -146,6 +146,51 @@ const initialActivateAsesorAccessFormState: ActivateAsesorAccessFormState = {
   password: '',
 };
 
+const LOGOS_BUCKET = 'logos-empresas';
+const LOGO_MAX_SIZE_BYTES = 2 * 1024 * 1024;
+const LOGO_ALLOWED_MIME_TYPES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/svg+xml',
+]);
+
+function getLogoFileExtension(file: File) {
+  const extensionFromName = file.name.split('.').pop()?.trim().toLowerCase();
+
+  if (extensionFromName) {
+    return extensionFromName === 'jpeg' ? 'jpg' : extensionFromName;
+  }
+
+  if (file.type === 'image/png') return 'png';
+  if (file.type === 'image/jpeg') return 'jpg';
+  if (file.type === 'image/webp') return 'webp';
+  if (file.type === 'image/svg+xml') return 'svg';
+
+  return 'bin';
+}
+
+function normalizeEmpresaConfig(rawConfig: Record<string, unknown>): EmpresaConfig {
+  let modulosArray: string[] = [];
+
+  if (Array.isArray(rawConfig.modulos_activos)) {
+    modulosArray = rawConfig.modulos_activos.filter((value): value is string => typeof value === 'string');
+  } else if (typeof rawConfig.modulos_activos === 'object' && rawConfig.modulos_activos !== null) {
+    modulosArray = Object.entries(rawConfig.modulos_activos)
+      .filter(([, isActive]) => Boolean(isActive))
+      .map(([key]) => key);
+  }
+
+  return {
+    ...(rawConfig as unknown as EmpresaConfig),
+    modulos_activos: modulosArray,
+    configuracion_extra:
+      rawConfig.configuracion_extra && typeof rawConfig.configuracion_extra === 'object'
+        ? (rawConfig.configuracion_extra as Record<string, unknown>)
+        : {},
+  };
+}
+
 function getAsesorAccessMeta(asesor: Asesor) {
   const email = asesor.email?.trim() ?? '';
 
@@ -212,6 +257,8 @@ export default function EmpresaConfigPage() {
   const [asesoresAsignados, setAsesoresAsignados] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [logoUploadError, setLogoUploadError] = useState<string | null>(null);
   const [savingAsesores, setSavingAsesores] = useState(false);
   const [productosOdoo, setProductosOdoo] = useState<ProductoEmpresaOdoo[]>([]);
   const [loadingProductosOdoo, setLoadingProductosOdoo] = useState(false);
@@ -279,28 +326,14 @@ export default function EmpresaConfigPage() {
       setEmpresa(empresaRes.value.data as Empresa);
     }
     if (configRes.status === 'fulfilled' && configRes.value.data) {
-      const rawConfig = configRes.value.data;
-      let modulosArray: string[] = [];
-      if (Array.isArray(rawConfig.modulos_activos)) {
-        modulosArray = rawConfig.modulos_activos;
-      } else if (typeof rawConfig.modulos_activos === 'object' && rawConfig.modulos_activos !== null) {
-        modulosArray = Object.entries(rawConfig.modulos_activos)
-          .filter(([, isActive]) => isActive)
-          .map(([key]) => key);
-      }
-      
-      setConfig({
-        ...rawConfig,
-        modulos_activos: modulosArray,
-        configuracion_extra:
-          rawConfig.configuracion_extra && typeof rawConfig.configuracion_extra === 'object'
-            ? rawConfig.configuracion_extra
-            : {},
-      } as EmpresaConfig);
+      const rawConfig = configRes.value.data as Record<string, unknown>;
+      const normalizedConfig = normalizeEmpresaConfig(rawConfig);
+
+      setConfig(normalizedConfig);
 
       const extra =
-        rawConfig.configuracion_extra && typeof rawConfig.configuracion_extra === 'object'
-          ? (rawConfig.configuracion_extra as Record<string, unknown>)
+        normalizedConfig.configuracion_extra && typeof normalizedConfig.configuracion_extra === 'object'
+          ? normalizedConfig.configuracion_extra
           : {};
       setRestringirCatalogoPortal(Boolean(extra.restringir_catalogo_portal));
       setMostrarPreciosCompradorPortal(
@@ -345,6 +378,79 @@ export default function EmpresaConfigPage() {
   useEffect(() => {
     void fetchData();
   }, [fetchData]);
+
+  const handleLogoUpload = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+
+    if (!file) {
+      return;
+    }
+
+    if (!LOGO_ALLOWED_MIME_TYPES.has(file.type)) {
+      setLogoUploadError('Formato no permitido. Usa PNG, JPG, WEBP o SVG.');
+      return;
+    }
+
+    if (file.size > LOGO_MAX_SIZE_BYTES) {
+      setLogoUploadError('El archivo supera el límite de 2MB.');
+      return;
+    }
+
+    setUploadingLogo(true);
+    setLogoUploadError(null);
+
+    try {
+      const extension = getLogoFileExtension(file);
+      const filePath = `${empresaId}/logo-${Date.now()}.${extension}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from(LOGOS_BUCKET)
+        .upload(filePath, file, {
+          cacheControl: '3600',
+          upsert: false,
+          contentType: file.type || undefined,
+        });
+
+      if (uploadError) {
+        throw new Error(uploadError.message);
+      }
+
+      const { data: publicUrlData } = supabase.storage
+        .from(LOGOS_BUCKET)
+        .getPublicUrl(filePath);
+
+      const publicUrl = publicUrlData.publicUrl;
+
+      if (!publicUrl) {
+        throw new Error('No se pudo obtener la URL pública del logo.');
+      }
+
+      const { data: updatedConfig, error: configError } = await supabase
+        .from('empresa_configs')
+        .upsert(
+          {
+            empresa_id: empresaId,
+            logo_url: publicUrl,
+          },
+          { onConflict: 'empresa_id' }
+        )
+        .select('*')
+        .single();
+
+      if (configError || !updatedConfig) {
+        throw new Error(configError?.message || 'No se pudo guardar el logo en la configuración.');
+      }
+
+      setConfig(normalizeEmpresaConfig(updatedConfig as Record<string, unknown>));
+      setToast('Logo cargado y asociado correctamente.');
+      setTimeout(() => setToast(null), 3000);
+    } catch (error) {
+      setLogoUploadError(error instanceof Error ? error.message : 'No se pudo subir el logo.');
+    } finally {
+      setUploadingLogo(false);
+    }
+  };
 
   const closeCreateUserModal = () => {
     setShowCreateUserModal(false);
@@ -957,22 +1063,56 @@ export default function EmpresaConfigPage() {
               {/* Logo Upload */}
               <div className="space-y-4">
                 <label className="block text-sm font-medium text-slate-700">Logotipo de la Empresa</label>
-                <div className="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-slate-300 border-dashed rounded-lg hover:border-primary transition-colors cursor-pointer group bg-slate-50">
+                <label
+                  htmlFor="empresa-logo-upload"
+                  className={`mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-slate-300 border-dashed rounded-lg hover:border-primary transition-colors group bg-slate-50 ${uploadingLogo ? 'cursor-wait opacity-80' : 'cursor-pointer'}`}
+                >
+                  <input
+                    id="empresa-logo-upload"
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                    className="sr-only"
+                    onChange={handleLogoUpload}
+                    disabled={uploadingLogo}
+                  />
                   <div className="space-y-2 text-center">
                     <div className="mx-auto h-16 w-16 bg-white rounded-full flex items-center justify-center shadow-sm">
-                      {config?.logo_url ? (
-                        <img src={config.logo_url} alt="Logo" className="h-8 opacity-80 group-hover:opacity-100 transition-opacity" />
+                      {uploadingLogo ? (
+                        <Loader2 className="w-6 h-6 text-primary animate-spin" />
+                      ) : config?.logo_url ? (
+                        <img
+                          src={config.logo_url}
+                          alt={`Logo de ${empresa?.nombre || 'la empresa'}`}
+                          className="h-10 w-auto max-w-full object-contain opacity-90 group-hover:opacity-100 transition-opacity"
+                        />
                       ) : (
                         <Upload className="w-6 h-6 text-slate-400" />
                       )}
                     </div>
                     <div className="flex text-sm text-slate-600 justify-center">
-                      <span className="font-medium text-primary hover:text-primary-dark cursor-pointer">Subir un archivo</span>
-                      <p className="pl-1">o arrastrar y soltar</p>
+                      <span className="font-medium text-primary hover:text-primary-dark">
+                        {uploadingLogo ? 'Subiendo logo...' : config?.logo_url ? 'Reemplazar archivo' : 'Subir un archivo'}
+                      </span>
                     </div>
-                    <p className="text-xs text-slate-500">PNG, JPG, GIF hasta 2MB</p>
+                    <p className="text-xs text-slate-500">PNG, JPG, WEBP o SVG hasta 2MB</p>
                   </div>
-                </div>
+                </label>
+                {logoUploadError && (
+                  <p className="text-xs text-red-600">{logoUploadError}</p>
+                )}
+                {config?.logo_url && (
+                  <div className="rounded-lg border border-border bg-slate-50 px-3 py-2">
+                    <p className="text-xs font-medium text-slate-600">Logo publicado</p>
+                    <a
+                      href={config.logo_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-1 block truncate text-xs text-primary hover:underline"
+                    >
+                      {config.logo_url}
+                    </a>
+                  </div>
+                )}
               </div>
 
               {/* Color Picker */}

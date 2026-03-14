@@ -5,6 +5,69 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+function expandHexColor(value: string): string {
+  const cleaned = value.replace('#', '').trim();
+  if (cleaned.length === 3) {
+    return `#${cleaned
+      .split('')
+      .map((char) => `${char}${char}`)
+      .join('')}`.toUpperCase();
+  }
+  return `#${cleaned}`.toUpperCase();
+}
+
+function hexToRgb(value: string): { r: number; g: number; b: number } {
+  const normalized = expandHexColor(value).replace('#', '');
+  return {
+    r: parseInt(normalized.slice(0, 2), 16),
+    g: parseInt(normalized.slice(2, 4), 16),
+    b: parseInt(normalized.slice(4, 6), 16),
+  };
+}
+
+function rgbToHex(r: number, g: number, b: number): string {
+  return `#${[r, g, b]
+    .map((channel) => Math.max(0, Math.min(255, channel)).toString(16).padStart(2, '0'))
+    .join('')}`.toUpperCase();
+}
+
+function mixHexColors(base: string, target: string, weight: number): string {
+  const baseRgb = hexToRgb(base);
+  const targetRgb = hexToRgb(target);
+
+  return rgbToHex(
+    Math.round(baseRgb.r * (1 - weight) + targetRgb.r * weight),
+    Math.round(baseRgb.g * (1 - weight) + targetRgb.g * weight),
+    Math.round(baseRgb.b * (1 - weight) + targetRgb.b * weight)
+  );
+}
+
+export function normalizeHexColor(value?: string | null, fallback = '#9CBB06'): string {
+  const normalizedFallback = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(fallback)
+    ? expandHexColor(fallback)
+    : '#9CBB06';
+
+  if (!value) {
+    return normalizedFallback;
+  }
+
+  const candidate = value.trim();
+  if (!/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(candidate)) {
+    return normalizedFallback;
+  }
+
+  return expandHexColor(candidate);
+}
+
+export function getBrandingCssVariables(primaryColor?: string | null): Record<string, string> {
+  const primary = normalizeHexColor(primaryColor);
+  return {
+    '--color-primary': primary,
+    '--color-primary-dark': mixHexColors(primary, '#000000', 0.2),
+    '--color-primary-light': mixHexColors(primary, '#FFFFFF', 0.22),
+  };
+}
+
 export function formatCOP(value: number): string {
   return new Intl.NumberFormat('es-CO', {
     style: 'currency',

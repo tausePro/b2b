@@ -1,7 +1,8 @@
 'use client';
 
+import BrandMark from '@/components/ui/BrandMark';
 import { useAuth } from '@/contexts/AuthContext';
-import type { UserRole } from '@/types';
+import type { PortalBranding, UserRole } from '@/types';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
@@ -65,15 +66,19 @@ const MENU_BY_ROLE: Record<UserRole, SidebarItem[]> = {
 interface SidebarProps {
   isOpen: boolean;
   onClose: () => void;
+  portalBranding?: PortalBranding | null;
 }
 
-export default function Sidebar({ isOpen, onClose }: SidebarProps) {
+export default function Sidebar({ isOpen, onClose, portalBranding }: SidebarProps) {
   const { user } = useAuth();
   const pathname = usePathname();
 
   if (!user) return null;
 
   const menuItems = MENU_BY_ROLE[user.rol];
+  const isClientPortal = Boolean(
+    portalBranding && (user.rol === 'comprador' || user.rol === 'aprobador')
+  );
 
   const isActive = (pattern: string) => {
     if (pattern === '/dashboard$') {
@@ -102,11 +107,36 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
       >
         {/* Botón cerrar móvil */}
         <div className="lg:hidden flex items-center justify-between px-4 py-3 border-b border-border">
-          <span className="text-sm font-semibold text-foreground">Menú</span>
+          <span className="text-sm font-semibold text-foreground">
+            {isClientPortal && portalBranding ? portalBranding.empresa_nombre : 'Menú'}
+          </span>
           <button onClick={onClose} className="p-1 rounded hover:bg-background-light">
             <X className="w-5 h-5 text-muted" />
           </button>
         </div>
+
+        {isClientPortal && portalBranding && (
+          <div className="border-b border-border p-4">
+            <div className="flex items-center gap-3 rounded-xl border border-primary/15 bg-primary/5 p-3">
+              <BrandMark
+                name={portalBranding.empresa_nombre}
+                logoUrl={portalBranding.logo_url}
+                color={portalBranding.color_primario}
+                className="h-12 w-12 rounded-xl border border-white/80 bg-white p-1 shadow-sm"
+                imageClassName="p-1"
+                initialsClassName="text-sm"
+              />
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-foreground">
+                  {portalBranding.empresa_nombre}
+                </p>
+                <p className="mt-0.5 text-xs text-primary">
+                  {portalBranding.slug || 'Portal cliente'}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Navegación */}
         <nav className="p-3 space-y-1">
@@ -139,8 +169,12 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
         {/* Footer del sidebar */}
         <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-border">
           <div className="bg-primary/5 rounded-lg p-3">
-            <p className="text-xs font-semibold text-primary">Imprima B2B</p>
-            <p className="text-xs text-muted mt-0.5">v1.0.0 — Plataforma Corporativa</p>
+            <p className="text-xs font-semibold text-primary">
+              {isClientPortal && portalBranding ? portalBranding.empresa_nombre : 'Imprima B2B'}
+            </p>
+            <p className="text-xs text-muted mt-0.5">
+              {isClientPortal ? 'Portal corporativo personalizado' : 'v1.0.0 — Plataforma Corporativa'}
+            </p>
           </div>
         </div>
       </aside>

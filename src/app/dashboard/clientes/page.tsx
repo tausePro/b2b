@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { createClient } from '@/lib/supabase/client';
+import BrandMark from '@/components/ui/BrandMark';
 import Link from 'next/link';
 import {
   Building2,
@@ -313,20 +314,30 @@ export default function ClientesPage() {
               key={cliente.id}
               href={`/dashboard/clientes/${cliente.id}`}
               className="bg-white rounded-xl border border-border hover:border-primary/30 hover:shadow-md transition-all group"
+              style={{ borderTop: `3px solid ${cliente.config?.color_primario || '#9CBB06'}` }}
             >
               {/* Header */}
               <div className="px-5 py-4 border-b border-border flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div
-                    className="w-10 h-10 rounded-lg flex items-center justify-center text-white font-bold text-sm"
-                    style={{ backgroundColor: cliente.config?.color_primario || '#9CBB06' }}
-                  >
-                    {cliente.nombre.substring(0, 2).toUpperCase()}
-                  </div>
+                  <BrandMark
+                    name={cliente.nombre}
+                    logoUrl={cliente.config?.logo_url}
+                    color={cliente.config?.color_primario}
+                    className="h-10 w-10 rounded-lg"
+                    imageClassName="p-1"
+                    initialsClassName="text-sm"
+                  />
                   <div>
-                    <h3 className="font-semibold text-foreground group-hover:text-primary transition-colors">
-                      {cliente.nombre}
-                    </h3>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="font-semibold text-foreground group-hover:text-primary transition-colors">
+                        {cliente.nombre}
+                      </h3>
+                      {cliente.config?.slug && (
+                        <span className="inline-flex rounded-full border border-border px-2 py-0.5 text-[11px] font-medium text-primary">
+                          {cliente.config.slug}
+                        </span>
+                      )}
+                    </div>
                     <p className="text-xs text-muted">{cliente.nit || 'Sin NIT'}</p>
                   </div>
                 </div>

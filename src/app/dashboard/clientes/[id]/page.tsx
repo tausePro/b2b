@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { createClient } from '@/lib/supabase/client';
+import BrandMark from '@/components/ui/BrandMark';
 import { formatCOP, formatDate, getPedidoEstadoVisual } from '@/lib/utils';
 import KpiCard from '@/components/ui/KpiCard';
 import StatusBadge from '@/components/ui/StatusBadge';
@@ -267,51 +268,63 @@ export default function ClienteDetallePage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex items-start gap-3">
-          <button
-            onClick={() => router.push('/dashboard/clientes')}
-            className="p-2 rounded-lg hover:bg-white border border-border transition-colors"
-          >
-            <ArrowLeft className="w-4 h-4 text-muted" />
-          </button>
+      <div
+        className="rounded-2xl border border-border border-t-4 bg-white p-5 shadow-sm"
+        style={{ borderTopColor: config?.color_primario || '#9CBB06' }}
+      >
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-start gap-3">
-            <div
-              className="w-12 h-12 rounded-xl flex items-center justify-center text-white font-bold"
-              style={{ backgroundColor: config?.color_primario || '#9CBB06' }}
+            <button
+              onClick={() => router.push('/dashboard/clientes')}
+              className="p-2 rounded-lg hover:bg-background-light border border-border transition-colors"
             >
-              {cliente.nombre.substring(0, 2).toUpperCase()}
-            </div>
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h1 className="text-2xl font-bold text-foreground">{cliente.nombre}</h1>
-                <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${cliente.activa ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-600'}`}>
-                  {cliente.activa ? 'Activa' : 'Inactiva'}
-                </span>
+              <ArrowLeft className="w-4 h-4 text-muted" />
+            </button>
+            <div className="flex items-start gap-3">
+              <BrandMark
+                name={cliente.nombre}
+                logoUrl={config?.logo_url}
+                color={config?.color_primario}
+                className="h-12 w-12 rounded-xl border border-border bg-white p-1"
+                imageClassName="p-1"
+                initialsClassName="text-base"
+              />
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h1 className="text-2xl font-bold text-foreground">{cliente.nombre}</h1>
+                  <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${cliente.activa ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-600'}`}>
+                    {cliente.activa ? 'Activa' : 'Inactiva'}
+                  </span>
+                  {config?.slug && (
+                    <span className="inline-flex items-center rounded-full border border-border px-2.5 py-1 text-xs font-medium text-primary">
+                      {config.slug}
+                    </span>
+                  )}
+                </div>
+                <p className="text-sm text-muted mt-1">
+                  NIT: {cliente.nit || 'Sin NIT'}
+                </p>
               </div>
-              <p className="text-sm text-muted mt-1">
-                NIT: {cliente.nit || 'Sin NIT'}
-                {config?.slug ? ` · Portal: ${config.slug}` : ''}
-              </p>
             </div>
           </div>
-        </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <Link
-            href="/dashboard/clientes"
-            className="inline-flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-white"
-          >
-            <Building2 className="w-4 h-4" />
-            Ver cartera
-          </Link>
-          <Link
-            href="/dashboard/gestion-pedidos"
-            className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-dark"
-          >
-            <ClipboardList className="w-4 h-4" />
-            Gestionar pedidos
-          </Link>
+          <div className="flex flex-wrap items-center gap-2">
+            <Link
+              href="/dashboard/clientes"
+              className="inline-flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-background-light"
+            >
+              <Building2 className="w-4 h-4" />
+              Ver cartera
+            </Link>
+            <Link
+              href="/dashboard/gestion-pedidos"
+              className="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-white hover:opacity-90"
+              style={{ backgroundColor: config?.color_primario || '#9CBB06' }}
+            >
+              <ClipboardList className="w-4 h-4" />
+              Gestionar pedidos
+            </Link>
+          </div>
         </div>
       </div>
 

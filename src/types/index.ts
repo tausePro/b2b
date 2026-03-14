@@ -61,6 +61,14 @@ export interface EmpresaConfig {
   configuracion_extra?: Record<string, unknown>;
 }
 
+export interface PortalBranding {
+  empresa_id: string;
+  empresa_nombre: string;
+  slug: string | null;
+  logo_url: string | null;
+  color_primario: string | null;
+}
+
 export interface ModulosActivos {
   presupuestos: boolean;
   aprobaciones: boolean;

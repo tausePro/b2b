@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { createClient } from '@/lib/supabase/client';
 import { cn, formatCOP, getPedidoEstadoVisual } from '@/lib/utils';
+import BrandMark from '@/components/ui/BrandMark';
 import KpiCard from '@/components/ui/KpiCard';
 import Link from 'next/link';
 import {
@@ -35,6 +36,7 @@ interface ClienteResumen {
   nombre: string;
   activa: boolean;
   pedidos_pendientes: number;
+  logo_url: string | null;
   color_primario: string;
 }
 
@@ -142,7 +144,7 @@ export default function DashboardAsesor() {
 
             const { data: cfg } = await supabase
               .from('empresa_configs')
-              .select('color_primario')
+              .select('logo_url, color_primario')
               .eq('empresa_id', emp.id)
               .single();
 
@@ -151,6 +153,7 @@ export default function DashboardAsesor() {
               nombre: emp.nombre,
               activa: emp.activa,
               pedidos_pendientes: count ?? 0,
+              logo_url: cfg?.logo_url ?? null,
               color_primario: cfg?.color_primario || '#9CBB06',
             };
           })
@@ -289,12 +292,14 @@ export default function DashboardAsesor() {
                   className="px-5 py-3 flex items-center justify-between hover:bg-slate-50 transition-colors"
                 >
                   <div className="flex items-center gap-3">
-                    <div
-                      className="w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold text-xs"
-                      style={{ backgroundColor: cliente.color_primario }}
-                    >
-                      {cliente.nombre.substring(0, 2).toUpperCase()}
-                    </div>
+                    <BrandMark
+                      name={cliente.nombre}
+                      logoUrl={cliente.logo_url}
+                      color={cliente.color_primario}
+                      className="h-8 w-8 rounded-lg"
+                      imageClassName="p-1"
+                      initialsClassName="text-xs"
+                    />
                     <div>
                       <p className="text-sm font-medium text-foreground">{cliente.nombre}</p>
                       <p className="text-xs text-muted">
