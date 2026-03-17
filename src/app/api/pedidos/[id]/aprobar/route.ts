@@ -316,7 +316,7 @@ export async function POST(
 
     const notificationResult = await safeEnqueuePedidoNotifications({
       actorUserId: perfil.id,
-      event: 'pedido_aprobado',
+      event: 'pedido_procesado_odoo',
       pedidoId,
     });
     const warning = [logError?.message, notificationResult.error].filter(Boolean).join(' | ') || null;

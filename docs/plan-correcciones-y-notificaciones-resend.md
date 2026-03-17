@@ -594,19 +594,47 @@ SIN APROBACIÓN (auto):
 - **El presupuesto se descuenta** tanto en auto-aprobación (INSERT) como en aprobación manual (UPDATE).
 - **Todas las transiciones críticas** (aprobar, rechazar, validar) pasan por backend autoritativo.
 
-## Siguiente paso: Integración Resend
+## Estado actual: Integración Resend
 
-Con el flujo de pedidos ordenado, el backend tiene puntos claros y autoritativos para disparar correos:
+Con el flujo de pedidos ordenado, ya quedó implementada la base técnica para procesar el outbox `notificaciones_email` con Resend:
 
-1. `POST /api/pedidos/[id]/aprobar` → correo de aprobación + sync Odoo
-2. `POST /api/pedidos/[id]/rechazar` → correo de rechazo
-3. `POST /api/pedidos/[id]/validar` → correo de validación
-4. Trigger `set_estado_pedido_inicial()` → correo de creación (requiere ruta backend para crear pedido)
+1. `src/lib/email/resend.ts`
+   - cliente server-only para envío transaccional a la API de Resend
+   - soporte para `APP_URL` / `NEXT_PUBLIC_APP_URL` / `VERCEL_URL` al construir links absolutos
+2. `src/lib/email/templates/notificaciones.ts`
+   - render HTML + texto plano para eventos de pedidos
+3. `src/lib/notifications/processPendingEmails.ts`
+   - procesa el outbox `notificaciones_email` por lotes
+   - marca `procesando`, `enviado` o `error`
+   - persiste `provider = 'resend'`, `provider_message_id`, `last_error`, `scheduled_at` y `sent_at`
+4. `src/app/api/internal/notificaciones-email/process/route.ts`
+   - ruta interna protegida para ejecutar el procesamiento del outbox
 
-La forma de avanzar es:
+## Variables de entorno requeridas
+
+- `RESEND_API_KEY`
+- `RESEND_FROM_EMAIL`
+- `RESEND_FROM_NAME` (opcional, default `Imprima B2B`)
+- `INTERNAL_EMAIL_PROCESSOR_SECRET`
+- `APP_URL` o `NEXT_PUBLIC_APP_URL` para links absolutos en los correos
+
+## Uso operativo actual
+
+- Las mutaciones backend siguen encolando registros en `notificaciones_email`.
+- El envío real ya no depende de la UI.
+- Para despachar el outbox, un scheduler externo o job protegido debe llamar:
+
+`POST /api/internal/notificaciones-email/process`
+
+con header:
+
+`Authorization: Bearer <INTERNAL_EMAIL_PROCESSOR_SECRET>`
+
+## Pendiente para activación en entorno
 
 1. ~~cerrar el flujo real del pedido~~ ✅
 2. ~~centralizar mutaciones críticas en backend~~ ✅
-3. montar outbox simple (tabla `notificaciones_email`)
-4. conectar `Resend`
-5. encender primero los correos transaccionales de mayor valor
+3. ~~montar outbox simple (tabla `notificaciones_email`)~~ ✅
+4. ~~conectar el procesador con Resend~~ ✅
+5. configurar secretos reales y dominio verificado en Resend
+6. programar la invocación recurrente de la ruta interna

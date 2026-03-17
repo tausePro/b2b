@@ -23,11 +23,9 @@ DECLARE
 BEGIN
   -- Determinar si debemos descontar
   IF TG_OP = 'INSERT' THEN
-    -- En INSERT solo descontar si nace como 'aprobado' (auto-aprobación)
-    debe_descontar := (NEW.estado = 'aprobado');
+    debe_descontar := (NEW.fecha_aprobacion IS NOT NULL);
   ELSIF TG_OP = 'UPDATE' THEN
-    -- En UPDATE solo descontar cuando el estado cambia a 'aprobado'
-    debe_descontar := (NEW.estado = 'aprobado' AND OLD.estado != 'aprobado');
+    debe_descontar := (OLD.fecha_aprobacion IS NULL AND NEW.fecha_aprobacion IS NOT NULL);
   END IF;
 
   IF NOT debe_descontar THEN
@@ -76,9 +74,12 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- Eliminar el trigger viejo (solo UPDATE)
 DROP TRIGGER IF EXISTS trigger_descontar_presupuesto ON public.pedidos;
+DROP TRIGGER IF EXISTS trigger_descontar_presupuesto_insert ON public.pedidos;
+DROP TRIGGER IF EXISTS trigger_zz_descontar_presupuesto_insert ON public.pedidos;
+DROP TRIGGER IF EXISTS trigger_descontar_presupuesto_update ON public.pedidos;
 
 -- Crear trigger para INSERT
-CREATE TRIGGER trigger_descontar_presupuesto_insert
+CREATE TRIGGER trigger_zz_descontar_presupuesto_insert
   BEFORE INSERT ON public.pedidos
   FOR EACH ROW
   EXECUTE FUNCTION public.descontar_presupuesto_al_aprobar();
