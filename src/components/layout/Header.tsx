@@ -2,6 +2,7 @@
 
 import { useAuth } from '@/contexts/AuthContext';
 import { useCart } from '@/contexts/CartContext';
+import { createClient } from '@/lib/supabase/client';
 import BrandMark from '@/components/ui/BrandMark';
 import { ROLE_CONFIG, type PortalBranding } from '@/types';
 import {
@@ -14,7 +15,7 @@ import {
   Menu,
 } from 'lucide-react';
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 interface HeaderProps {
   onToggleSidebar: () => void;
@@ -25,6 +26,56 @@ export default function Header({ onToggleSidebar, portalBranding }: HeaderProps)
   const { user, signOut } = useAuth();
   const { totalItems } = useCart();
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [supabase] = useState(() => createClient());
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  useEffect(() => {
+    if (!user) {
+      return;
+    }
+
+    let active = true;
+
+    const fetchUnreadCount = async () => {
+      const { count, error } = await supabase
+        .from('notificaciones')
+        .select('id', { count: 'exact', head: true })
+        .eq('usuario_id', user.id)
+        .eq('leida', false);
+
+      if (!active) return;
+
+      if (error) {
+        console.error('Error cargando contador de notificaciones:', error);
+        setUnreadCount(0);
+        return;
+      }
+
+      setUnreadCount(count ?? 0);
+    };
+
+    void fetchUnreadCount();
+    const channel = supabase
+      .channel(`header-notificaciones-${user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'notificaciones',
+          filter: `usuario_id=eq.${user.id}`,
+        },
+        () => {
+          void fetchUnreadCount();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      active = false;
+      void supabase.removeChannel(channel);
+    };
+  }, [supabase, user]);
 
   if (!user) return null;
 
@@ -107,10 +158,17 @@ export default function Header({ onToggleSidebar, portalBranding }: HeaderProps)
         )}
 
         {/* Notificaciones */}
-        <button className="relative p-2 rounded-lg hover:bg-background-light transition-colors">
+        <Link
+          href="/dashboard/alertas"
+          className="relative p-2 rounded-lg hover:bg-background-light transition-colors"
+        >
           <Bell className="w-5 h-5 text-muted" />
-          <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-danger rounded-full" />
-        </button>
+          {unreadCount > 0 && (
+            <span className="absolute -top-0.5 -right-0.5 bg-danger text-white text-[10px] font-bold min-w-5 h-5 px-1 rounded-full flex items-center justify-center">
+              {unreadCount > 9 ? '9+' : unreadCount}
+            </span>
+          )}
+        </Link>
 
         {/* Perfil */}
         <div className="relative">

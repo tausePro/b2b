@@ -1,0 +1,612 @@
+# Plan de correcciones y roadmap de notificaciones por correo con Resend
+
+## Objetivo
+
+Centralizar en un solo documento:
+
+- las correcciones estructurales detectadas que impactan el flujo operativo
+- el mapa de eventos del negocio que deben disparar correos
+- el encaje técnico real de `Resend` en la arquitectura actual
+- una propuesta de implementación por fases antes de tocar el feature
+
+## Estado actual de la documentación
+
+## Lo que ya existe
+
+- `README.md` contiene contexto parcial del proyecto, RLS, recuperación de perfil Auth y algunas decisiones funcionales.
+- Las migraciones en `supabase/migrations` explican bastante del modelo de datos y los triggers reales.
+- No existe hoy una carpeta `docs/` funcional como fuente única de arquitectura operativa.
+
+## Decisión recomendada
+
+- Dejar este tipo de documentación técnica en `docs/`.
+- Usar este archivo como base viva para:
+  - correcciones pendientes
+  - roadmap de notificaciones
+  - decisiones de arquitectura sobre eventos y correos
+
+## Hallazgos principales
+
+## 1. Hoy no existe backend real de notificaciones
+
+No encontré:
+
+- integración con `Resend`
+- dependencia `resend` en `package.json`
+- tablas de outbox o historial de correos
+- colas, workers o scheduler
+- cron interno del proyecto
+- centro de notificaciones persistente
+
+Lo que sí existe hoy es UI simulada:
+
+- `src/components/layout/Header.tsx` muestra campana estática
+- `src/app/dashboard/alertas/page.tsx` usa datos mock
+- `src/app/dashboard/operativo/page.tsx` usa alertas mock
+
+## 2. Los eventos de negocio existen, pero están dispersos
+
+Los cambios importantes del sistema hoy se producen en dos lugares distintos:
+
+- rutas backend (`/api/...`) con cliente admin/server
+- páginas cliente que escriben directo a Supabase con `createClient()`
+
+Esto es clave porque, mientras los cambios sigan ocurriendo desde cliente, no hay un punto único y confiable para disparar correos.
+
+## 3. El flujo de pedidos está inconsistente
+
+### Estado inicial del pedido
+
+En `supabase/migrations/001_schema_inicial.sql` existe el trigger `set_estado_pedido_inicial()`:
+
+- si `empresas.requiere_aprobacion = true`, el pedido entra en `en_aprobacion`
+- si `empresas.requiere_aprobacion = false`, el pedido entra en `aprobado` y se llena `fecha_aprobacion`
+
+### Problema importante
+
+El trigger `descontar_presupuesto_al_aprobar()` solo corre en `BEFORE UPDATE` sobre `public.pedidos`.
+
+Eso implica que, si una empresa no requiere aprobación y el pedido nace ya en `aprobado`, ese flujo no dispara el descuento de presupuesto en el momento de creación.
+
+Esto es un gap funcional real y debe corregirse antes o junto con las notificaciones.
+
+### Aprobación y Odoo hoy están acoplados
+
+La ruta `src/app/api/pedidos/[id]/aprobar/route.ts` hace todo esto en un solo paso:
+
+- valida permisos
+- lee pedido e ítems
+- crea cotización en Odoo
+- actualiza el pedido
+- guarda `odoo_sale_order_id`
+- registra trazabilidad
+
+Pero deja el estado en `aprobado`, no en `procesado_odoo`.
+
+### Validación Imprima existe, pero no termina en Odoo
+
+Las páginas:
+
+- `src/app/dashboard/gestion-pedidos/page.tsx`
+- `src/app/dashboard/pedidos/[id]/page.tsx`
+
+permiten mover el pedido a `en_validacion_imprima`, pero no encontré un flujo backend posterior que tome ese estado y cree la cotización en Odoo.
+
+### Estado `procesado_odoo` existe, pero no es autoritativo
+
+El estado `procesado_odoo`:
+
+- existe en el esquema
+- existe en tipos y UI
+- se usa visualmente en varios dashboards
+
+Pero no encontré código que realmente actualice `pedidos.estado = 'procesado_odoo'`.
+
+En varias pantallas se infiere visualmente con `odoo_sale_order_id`, pero no de forma consistente.
+
+## 4. Impacto directo en notificaciones
+
+Mientras no haya un flujo autoritativo y coherente de estados:
+
+- el correo correcto puede salir en el momento equivocado
+- algunas transiciones pueden no disparar nada
+- reportes y correos pueden no coincidir con el estado real del pedido
+
+## Mapa de eventos que deberían disparar correos
+
+## Prioridad alta
+
+### 1. Alta de usuario cliente
+
+Punto actual:
+
+- `src/app/api/admin/empresas/[id]/usuarios/route.ts`
+
+Evento:
+
+- creación de usuario `comprador` o `aprobador`
+
+Destinatarios sugeridos:
+
+- usuario creado
+- opcionalmente el actor admin que lo creó
+
+Contenido esperado:
+
+- acceso al portal
+- rol asignado
+- empresa
+- contraseña temporal o instrucción de cambio
+
+### 2. Activación de acceso para asesor
+
+Punto actual:
+
+- `src/app/api/admin/empresas/[id]/asesores/[asesorId]/activar-acceso/route.ts`
+
+Evento:
+
+- asesor interno queda habilitado en Auth y enlazado al perfil
+
+Destinatarios sugeridos:
+
+- asesor activado
+
+### 3. Pedido creado y enviado a aprobación
+
+Punto actual:
+
+- `src/app/dashboard/carrito/page.tsx`
+- trigger `set_estado_pedido_inicial()`
+
+Condición:
+
+- empresa con `requiere_aprobacion = true`
+
+Destinatarios sugeridos:
+
+- todos los usuarios activos con rol `aprobador` de la empresa
+- opcionalmente confirmación al creador
+
+Contenido esperado:
+
+- número de pedido
+- sede
+- creador
+- total items
+- valor si aplica al rol
+
+### 4. Pedido creado con aprobación automática
+
+Punto actual:
+
+- `src/app/dashboard/carrito/page.tsx`
+- trigger `set_estado_pedido_inicial()`
+
+Condición:
+
+- empresa con `requiere_aprobacion = false`
+
+Destinatarios sugeridos:
+
+- creador del pedido
+- asesor asignado a la empresa
+- opcionalmente dirección/operación interna si no hay asesor asignado
+
+Observación crítica:
+
+- este flujo hoy queda operacionalmente ambiguo porque el pedido nace `aprobado`, pero no hay paso claro posterior que lo procese a Odoo de forma consistente
+
+### 5. Pedido rechazado
+
+Puntos actuales:
+
+- `src/app/dashboard/aprobaciones/page.tsx`
+- `src/app/dashboard/pedidos/[id]/page.tsx`
+
+Evento:
+
+- cambio manual a `rechazado`
+
+Destinatarios sugeridos:
+
+- creador del pedido
+- opcionalmente otros aprobadores o responsables internos
+
+### 6. Pedido aprobado y cotización creada en Odoo
+
+Punto actual:
+
+- `src/app/api/pedidos/[id]/aprobar/route.ts`
+
+Evento real actual:
+
+- aprobación y creación de cotización en Odoo ocurren juntas
+
+Destinatarios sugeridos:
+
+- creador del pedido
+- aprobador que ejecutó la acción
+- asesor asignado
+
+Observación:
+
+- el asunto y copy del correo deben reflejar la realidad actual: no es solo “aprobado”, hoy también queda sincronizado a Odoo porque ya se crea la cotización
+
+## Prioridad media
+
+### 7. Pedido enviado a validación Imprima
+
+Puntos actuales:
+
+- `src/app/dashboard/gestion-pedidos/page.tsx`
+- `src/app/dashboard/pedidos/[id]/page.tsx`
+
+Evento:
+
+- cambio a `en_validacion_imprima`
+
+Destinatarios sugeridos:
+
+- creador del pedido
+- aprobador principal de la empresa
+
+Observación:
+
+- este evento existe hoy, pero no tiene continuación backend clara hacia Odoo
+
+### 8. Sincronización o asignación automática de asesor desde Odoo
+
+Punto actual:
+
+- `src/app/api/admin/empresas/[id]/asesores/sincronizar-odoo/route.ts`
+- `src/lib/odoo/syncOdooAsesor.ts`
+
+Destinatarios sugeridos:
+
+- equipo interno
+- opcionalmente asesor asignado
+
+### 9. Errores operativos de Odoo
+
+Eventos hoy visibles solo como intención funcional:
+
+- fallos de sincronización
+- pedidos que no logran llegar a Odoo
+
+Destinatarios sugeridos:
+
+- operación interna
+- soporte
+- dirección según severidad
+
+## Prioridad futura
+
+### 10. Alertas de presupuesto por umbral
+
+Punto actual:
+
+- `src/app/dashboard/presupuestos/page.tsx`
+
+Hallazgo:
+
+- hoy solo se calculan y muestran visualmente; no existe persistencia ni disparo automático
+
+### 11. Recordatorios por pedidos estancados
+
+Punto actual:
+
+- solo aparecen como mock en `dashboard/operativo` y `dashboard/alertas`
+
+Esto sí requerirá cron o un procesador recurrente.
+
+## Soporte técnico real disponible hoy
+
+## Sí existe
+
+- Next.js con route handlers server-side
+- cliente server/admin de Supabase
+- `logs_trazabilidad` para auditoría de pedidos
+- rutas backend donde sí se puede integrar `Resend`
+
+## No existe
+
+- cola durable
+- cron interno del repo
+- tabla de pendientes de envío
+- reintentos
+- plantillas de email
+- preferencias de notificación por usuario
+- tracking de enviados/fallidos
+
+## Encaje técnico de Resend
+
+## Encaja bien
+
+`Resend` encaja bien en este stack porque:
+
+- el proyecto ya usa Next.js con backend propio en `app/api`
+- el envío debe ser server-only
+- el volumen inicial parece transaccional, no masivo
+- puede empezar simple y escalar luego con outbox + procesador
+
+## Requisitos mínimos
+
+- `RESEND_API_KEY`
+- dominio verificado en Resend
+- dirección `from` transaccional, por ejemplo `no-reply@...`
+- secreto interno para el procesador si exponemos una ruta de cron
+
+## Riesgos y consideraciones
+
+- nunca usar `NEXT_PUBLIC_` para la API key de Resend
+- nunca disparar correos desde componentes cliente
+- si enviamos sin outbox, perderemos trazabilidad y reintentos
+- si seguimos dejando cambios críticos directo desde cliente, habrá eventos imposibles de capturar de forma fiable
+
+## Recomendación de arquitectura
+
+## Opción recomendada: outbox simple + backend autoritativo
+
+### Principio
+
+No enviar el correo “en línea” desde UI ni depender de la pantalla que hizo el cambio.
+
+### Recomendación concreta
+
+1. Centralizar las mutaciones de negocio en backend.
+2. En cada mutación, registrar una fila en una tabla de salida de correos.
+3. Procesar esa tabla desde una ruta interna protegida.
+4. Enviar con `Resend` y guardar resultado, error, intentos y `provider_message_id`.
+
+## Tabla sugerida
+
+Nombre sugerido:
+
+- `notificaciones_email`
+
+Campos sugeridos:
+
+- `id`
+- `tipo`
+- `referencia_tipo`
+- `referencia_id`
+- `empresa_id`
+- `usuario_destinatario_id`
+- `email_destino`
+- `asunto`
+- `payload` JSONB
+- `estado` (`pending`, `processing`, `sent`, `failed`, `cancelled`)
+- `intentos`
+- `provider`
+- `provider_message_id`
+- `ultimo_error`
+- `disponible_desde`
+- `enviada_en`
+- `created_at`
+- `updated_at`
+
+Índices y protecciones:
+
+- índice por `estado` y `disponible_desde`
+- deduplicación por combinación de evento + destinatario cuando aplique
+
+## Servicios sugeridos
+
+- `src/lib/email/resend.ts`
+- `src/lib/email/templates/...`
+- `src/lib/notifications/enqueue.ts`
+- `src/lib/notifications/processPending.ts`
+
+## Ruta interna sugerida
+
+- `src/app/api/internal/notificaciones-email/process/route.ts`
+
+Uso:
+
+- procesar lote de pendientes
+- enviar por `Resend`
+- actualizar estado
+- registrar error y siguiente reintento
+
+## Correcciones previas o simultáneas recomendadas
+
+## P0
+
+### 1. Definir flujo autoritativo del pedido
+
+Hay que resolver cuál es el flujo real deseado:
+
+### Opción A
+
+- `en_aprobacion`
+- `aprobado`
+- `en_validacion_imprima`
+- `procesado_odoo`
+
+### Opción B
+
+- `en_aprobacion`
+- `procesado_odoo`
+
+Hoy el código mezcla ambas ideas.
+
+### 2. Corregir la auto-aprobación
+
+Hay que corregir al menos uno de estos puntos:
+
+- descuento de presupuesto cuando el pedido nace aprobado
+- definición de quién procesa ese pedido hacia Odoo
+- `aprobado_por` cuando la aprobación es automática
+
+### 3. Hacer autoritativo `procesado_odoo`
+
+Elegir una sola estrategia:
+
+- persistir `estado = 'procesado_odoo'` cuando exista creación exitosa en Odoo
+- o eliminar esa idea del modelo y usar solo `odoo_sale_order_id`
+
+Mi recomendación es no dejar las dos cosas compitiendo.
+
+### 4. Centralizar transiciones críticas en backend
+
+Al menos estas transiciones no deberían quedar solo en páginas cliente:
+
+- crear pedido
+- rechazar pedido
+- enviar a validación Imprima
+- crear usuario cliente
+- activar acceso asesor
+
+## P1
+
+### 5. Implementar outbox de correos
+
+### 6. Implementar plantillas base
+
+Templates iniciales sugeridos:
+
+- bienvenida usuario cliente
+- activación de asesor
+- pedido recibido
+- pedido rechazado
+- pedido aprobado/sincronizado Odoo
+- pedido en validación Imprima
+
+### 7. Trazabilidad de envíos
+
+Guardar por cada correo:
+
+- destinatario
+- evento
+- resultado
+- error
+- id del mensaje en Resend
+
+## P2
+
+### 8. Alertas programadas
+
+- presupuestos por umbral
+- pedidos estancados
+- errores Odoo
+- recordatorios de aprobación
+
+## Fase sugerida de implementación
+
+## Fase 1
+
+- instalar `resend`
+- crear servicio server-only
+- crear tabla `notificaciones_email`
+- crear templates base
+- disparar correos desde flujos ya server-side:
+  - alta de usuario cliente
+  - activación de asesor
+  - aprobación con creación de cotización en Odoo
+
+## Fase 2
+
+- mover a backend las mutaciones que hoy suceden directo desde cliente:
+  - crear pedido
+  - rechazar pedido
+  - enviar a validación Imprima
+
+## Fase 3
+
+- agregar procesador recurrente y reintentos
+- activar alertas programadas
+- construir centro de alertas real si se necesita canal interno dentro del portal
+
+## Correcciones implementadas (Migración 015 + Backend autoritativo)
+
+### ✅ 1. Trigger de presupuesto corregido
+
+**Archivo:** `supabase/migrations/015_correccion_flujo_pedidos.sql`
+
+- `descontar_presupuesto_al_aprobar()` ahora cubre tanto `INSERT` como `UPDATE`.
+- Los pedidos auto-aprobados (empresas sin `requiere_aprobacion`) ahora descuentan presupuesto al crearse.
+- Se crean dos triggers separados: `trigger_descontar_presupuesto_insert` y `trigger_descontar_presupuesto_update`.
+
+### ✅ 2. `procesado_odoo` es ahora un estado autoritativo
+
+**Archivo:** `src/app/api/pedidos/[id]/aprobar/route.ts`
+
+- La ruta de aprobación ahora establece `estado = 'procesado_odoo'` cuando crea la cotización en Odoo.
+- Ya no se queda en `aprobado` después de sincronizar con Odoo.
+
+### ✅ 3. Rechazo centralizado en backend
+
+**Archivo:** `src/app/api/pedidos/[id]/rechazar/route.ts`
+
+- Nueva ruta `POST /api/pedidos/[id]/rechazar`.
+- Valida permisos (solo `aprobador`, `super_admin`, `direccion`).
+- Solo permite rechazar pedidos en estado `en_aprobacion`.
+- Registra log de trazabilidad automáticamente.
+- Acepta `motivo` opcional en el body.
+
+### ✅ 4. Validación centralizada en backend
+
+**Archivo:** `src/app/api/pedidos/[id]/validar/route.ts`
+
+- Nueva ruta `POST /api/pedidos/[id]/validar`.
+- Valida permisos (solo `asesor`, `super_admin`, `direccion`).
+- Solo permite validar pedidos en estado `aprobado`.
+- Verifica acceso del asesor a la empresa.
+- Registra log de trazabilidad automáticamente.
+
+### ✅ 5. Frontend actualizado
+
+- `aprobaciones/page.tsx` → usa `/api/pedidos/[id]/rechazar` en lugar de update directo.
+- `gestion-pedidos/page.tsx` → usa `/api/pedidos/[id]/validar` en lugar de update directo.
+- `pedidos/[id]/page.tsx` → todas las acciones (`aprobar`, `rechazar`, `validar`) pasan por backend vía `fetch(/api/pedidos/${id}/${accion})`.
+
+### ✅ 6. Inferencia visual eliminada
+
+- `getPedidoEstadoVisual()` simplificada: ya solo devuelve `estado` directamente.
+- `isPedidoPendienteComercial()` simplificada: ya no recibe `odoo_sale_order_id`.
+- Todos los dashboards, reportes y vistas usan `pedido.estado` directamente.
+- Se eliminaron todas las expresiones `odoo_sale_order_id ? 'procesado_odoo' : estado` del frontend.
+
+### Flujo canónico de estados (definitivo)
+
+```
+CON APROBACIÓN:
+  en_aprobacion → aprobado (aprobador) → en_validacion_imprima (asesor) → procesado_odoo (Odoo sync)
+               → rechazado (aprobador)
+
+  en_aprobacion → procesado_odoo (aprobador aprueba + Odoo sync en un paso)
+
+SIN APROBACIÓN (auto):
+  aprobado (trigger INSERT) → en_validacion_imprima (asesor) → procesado_odoo (Odoo sync)
+  aprobado (trigger INSERT) → procesado_odoo (Odoo sync directo)
+```
+
+## Decisiones funcionales pendientes
+
+- ¿A quién notificamos cuando una empresa no tiene aprobadores pero sí asesor asignado?
+- ¿Queremos enviar copia al creador en todos los eventos o solo en cambios de estado críticos?
+- ¿Los correos de error Odoo van a soporte, dirección o a un buzón operativo único?
+
+## Decisiones funcionales cerradas
+
+- **`procesado_odoo` es un estado persistido** en la BD, no una vista derivada de `odoo_sale_order_id`.
+- **El presupuesto se descuenta** tanto en auto-aprobación (INSERT) como en aprobación manual (UPDATE).
+- **Todas las transiciones críticas** (aprobar, rechazar, validar) pasan por backend autoritativo.
+
+## Siguiente paso: Integración Resend
+
+Con el flujo de pedidos ordenado, el backend tiene puntos claros y autoritativos para disparar correos:
+
+1. `POST /api/pedidos/[id]/aprobar` → correo de aprobación + sync Odoo
+2. `POST /api/pedidos/[id]/rechazar` → correo de rechazo
+3. `POST /api/pedidos/[id]/validar` → correo de validación
+4. Trigger `set_estado_pedido_inicial()` → correo de creación (requiere ruta backend para crear pedido)
+
+La forma de avanzar es:
+
+1. ~~cerrar el flujo real del pedido~~ ✅
+2. ~~centralizar mutaciones críticas en backend~~ ✅
+3. montar outbox simple (tabla `notificaciones_email`)
+4. conectar `Resend`
+5. encender primero los correos transaccionales de mayor valor

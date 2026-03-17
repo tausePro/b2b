@@ -104,6 +104,8 @@ export default function PedidosPage() {
               { key: 'en_aprobacion', label: 'En Aprobación' },
               { key: 'aprobado', label: 'Aprobados' },
               { key: 'en_validacion_imprima', label: 'En Validación' },
+              { key: 'procesado_odoo', label: 'Procesado' },
+              { key: 'rechazado', label: 'Rechazados' },
             ].map((f) => (
               <button
                 key={f.key}

@@ -6,7 +6,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { createClient } from '@/lib/supabase/client';
 import BrandMark from '@/components/ui/BrandMark';
-import { formatCOP, formatDate, getPedidoEstadoVisual } from '@/lib/utils';
+import { formatCOP, formatDate } from '@/lib/utils';
 import KpiCard from '@/components/ui/KpiCard';
 import StatusBadge from '@/components/ui/StatusBadge';
 import {
@@ -160,13 +160,12 @@ export default function ClienteDetallePage() {
           .from('pedidos')
           .select('id', { count: 'exact', head: true })
           .eq('empresa_id', clienteId)
-          .in('estado', ['borrador', 'en_aprobacion', 'aprobado', 'en_validacion_imprima'])
-          .is('odoo_sale_order_id', null),
+          .in('estado', ['borrador', 'en_aprobacion', 'aprobado', 'en_validacion_imprima']),
         supabase
           .from('pedidos')
           .select('id', { count: 'exact', head: true })
           .eq('empresa_id', clienteId)
-          .not('odoo_sale_order_id', 'is', null),
+          .eq('estado', 'procesado_odoo'),
         supabase
           .from('pedidos')
           .select('valor_total_cop')
@@ -384,7 +383,7 @@ export default function ClienteDetallePage() {
                           <td className="py-3 px-4 text-right font-semibold">{formatCOP(pedido.valor_total_cop || 0)}</td>
                         )}
                         <td className="py-3 px-4 text-center">
-                          <StatusBadge estado={getPedidoEstadoVisual(pedido.estado, pedido.odoo_sale_order_id)} />
+                          <StatusBadge estado={pedido.estado} />
                         </td>
                         <td className="py-3 px-4 text-center">
                           <Link

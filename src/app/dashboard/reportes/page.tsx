@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { createClient } from '@/lib/supabase/client';
-import { formatCOP, getPedidoEstadoVisual } from '@/lib/utils';
+import { formatCOP } from '@/lib/utils';
 import { BarChart3, Loader2 } from 'lucide-react';
 
 interface ReportePedido {
@@ -87,12 +87,11 @@ export default function ReportesPage() {
     const ticketPromedio = totalPedidos > 0 ? valorTotal / totalPedidos : 0;
 
     const porEstado = rows.reduce<Record<string, { count: number; valor: number }>>((acc, row) => {
-      const estadoVisual = getPedidoEstadoVisual(row.estado, row.odoo_sale_order_id);
-      if (!acc[estadoVisual]) {
-        acc[estadoVisual] = { count: 0, valor: 0 };
+      if (!acc[row.estado]) {
+        acc[row.estado] = { count: 0, valor: 0 };
       }
-      acc[estadoVisual].count += 1;
-      acc[estadoVisual].valor += row.valor_total_cop;
+      acc[row.estado].count += 1;
+      acc[row.estado].valor += row.valor_total_cop;
       return acc;
     }, {});
 
