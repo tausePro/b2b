@@ -165,7 +165,7 @@ export default function ConfiguracionAdminPage() {
       const data = (await response.json()) as DiagnosticsResponse & { error?: string; details?: string | null };
 
       if (!response.ok) {
-        throw new Error(data.error || data.details || 'No se pudo cargar el diagnóstico de correo.');
+        throw new Error(data.details || data.error || 'No se pudo cargar el diagnóstico de correo.');
       }
 
       setLoadError(null);
@@ -267,12 +267,13 @@ export default function ConfiguracionAdminPage() {
       });
       const data = (await response.json()) as {
         diagnostics?: DiagnosticsResponse;
+        details?: string | null;
         error?: string;
         ok?: boolean;
       };
 
       if (!response.ok || !data.ok) {
-        throw new Error(data.error || 'No se pudo guardar la plantilla de correo.');
+        throw new Error(data.details || data.error || 'No se pudo guardar la plantilla de correo.');
       }
 
       if (data.diagnostics) {
@@ -308,10 +309,10 @@ export default function ConfiguracionAdminPage() {
           ...(testTemplateType ? { tipo: testTemplateType } : {}),
         }),
       });
-      const data = (await response.json()) as { diagnostics?: DiagnosticsResponse; error?: string; messageId?: string };
+      const data = (await response.json()) as { diagnostics?: DiagnosticsResponse; details?: string | null; error?: string; messageId?: string };
 
       if (!response.ok) {
-        throw new Error(data.error || 'No se pudo enviar el correo de prueba.');
+        throw new Error(data.details || data.error || 'No se pudo enviar el correo de prueba.');
       }
 
       if (data.diagnostics) {
@@ -342,6 +343,7 @@ export default function ConfiguracionAdminPage() {
       });
       const data = (await response.json()) as {
         diagnostics?: DiagnosticsResponse;
+        details?: string | null;
         error?: string;
         ok?: boolean;
         result?: {
@@ -355,7 +357,7 @@ export default function ConfiguracionAdminPage() {
       };
 
       if (!response.ok) {
-        throw new Error(data.error || 'No se pudo procesar la cola de correos.');
+        throw new Error(data.details || data.error || 'No se pudo procesar la cola de correos.');
       }
 
       if (data.diagnostics) {
