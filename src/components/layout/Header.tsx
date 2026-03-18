@@ -15,6 +15,7 @@ import {
   Menu,
 } from 'lucide-react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
 interface HeaderProps {
@@ -25,6 +26,7 @@ interface HeaderProps {
 export default function Header({ onToggleSidebar, portalBranding }: HeaderProps) {
   const { user, signOut } = useAuth();
   const { totalItems } = useCart();
+  const router = useRouter();
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [supabase] = useState(() => createClient());
   const [unreadCount, setUnreadCount] = useState(0);
@@ -55,6 +57,7 @@ export default function Header({ onToggleSidebar, portalBranding }: HeaderProps)
     };
 
     void fetchUnreadCount();
+
     const channel = supabase
       .channel(`header-notificaciones-${user.id}`)
       .on(
@@ -71,8 +74,25 @@ export default function Header({ onToggleSidebar, portalBranding }: HeaderProps)
       )
       .subscribe();
 
+    // Re-fetch cuando el usuario vuelve a la pestaña
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        void fetchUnreadCount();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    // Polling cada 30s como respaldo
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        void fetchUnreadCount();
+      }
+    }, 30000);
+
     return () => {
       active = false;
+      document.removeEventListener('visibilitychange', handleVisibility);
+      clearInterval(interval);
       void supabase.removeChannel(channel);
     };
   }, [supabase, user]);
@@ -216,9 +236,10 @@ export default function Header({ onToggleSidebar, portalBranding }: HeaderProps)
                   Mi Perfil
                 </Link>
                 <button
-                  onClick={() => {
+                  onClick={async () => {
                     setShowUserMenu(false);
-                    signOut();
+                    await signOut();
+                    router.push('/login');
                   }}
                   className="flex items-center gap-2 px-4 py-2 text-sm text-danger hover:bg-danger/5 transition-colors w-full"
                 >

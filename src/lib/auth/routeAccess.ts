@@ -31,6 +31,8 @@ const ROLE_PATH_PREFIXES: Record<UserRole, string[]> = {
     '/dashboard/analitica',
     '/dashboard/equipo',
     '/dashboard/operativo',
+    '/dashboard/clientes',
+    '/dashboard/pedidos',
     '/dashboard/presupuestos',
     '/dashboard/alertas',
     '/dashboard/configuracion',
@@ -45,11 +47,16 @@ function normalizePath(path: string): string {
 }
 
 export function canAccessDashboardPath(role: UserRole, pathname: string): boolean {
+  // super_admin tiene acceso total a todas las rutas (admin + dashboard)
+  if (role === 'super_admin') {
+    return true;
+  }
+
   const normalizedPath = normalizePath(pathname);
   const allowedPrefixes = ROLE_PATH_PREFIXES[role] ?? [];
 
   if (normalizedPath === '/dashboard') {
-    return role !== 'super_admin';
+    return true;
   }
 
   return allowedPrefixes.some((prefix) => {

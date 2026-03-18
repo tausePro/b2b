@@ -97,19 +97,24 @@ export default function ClienteDetallePage() {
       setLoading(true);
       setForbidden(false);
 
-      const { data: asignacion, error: asignacionError } = await supabase
-        .from('asesor_empresas')
-        .select('empresa_id')
-        .eq('usuario_id', user.id)
-        .eq('empresa_id', clienteId)
-        .eq('activo', true)
-        .maybeSingle();
+      // super_admin y direccion tienen acceso global, no necesitan asignación
+      const isGlobalRole = user.rol === 'super_admin' || user.rol === 'direccion';
 
-      if (asignacionError || !asignacion) {
-        setForbidden(true);
-        setCliente(null);
-        setLoading(false);
-        return;
+      if (!isGlobalRole) {
+        const { data: asignacion, error: asignacionError } = await supabase
+          .from('asesor_empresas')
+          .select('empresa_id')
+          .eq('usuario_id', user.id)
+          .eq('empresa_id', clienteId)
+          .eq('activo', true)
+          .maybeSingle();
+
+        if (asignacionError || !asignacion) {
+          setForbidden(true);
+          setCliente(null);
+          setLoading(false);
+          return;
+        }
       }
 
       const now = new Date();

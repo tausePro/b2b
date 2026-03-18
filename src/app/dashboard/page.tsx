@@ -1,8 +1,6 @@
 'use client';
 
 import { useAuth } from '@/contexts/AuthContext';
-import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
 import DashboardComprador from '@/components/dashboards/DashboardComprador';
 import DashboardAprobador from '@/components/dashboards/DashboardAprobador';
 import DashboardAsesor from '@/components/dashboards/DashboardAsesor';
@@ -11,23 +9,6 @@ import { Loader2 } from 'lucide-react';
 
 export default function DashboardPage() {
   const { user, loading } = useAuth();
-  const router = useRouter();
-  const [isRedirecting, setIsRedirecting] = useState(false);
-
-  useEffect(() => {
-    let mounted = true;
-    if (user?.rol === 'super_admin') {
-      setIsRedirecting(true);
-      // Pequeño timeout para asegurar que el router esté listo y evitar AbortError
-      const timer = setTimeout(() => {
-        if (mounted) router.replace('/admin');
-      }, 0);
-      return () => {
-        mounted = false;
-        clearTimeout(timer);
-      };
-    }
-  }, [user, router]);
 
   if (loading) {
     return (
@@ -52,16 +33,9 @@ export default function DashboardPage() {
     );
   }
 
-  if (user.rol === 'super_admin' || isRedirecting) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full mt-20 gap-4">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-        <p className="text-muted">Redirigiendo al panel de administración...</p>
-      </div>
-    );
-  }
-
   switch (user.rol) {
+    case 'super_admin':
+      return <DashboardDireccion />;
     case 'comprador':
       return <DashboardComprador />;
     case 'aprobador':
