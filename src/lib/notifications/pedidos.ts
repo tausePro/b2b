@@ -1,4 +1,8 @@
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
+import {
+  getNotificationEmailTemplate,
+  renderEditableNotificationTemplate,
+} from '@/lib/notifications/emailTemplateStore';
 import type { NivelNotificacion, TipoNotificacion } from '@/types';
 
 type PedidoNotificationEvent = TipoNotificacion;
@@ -33,11 +37,15 @@ type Recipient = {
 type NotificationTemplate = {
   nivel: NivelNotificacion;
   titulo: string;
+  intro: string;
   descripcion: string;
   asunto: string;
+  ctaLabel: string;
   ruta: string;
   metadata: Record<string, unknown>;
 };
+
+type NotificationTemplateContext = Record<string, string | number | boolean | null | undefined>;
 
 type EnqueuePedidoNotificationsInput = {
   actorUserId?: string | null;
@@ -228,85 +236,69 @@ async function resolveRecipients(event: PedidoNotificationEvent, pedido: PedidoC
   }
 }
 
-function buildTemplate(
+function getNotificationLevel(event: PedidoNotificationEvent): NivelNotificacion {
+  switch (event) {
+    case 'pedido_creado_en_aprobacion':
+      return 'warning';
+    case 'pedido_creado_autoaprobado':
+    case 'pedido_aprobado':
+    case 'pedido_procesado_odoo':
+      return 'success';
+    case 'pedido_rechazado':
+      return 'danger';
+    case 'pedido_validado':
+      return 'info';
+  }
+}
+
+function buildTemplateContext(
   event: PedidoNotificationEvent,
   pedido: PedidoContext,
-  actor: Recipient | null
-): NotificationTemplate {
+  actor: Recipient | null,
+  recipient: Recipient
+): NotificationTemplateContext {
   const actorName = actor ? getNombreCompleto(actor) : 'Usuario';
+  const recipientName = getNombreCompleto(recipient);
   const sede = pedido.sede?.nombre_sede || 'Sin sede';
   const empresa = pedido.empresa?.nombre || 'tu empresa';
   const ruta = `/dashboard/pedidos/${pedido.id}`;
-  const metadata = {
+  return {
+    actor_nombre: actorName,
+    destinatario_email: recipient.email,
+    destinatario_nombre: recipientName,
+    destinatario_rol: recipient.rol,
+    detalle_odoo_aprobacion: pedido.odoo_sale_order_id ? 'Fue enviado a Odoo.' : '',
+    empresa,
     pedido_id: pedido.id,
     pedido_numero: pedido.numero,
     pedido_estado: pedido.estado,
     odoo_sale_order_id: pedido.odoo_sale_order_id,
     sede,
-    empresa,
-    actor_nombre: actor ? actorName : null,
     valor_total_cop: pedido.valor_total_cop,
     valor_total_label: formatCOP(pedido.valor_total_cop),
     total_items: pedido.total_items,
     ruta,
-  } satisfies Record<string, unknown>;
+  } satisfies NotificationTemplateContext;
+}
 
-  switch (event) {
-    case 'pedido_creado_en_aprobacion':
-      return {
-        nivel: 'warning',
-        titulo: `Pedido ${pedido.numero} pendiente de aprobación`,
-        descripcion: `Se creó un nuevo pedido para ${sede} y requiere aprobación.`,
-        asunto: `Nuevo pedido ${pedido.numero} pendiente de aprobación`,
-        ruta,
-        metadata,
-      };
-    case 'pedido_creado_autoaprobado':
-      return {
-        nivel: 'success',
-        titulo: `Pedido ${pedido.numero} creado con aprobación automática`,
-        descripcion: `El pedido fue creado sin requerir aprobación en ${empresa}.`,
-        asunto: `Pedido ${pedido.numero} creado con aprobación automática`,
-        ruta,
-        metadata,
-      };
-    case 'pedido_aprobado':
-      return {
-        nivel: 'success',
-        titulo: `Pedido ${pedido.numero} aprobado`,
-        descripcion: `${actorName} aprobó el pedido${pedido.odoo_sale_order_id ? ' y fue enviado a Odoo' : ''}.`,
-        asunto: `Pedido ${pedido.numero} aprobado`,
-        ruta,
-        metadata,
-      };
-    case 'pedido_rechazado':
-      return {
-        nivel: 'danger',
-        titulo: `Pedido ${pedido.numero} rechazado`,
-        descripcion: `${actorName} rechazó el pedido de ${sede}.`,
-        asunto: `Pedido ${pedido.numero} rechazado`,
-        ruta,
-        metadata,
-      };
-    case 'pedido_validado':
-      return {
-        nivel: 'info',
-        titulo: `Pedido ${pedido.numero} en validación Imprima`,
-        descripcion: `${actorName} tomó el pedido para validación comercial.`,
-        asunto: `Pedido ${pedido.numero} en validación Imprima`,
-        ruta,
-        metadata,
-      };
-    case 'pedido_procesado_odoo':
-      return {
-        nivel: 'success',
-        titulo: `Pedido ${pedido.numero} procesado en Odoo`,
-        descripcion: `El pedido fue procesado en Odoo y ya quedó sincronizado.`,
-        asunto: `Pedido ${pedido.numero} procesado en Odoo`,
-        ruta,
-        metadata,
-      };
-  }
+function buildTemplate(
+  event: PedidoNotificationEvent,
+  context: NotificationTemplateContext,
+  templateConfig: Awaited<ReturnType<typeof getNotificationEmailTemplate>>
+): NotificationTemplate {
+  const ruta = typeof context.ruta === 'string' ? context.ruta : '/dashboard/pedidos';
+  const resolved = renderEditableNotificationTemplate(templateConfig, context);
+
+  return {
+    nivel: getNotificationLevel(event),
+    titulo: resolved.titulo,
+    intro: resolved.intro,
+    descripcion: resolved.descripcion,
+    asunto: resolved.asunto,
+    ctaLabel: resolved.ctaLabel,
+    ruta,
+    metadata: context,
+  };
 }
 
 export async function enqueuePedidoNotifications(input: EnqueuePedidoNotificationsInput) {
@@ -321,47 +313,66 @@ export async function enqueuePedidoNotifications(input: EnqueuePedidoNotificatio
     return { emailCount: 0, inAppCount: 0 };
   }
 
-  const template = buildTemplate(input.event, pedido, actor);
+  const templateConfig = await getNotificationEmailTemplate(input.event);
 
-  const inAppRows = recipients.map((recipient) => ({
-    usuario_id: recipient.id,
-    actor_usuario_id: input.actorUserId ?? null,
-    empresa_id: pedido.empresa_id,
-    tipo: input.event,
-    nivel: template.nivel,
-    titulo: template.titulo,
-    descripcion: template.descripcion,
-    ruta: template.ruta,
-    entidad_tipo: 'pedido',
-    entidad_id: pedido.id,
-    metadata: {
-      ...template.metadata,
-      destinatario_usuario_id: recipient.id,
-      destinatario_rol: recipient.rol,
-    },
-  }));
+  const inAppRows = recipients.map((recipient) => {
+    const template = buildTemplate(
+      input.event,
+      buildTemplateContext(input.event, pedido, actor, recipient),
+      templateConfig
+    );
 
-  const emailRows = recipients
-    .filter((recipient) => Boolean(recipient.email))
-    .map((recipient) => ({
+    return {
       usuario_id: recipient.id,
       actor_usuario_id: input.actorUserId ?? null,
       empresa_id: pedido.empresa_id,
       tipo: input.event,
-      email_destino: recipient.email!,
-      nombre_destino: getNombreCompleto(recipient),
-      asunto: template.asunto,
-      payload: {
-        ...template.metadata,
-        titulo: template.titulo,
-        descripcion: template.descripcion,
-        destinatario_usuario_id: recipient.id,
-        destinatario_nombre: getNombreCompleto(recipient),
-        destinatario_email: recipient.email,
-      },
+      nivel: template.nivel,
+      titulo: template.titulo,
+      descripcion: template.descripcion,
+      ruta: template.ruta,
       entidad_tipo: 'pedido',
       entidad_id: pedido.id,
-    }));
+      metadata: {
+        ...template.metadata,
+        destinatario_usuario_id: recipient.id,
+        destinatario_rol: recipient.rol,
+      },
+    };
+  });
+
+  const emailRows = recipients
+    .filter((recipient) => Boolean(recipient.email))
+    .map((recipient) => {
+      const template = buildTemplate(
+        input.event,
+        buildTemplateContext(input.event, pedido, actor, recipient),
+        templateConfig
+      );
+
+      return {
+        usuario_id: recipient.id,
+        actor_usuario_id: input.actorUserId ?? null,
+        empresa_id: pedido.empresa_id,
+        tipo: input.event,
+        email_destino: recipient.email!,
+        nombre_destino: getNombreCompleto(recipient),
+        asunto: template.asunto,
+        payload: {
+          ...template.metadata,
+          titulo: template.titulo,
+          intro: template.intro,
+          descripcion: template.descripcion,
+          cta_label: template.ctaLabel,
+          destinatario_usuario_id: recipient.id,
+          destinatario_nombre: getNombreCompleto(recipient),
+          destinatario_email: recipient.email,
+          destinatario_rol: recipient.rol,
+        },
+        entidad_tipo: 'pedido',
+        entidad_id: pedido.id,
+      };
+    });
 
   const inAppPromise = inAppRows.length > 0
     ? admin.from('notificaciones').insert(inAppRows)
