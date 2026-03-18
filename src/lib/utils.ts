@@ -119,14 +119,10 @@ export function getEstadoLabel(estado: string): string {
   return labels[estado] || estado;
 }
 
-export function getPedidoEstadoVisual(estado: string, odooSaleOrderId?: number | null): string {
-  return odooSaleOrderId ? 'procesado_odoo' : estado;
+export function getPedidoEstadoVisual(estado: string): string {
+  return estado;
 }
 
-export function isPedidoPendienteComercial(estado: string, odooSaleOrderId?: number | null): boolean {
-  if (odooSaleOrderId) {
-    return false;
-  }
-
+export function isPedidoPendienteComercial(estado: string): boolean {
   return ['borrador', 'en_aprobacion', 'aprobado', 'en_validacion_imprima'].includes(estado);
 }

@@ -120,7 +120,7 @@ export default function ClientesPage() {
                 .eq('empresa_id', emp.id),
               supabase
                 .from('pedidos')
-                .select('id, estado, odoo_sale_order_id')
+                .select('id, estado')
                 .eq('empresa_id', emp.id)
                 .in('estado', ['borrador', 'en_aprobacion', 'aprobado', 'en_validacion_imprima']),
               supabase
@@ -144,7 +144,7 @@ export default function ClientesPage() {
           const pedidos_pendientes =
             pedidosPendRes.status === 'fulfilled' && pedidosPendRes.value.data
               ? (pedidosPendRes.value.data as unknown as PedidoPendienteCliente[]).filter((pedido) =>
-                  isPedidoPendienteComercial(pedido.estado, pedido.odoo_sale_order_id)
+                  isPedidoPendienteComercial(pedido.estado)
                 ).length
               : 0;
 

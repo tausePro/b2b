@@ -160,63 +160,28 @@ export default function DetallePedidoPage() {
     if (!user || !pedido) return;
     setProcesando(true);
 
-    if (accion === 'aprobar') {
-      try {
-        const response = await fetch(`/api/pedidos/${pedido.id}/aprobar`, {
-          method: 'POST',
-        });
-        const payload = await response.json();
-
-        if (!response.ok) {
-          throw new Error(payload.details || payload.error || 'No se pudo aprobar el pedido.');
-        }
-
-        if (payload.warning) {
-          console.warn('[DetallePedido] Advertencia al registrar trazabilidad:', payload.warning);
-        }
-
-        await fetchPedido();
-      } catch (error) {
-        console.error('Error aprobando pedido y enviando a Odoo:', error);
-        alert(error instanceof Error ? error.message : 'No se pudo aprobar el pedido y enviarlo a Odoo.');
-      } finally {
-        setProcesando(false);
-      }
-      return;
-    }
-
-    const updates: Record<string, unknown> = {};
-    let logDescripcion = '';
-
-    switch (accion) {
-      case 'rechazar':
-        updates.estado = 'rechazado';
-        logDescripcion = 'Pedido rechazado por gerencia';
-        break;
-      case 'validar':
-        updates.estado = 'en_validacion_imprima';
-        updates.validado_por = user.id;
-        updates.fecha_validacion = new Date().toISOString();
-        logDescripcion = 'Pedido en validación por asesor Imprima. Listo para sincronizar con Odoo.';
-        break;
-    }
-
-    const { error } = await supabase
-      .from('pedidos')
-      .update(updates)
-      .eq('id', pedido.id);
-
-    if (!error) {
-      await supabase.from('logs_trazabilidad').insert({
-        pedido_id: pedido.id,
-        accion,
-        descripcion: logDescripcion,
-        usuario_id: user.id,
-        usuario_nombre: `${user.nombre} ${user.apellido}`,
+    try {
+      const response = await fetch(`/api/pedidos/${pedido.id}/${accion}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
       });
-      fetchPedido();
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload.details || payload.error || `No se pudo ${accion} el pedido.`);
+      }
+
+      if (payload.warning) {
+        console.warn(`[DetallePedido] Advertencia en ${accion}:`, payload.warning);
+      }
+
+      await fetchPedido();
+    } catch (error) {
+      console.error(`Error en acción ${accion}:`, error);
+      alert(error instanceof Error ? error.message : `No se pudo ${accion} el pedido.`);
+    } finally {
+      setProcesando(false);
     }
-    setProcesando(false);
   };
 
   const getAccionIcon = (accion: string) => {
@@ -250,7 +215,7 @@ export default function DetallePedidoPage() {
 
   const canApprove = user?.rol === 'aprobador' && pedido.estado === 'en_aprobacion';
   const canValidate = user?.rol === 'asesor' && pedido.estado === 'aprobado' && !pedido.odoo_sale_order_id;
-  const estadoVisual = pedido.odoo_sale_order_id ? 'procesado_odoo' : pedido.estado;
+  const estadoVisual = pedido.estado;
   const subtotalVisual = odooSummary?.amountUntaxed ?? pedido.valor_total_cop;
 
   return (

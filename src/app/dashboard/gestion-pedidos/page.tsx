@@ -35,7 +35,6 @@ interface PedidoAsesor {
 interface PedidoResumenGestion {
   id: string;
   estado: string;
-  odoo_sale_order_id: number | null;
   fecha_creacion: string;
   fecha_validacion: string | null;
 }
@@ -72,11 +71,7 @@ export default function GestionPedidosPage() {
       `)
       .order('fecha_creacion', { ascending: false });
 
-    if (filtroEstado === 'aprobado') {
-      query = query.eq('estado', 'aprobado').is('odoo_sale_order_id', null);
-    } else if (filtroEstado === 'procesado_odoo') {
-      query = query.not('odoo_sale_order_id', 'is', null);
-    } else if (filtroEstado !== 'todos') {
+    if (filtroEstado !== 'todos') {
       query = query.eq('estado', filtroEstado);
     }
 
@@ -84,7 +79,7 @@ export default function GestionPedidosPage() {
       query,
       supabase
         .from('pedidos')
-        .select('id, estado, odoo_sale_order_id, fecha_creacion, fecha_validacion'),
+        .select('id, estado, fecha_creacion, fecha_validacion'),
     ]);
 
     const { data, error } = pedidosRes;
@@ -107,7 +102,7 @@ export default function GestionPedidosPage() {
       inicioHoy.setHours(0, 0, 0, 0);
 
       setPorValidar(
-        resumenPedidos.filter((pedido) => pedido.estado === 'aprobado' && !pedido.odoo_sale_order_id).length
+        resumenPedidos.filter((pedido) => pedido.estado === 'aprobado').length
       );
       setValidadosHoy(
         resumenPedidos.filter((pedido) => {
@@ -148,27 +143,23 @@ export default function GestionPedidosPage() {
   const handleValidar = async (pedidoId: string) => {
     if (!user) return;
     setProcesando(pedidoId);
-
-    const { error } = await supabase
-      .from('pedidos')
-      .update({
-        estado: 'en_validacion_imprima',
-        validado_por: user.id,
-        fecha_validacion: new Date().toISOString(),
-      })
-      .eq('id', pedidoId);
-
-    if (!error) {
-      await supabase.from('logs_trazabilidad').insert({
-        pedido_id: pedidoId,
-        accion: 'validacion',
-        descripcion: 'Pedido en validación por asesor comercial Imprima.',
-        usuario_id: user.id,
-        usuario_nombre: `${user.nombre} ${user.apellido}`,
+    try {
+      const response = await fetch(`/api/pedidos/${pedidoId}/validar`, {
+        method: 'POST',
       });
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload.details || payload.error || 'No se pudo validar el pedido.');
+      }
+
       fetchPedidos();
+    } catch (error) {
+      console.error('Error validando pedido:', error);
+      alert(error instanceof Error ? error.message : 'No se pudo validar el pedido.');
+    } finally {
+      setProcesando(null);
     }
-    setProcesando(null);
   };
 
   const tiempoPromedioLabel = useMemo(() => {
@@ -303,8 +294,8 @@ export default function GestionPedidosPage() {
                     <td className="py-3 px-4 text-muted">{formatDate(pedido.fecha_creacion)}</td>
                     <td className="py-3 px-4 text-right font-semibold">{formatCOP(pedido.valor_total_cop)}</td>
                     <td className="py-3 px-4 text-center">
-                      <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${getEstadoColor(pedido.odoo_sale_order_id ? 'procesado_odoo' : pedido.estado)}`}>
-                        {getEstadoLabel(pedido.odoo_sale_order_id ? 'procesado_odoo' : pedido.estado)}
+                      <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${getEstadoColor(pedido.estado)}`}>
+                        {getEstadoLabel(pedido.estado)}
                       </span>
                     </td>
                     <td className="py-3 px-4">
@@ -316,7 +307,7 @@ export default function GestionPedidosPage() {
                         >
                           <Eye className="w-4 h-4" />
                         </Link>
-                        {pedido.estado === 'aprobado' && !pedido.odoo_sale_order_id && (
+                        {pedido.estado === 'aprobado' && (
                           <button
                             onClick={() => handleValidar(pedido.id)}
                             disabled={procesando === pedido.id}

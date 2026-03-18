@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { createClient } from '@/lib/supabase/client';
-import { cn, formatCOP, getPedidoEstadoVisual } from '@/lib/utils';
+import { cn, formatCOP } from '@/lib/utils';
 import BrandMark from '@/components/ui/BrandMark';
 import KpiCard from '@/components/ui/KpiCard';
 import Link from 'next/link';
@@ -24,7 +24,6 @@ interface PedidoReciente {
   id: string;
   numero: string;
   estado: string;
-  odoo_sale_order_id: number | null;
   valor_total_cop: number | null;
   fecha_creacion: string;
   empresa: { nombre: string } | null;
@@ -96,11 +95,10 @@ export default function DashboardAsesor() {
           .from('pedidos')
           .select('id', { count: 'exact', head: true })
           .in('empresa_id', empresaIds)
-          .in('estado', ['borrador', 'en_aprobacion', 'aprobado', 'en_validacion_imprima'])
-          .is('odoo_sale_order_id', null),
+          .in('estado', ['borrador', 'en_aprobacion', 'aprobado', 'en_validacion_imprima']),
         supabase
           .from('pedidos')
-          .select('id, numero, estado, odoo_sale_order_id, valor_total_cop, fecha_creacion, empresa:empresas(nombre), sede:sedes(nombre_sede)')
+          .select('id, numero, estado, valor_total_cop, fecha_creacion, empresa:empresas(nombre), sede:sedes(nombre_sede)')
           .in('empresa_id', empresaIds)
           .order('fecha_creacion', { ascending: false })
           .limit(10),
@@ -139,8 +137,7 @@ export default function DashboardAsesor() {
               .from('pedidos')
               .select('id', { count: 'exact', head: true })
               .eq('empresa_id', emp.id)
-              .in('estado', ['borrador', 'en_aprobacion', 'aprobado', 'en_validacion_imprima'])
-              .is('odoo_sale_order_id', null);
+              .in('estado', ['borrador', 'en_aprobacion', 'aprobado', 'en_validacion_imprima']);
 
             const { data: cfg } = await supabase
               .from('empresa_configs')
@@ -235,8 +232,7 @@ export default function DashboardAsesor() {
           ) : (
             <div className="divide-y divide-border">
               {pedidosRecientes.map((pedido) => {
-                const estadoVisual = getPedidoEstadoVisual(pedido.estado, pedido.odoo_sale_order_id);
-                const estado = ESTADO_LABELS[estadoVisual] || { label: estadoVisual, color: 'bg-slate-100 text-slate-600' };
+                const estado = ESTADO_LABELS[pedido.estado] || { label: pedido.estado, color: 'bg-slate-100 text-slate-600' };
                 return (
                   <Link
                     key={pedido.id}

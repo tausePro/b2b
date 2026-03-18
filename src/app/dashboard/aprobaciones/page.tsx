@@ -95,23 +95,24 @@ export default function AprobacionesPage() {
   const handleRechazar = async (pedidoId: string) => {
     if (!user) return;
     setProcesando(pedidoId);
-
-    const { error } = await supabase
-      .from('pedidos')
-      .update({ estado: 'rechazado' })
-      .eq('id', pedidoId);
-
-    if (!error) {
-      await supabase.from('logs_trazabilidad').insert({
-        pedido_id: pedidoId,
-        accion: 'rechazo',
-        descripcion: 'Pedido rechazado por gerencia',
-        usuario_id: user.id,
-        usuario_nombre: `${user.nombre} ${user.apellido}`,
+    try {
+      const response = await fetch(`/api/pedidos/${pedidoId}/rechazar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
       });
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload.details || payload.error || 'No se pudo rechazar el pedido.');
+      }
+
       fetchPedidos();
+    } catch (error) {
+      console.error('Error rechazando pedido:', error);
+      alert(error instanceof Error ? error.message : 'No se pudo rechazar el pedido.');
+    } finally {
+      setProcesando(null);
     }
-    setProcesando(null);
   };
 
   const pendientes = pedidos.filter((p) => p.estado === 'en_aprobacion');

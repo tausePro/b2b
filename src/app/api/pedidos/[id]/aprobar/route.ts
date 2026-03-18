@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { authenticate, createSaleOrderQuotation, read } from '@/lib/odoo/client';
 import { getServerOdooConfig } from '@/lib/odoo/serverConfig';
+import { safeEnqueuePedidoNotifications } from '@/lib/notifications/pedidos';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 
 function getSupabaseAdmin() {
@@ -279,7 +280,7 @@ export async function POST(
     const { error: updateError } = await admin
       .from('pedidos')
       .update({
-        estado: 'aprobado',
+        estado: 'procesado_odoo',
         aprobado_por: pedido.aprobado_por ?? perfil.id,
         fecha_aprobacion: approvalTimestamp,
         odoo_sale_order_id: quotation.id,
@@ -313,16 +314,24 @@ export async function POST(
       },
     });
 
+    const notificationResult = await safeEnqueuePedidoNotifications({
+      actorUserId: perfil.id,
+      event: 'pedido_procesado_odoo',
+      pedidoId,
+    });
+    const warning = [logError?.message, notificationResult.error].filter(Boolean).join(' | ') || null;
+
     return NextResponse.json({
       ok: true,
       pedido: {
         id: pedidoId,
-        estado: 'aprobado',
+        estado: 'procesado_odoo',
         fecha_aprobacion: approvalTimestamp,
         odoo_sale_order_id: quotation.id,
       },
       odoo_sale_order: quotation,
-      warning: logError ? logError.message : null,
+      notifications: notificationResult.result,
+      warning,
     });
   } catch (error) {
     return NextResponse.json(

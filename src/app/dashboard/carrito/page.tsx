@@ -64,67 +64,37 @@ export default function CarritoPage() {
     setEnviando(true);
 
     try {
-      // Crear pedido
-      const { data: pedido, error: pedidoError } = await supabase
-        .from('pedidos')
-        .insert({
-          empresa_id: user.empresa_id,
-          sede_id: usaSedes ? (user.sede_id ?? null) : null,
-          usuario_creador_id: user.id,
+      const response = await fetch('/api/pedidos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
           comentarios_sede: observaciones || null,
-          valor_total_cop: totalPrecio,
-          total_items: totalItems,
-        })
-        .select()
-        .single();
-
-      if (pedidoError || !pedido) {
-        console.error('Error creando pedido:', pedidoError);
-        alert('Error al crear el pedido. Intenta de nuevo.');
-        setEnviando(false);
-        return;
-      }
-
-      // Crear items del pedido
-      const itemsData = items.map((item) => ({
-        pedido_id: pedido.id,
-        odoo_product_id: item.producto.odoo_product_id,
-        nombre_producto: item.producto.nombre,
-        cantidad: item.cantidad,
-        precio_unitario_cop: item.producto.precio_unitario,
-      }));
-
-      const { error: itemsError } = await supabase
-        .from('pedido_items')
-        .insert(itemsData);
-
-      if (itemsError) {
-        console.error('Error creando items:', itemsError);
-        alert('Error al crear los items del pedido.');
-        setEnviando(false);
-        return;
-      }
-
-      // Crear log de trazabilidad
-      const flujoEsAprobacion = pedido.estado === 'en_aprobacion';
-      await supabase.from('logs_trazabilidad').insert({
-        pedido_id: pedido.id,
-        accion: 'creacion',
-        descripcion: flujoEsAprobacion
-          ? `Pedido creado y enviado a aprobación con ${totalItems} items`
-          : `Pedido creado con aprobación automática (${totalItems} items)`,
-        usuario_id: user.id,
-        usuario_nombre: `${user.nombre} ${user.apellido}`,
+          items: items.map((item) => ({
+            odoo_product_id: item.producto.odoo_product_id,
+            nombre_producto: item.producto.nombre,
+            cantidad: item.cantidad,
+            precio_unitario_cop: item.producto.precio_unitario,
+          })),
+        }),
       });
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload.details || payload.error || 'Error al crear el pedido.');
+      }
+
+      if (payload.warning) {
+        console.warn('[Carrito] Advertencia en creación de pedido:', payload.warning);
+      }
 
       clearCart();
       router.push('/dashboard/pedidos');
     } catch (err) {
       console.error('Error:', err);
       alert('Error inesperado. Intenta de nuevo.');
+    } finally {
+      setEnviando(false);
     }
-
-    setEnviando(false);
   };
 
   if (items.length === 0) {

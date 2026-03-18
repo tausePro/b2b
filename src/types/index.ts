@@ -199,6 +199,57 @@ export interface LogTrazabilidad {
   metadata?: Record<string, unknown>;
 }
 
+export type TipoNotificacion =
+  | 'pedido_creado_en_aprobacion'
+  | 'pedido_creado_autoaprobado'
+  | 'pedido_aprobado'
+  | 'pedido_rechazado'
+  | 'pedido_validado'
+  | 'pedido_procesado_odoo';
+
+export type NivelNotificacion = 'info' | 'success' | 'warning' | 'danger';
+
+export interface NotificacionApp {
+  id: string;
+  usuario_id: string;
+  actor_usuario_id?: string | null;
+  empresa_id?: string | null;
+  tipo: TipoNotificacion;
+  nivel: NivelNotificacion;
+  titulo: string;
+  descripcion: string;
+  ruta?: string | null;
+  entidad_tipo?: string | null;
+  entidad_id?: string | null;
+  metadata?: Record<string, unknown>;
+  leida: boolean;
+  leida_at?: string | null;
+  created_at: string;
+}
+
+export interface NotificacionEmail {
+  id: string;
+  usuario_id?: string | null;
+  actor_usuario_id?: string | null;
+  empresa_id?: string | null;
+  tipo: TipoNotificacion;
+  email_destino: string;
+  nombre_destino?: string | null;
+  asunto: string;
+  payload?: Record<string, unknown>;
+  entidad_tipo?: string | null;
+  entidad_id?: string | null;
+  estado: 'pendiente' | 'procesando' | 'enviado' | 'error';
+  intentos: number;
+  provider?: string | null;
+  provider_message_id?: string | null;
+  last_error?: string | null;
+  scheduled_at: string;
+  sent_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 // Permisos por rol
 export const ROLE_CONFIG: Record<UserRole, {
   label: string;
