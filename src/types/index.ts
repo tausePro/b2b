@@ -250,6 +250,48 @@ export interface NotificacionEmail {
   updated_at: string;
 }
 
+export type NotificationEmailTemplateVariableKey =
+  | 'actor_nombre'
+  | 'destinatario_email'
+  | 'destinatario_nombre'
+  | 'destinatario_rol'
+  | 'detalle_odoo_aprobacion'
+  | 'empresa'
+  | 'pedido_estado'
+  | 'pedido_id'
+  | 'pedido_numero'
+  | 'ruta'
+  | 'sede'
+  | 'total_items'
+  | 'valor_total_label';
+
+export interface NotificationEmailTemplateVariable {
+  key: NotificationEmailTemplateVariableKey;
+  label: string;
+  description: string;
+}
+
+export interface NotificationEmailTemplate {
+  tipo: TipoNotificacion;
+  nombre: string;
+  descripcion_operativa: string;
+  nivel: NivelNotificacion;
+  asunto_template: string;
+  titulo_template: string;
+  intro_template: string;
+  descripcion_template: string;
+  cta_label: string;
+  activa: boolean;
+  variables: NotificationEmailTemplateVariable[];
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface NotificationEmailTemplatePreview extends NotificationEmailTemplate {
+  preview_html: string;
+  preview_text: string;
+}
+
 // Permisos por rol
 export const ROLE_CONFIG: Record<UserRole, {
   label: string;

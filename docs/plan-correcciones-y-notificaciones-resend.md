@@ -638,3 +638,77 @@ con header:
 4. ~~conectar el procesador con Resend~~ ✅
 5. configurar secretos reales y dominio verificado en Resend
 6. programar la invocación recurrente de la ruta interna
+
+## Checklist exacto de activación para plantillas editables y envío real
+
+### 1. Base de datos
+
+1. Aplicar la migración `supabase/migrations/017_notificaciones_email_templates.sql`.
+2. Verificar que exista la tabla `notificaciones_email_templates`.
+3. Confirmar que la tabla tenga datos sembrados para todos los `TipoNotificacion` usados por pedidos.
+
+### 2. Variables de entorno en producción
+
+Configurar y verificar estos valores:
+
+- `RESEND_API_KEY`
+- `RESEND_FROM_EMAIL`
+- `RESEND_FROM_NAME`
+- `INTERNAL_EMAIL_PROCESSOR_SECRET`
+- `CRON_SECRET`
+- `APP_URL`
+
+### 3. Resend
+
+1. Verificar el dominio o remitente en Resend.
+2. Confirmar que `RESEND_FROM_EMAIL` use exactamente un remitente permitido por Resend.
+3. Hacer un envío de prueba directo desde `/admin/configuracion`.
+
+### 4. Scheduler / cron
+
+1. Confirmar que `vercel.json` incluya el cron hacia `/api/internal/notificaciones-email/process`.
+2. Confirmar que la ruta acepte `GET` protegido con `CRON_SECRET`.
+3. Verificar en Vercel que el cron quedó desplegado con la versión actual.
+
+### 5. Editor de plantillas en superadmin
+
+1. Entrar a `/admin/configuracion` con usuario `super_admin`.
+2. Abrir la sección **Plantillas de correos de notificación**.
+3. Seleccionar cada tipo de evento y validar:
+   - asunto
+   - título
+   - intro
+   - descripción
+   - CTA
+   - variables disponibles
+   - preview HTML y texto
+4. Guardar un cambio real en al menos una plantilla.
+5. Recargar la pantalla y confirmar que el cambio persiste.
+
+### 6. Validación funcional end-to-end
+
+1. Crear o mover un pedido a un estado que dispare una notificación.
+2. Confirmar que se inserte un registro en `notificaciones_email`.
+3. Ejecutar manualmente **Procesar cola** desde `/admin/configuracion`.
+4. Confirmar transición de estado:
+   - `pendiente` → `procesando` → `enviado`
+5. Revisar que `provider = 'resend'` y que exista `provider_message_id`.
+6. Confirmar que el correo recibido refleje el contenido editado en la plantilla.
+
+### 7. Demo de mañana
+
+Orden recomendado para mostrarlo:
+
+1. Entrar a `/admin/configuracion`.
+2. Mostrar que el diagnóstico operativo de correo está en verde.
+3. Abrir una plantilla, editar el asunto o CTA y guardar.
+4. Mostrar que el preview cambia.
+5. Disparar un evento real de pedido.
+6. Procesar la cola manualmente.
+7. Mostrar el correo recibido y el historial reciente en admin.
+
+### 8. Si algo falla
+
+- Si no guarda la plantilla, revisar primero que la migración `017_notificaciones_email_templates.sql` esté aplicada.
+- Si no sale el correo, revisar `RESEND_API_KEY`, `RESEND_FROM_EMAIL` y dominio verificado.
+- Si no corre automáticamente, revisar `CRON_SECRET` y la configuración desplegada en Vercel.
