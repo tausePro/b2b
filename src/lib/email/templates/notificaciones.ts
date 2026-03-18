@@ -5,8 +5,10 @@ import type { TipoNotificacion } from '@/types';
 
 type NotificationEmailPayload = {
   actor_nombre?: string | null;
+  cta_label?: string | null;
   descripcion?: string | null;
   destinatario_nombre?: string | null;
+  intro?: string | null;
   empresa?: string | null;
   pedido_numero?: string | null;
   pedido_estado?: string | null;
@@ -35,9 +37,11 @@ function escapeHtml(value: string) {
 function normalizePayload(payload?: Record<string, unknown> | null): NotificationEmailPayload {
   return {
     actor_nombre: typeof payload?.actor_nombre === 'string' ? payload.actor_nombre : null,
+    cta_label: typeof payload?.cta_label === 'string' ? payload.cta_label : null,
     descripcion: typeof payload?.descripcion === 'string' ? payload.descripcion : null,
     destinatario_nombre:
       typeof payload?.destinatario_nombre === 'string' ? payload.destinatario_nombre : null,
+    intro: typeof payload?.intro === 'string' ? payload.intro : null,
     empresa: typeof payload?.empresa === 'string' ? payload.empresa : null,
     pedido_numero: typeof payload?.pedido_numero === 'string' ? payload.pedido_numero : null,
     pedido_estado: typeof payload?.pedido_estado === 'string' ? payload.pedido_estado : null,
@@ -89,8 +93,9 @@ function buildSummaryItems(payload: NotificationEmailPayload) {
 export function renderNotificationEmail(input: RenderNotificationEmailInput) {
   const payload = normalizePayload(input.payload);
   const title = payload.titulo || input.asunto;
-  const intro = getIntro(input.tipo, payload);
+  const intro = payload.intro || getIntro(input.tipo, payload);
   const description = payload.descripcion || 'Tienes una nueva actualización dentro de la plataforma.';
+  const ctaLabel = payload.cta_label || 'Ver detalle en la plataforma';
   const recipientName = payload.destinatario_nombre || 'usuario';
   const absoluteRoute = getAbsoluteRoute(payload.ruta);
   const summaryItems = buildSummaryItems(payload);
@@ -113,7 +118,7 @@ export function renderNotificationEmail(input: RenderNotificationEmailInput) {
         <p style="margin:0 0 12px;font-size:15px;line-height:1.6;color:#334155;">${escapeHtml(intro)}</p>
         <p style="margin:0 0 24px;font-size:15px;line-height:1.6;color:#334155;">${escapeHtml(description)}</p>
         ${summaryItems.length > 0 ? `<table style="width:100%;border-collapse:collapse;margin:0 0 24px;">${summaryHtml}</table>` : ''}
-        ${absoluteRoute ? `<a href="${escapeHtml(absoluteRoute)}" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:600;font-size:14px;">Ver detalle en la plataforma</a>` : ''}
+        ${absoluteRoute ? `<a href="${escapeHtml(absoluteRoute)}" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:600;font-size:14px;">${escapeHtml(ctaLabel)}</a>` : ''}
       </div>
     </div>
   </body>
@@ -133,7 +138,7 @@ export function renderNotificationEmail(input: RenderNotificationEmailInput) {
   ];
 
   if (absoluteRoute) {
-    lines.push('', `Ver detalle: ${absoluteRoute}`);
+    lines.push('', `${ctaLabel}: ${absoluteRoute}`);
   }
 
   return {
