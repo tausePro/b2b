@@ -148,14 +148,17 @@ export default function CarritoPage() {
               key={item.producto.odoo_product_id}
               className="bg-white rounded-xl border border-border p-4 flex gap-4"
             >
-              {/* Imagen placeholder */}
-              <div className="w-16 h-16 bg-background-light rounded-lg flex items-center justify-center shrink-0">
-                <span className="text-xl">
-                  {item.producto.categoria === 'cafeteria' && '☕'}
-                  {item.producto.categoria === 'papeleria' && '📄'}
-                  {item.producto.categoria === 'aseo' && '🧹'}
-                  {item.producto.categoria === 'personalizados' && '🎨'}
-                </span>
+              {/* Imagen del producto */}
+              <div className="w-16 h-16 bg-background-light rounded-lg flex items-center justify-center shrink-0 overflow-hidden">
+                {item.producto.imagen_url ? (
+                  <img
+                    src={item.producto.imagen_url}
+                    alt={item.producto.nombre}
+                    className="w-full h-full object-contain"
+                  />
+                ) : (
+                  <ShoppingBag className="w-6 h-6 text-muted" />
+                )}
               </div>
 
               <div className="flex-1 min-w-0">
@@ -228,12 +231,10 @@ export default function CarritoPage() {
                 <span className="text-muted">Total Unidades</span>
                 <span className="font-bold text-lg">{totalItems}</span>
               </div>
-              {showPrices && (
-                <div className="flex items-center justify-between text-sm mt-2">
-                  <span className="text-muted">Total Estimado</span>
-                  <span className="font-bold text-lg text-primary">{formatCOP(totalPrecio)}</span>
-                </div>
-              )}
+              <div className="flex items-center justify-between text-sm mt-2">
+                <span className="text-muted">Total Estimado</span>
+                <span className="font-bold text-lg text-primary">{formatCOP(totalPrecio)}</span>
+              </div>
             </div>
 
             {/* Observaciones */}

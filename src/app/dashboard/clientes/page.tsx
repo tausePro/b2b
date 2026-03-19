@@ -61,28 +61,39 @@ export default function ClientesPage() {
       if (!user) return;
       setLoading(true);
 
-      // Obtener empresas asignadas al asesor
-      const { data: asignaciones, error: asignError } = await supabase
-        .from('asesor_empresas')
-        .select('empresa_id')
-        .eq('usuario_id', user.id)
-        .eq('activo', true);
+      // super_admin y direccion ven todas las empresas; asesor solo las asignadas
+      const isGlobalRole = user.rol === 'super_admin' || user.rol === 'direccion';
 
-      if (asignError || !asignaciones?.length) {
-        console.error('Error o sin asignaciones:', asignError);
-        setClientes([]);
-        setLoading(false);
-        return;
+      let empresaIds: string[] | null = null;
+
+      if (!isGlobalRole) {
+        const { data: asignaciones, error: asignError } = await supabase
+          .from('asesor_empresas')
+          .select('empresa_id')
+          .eq('usuario_id', user.id)
+          .eq('activo', true);
+
+        if (asignError || !asignaciones?.length) {
+          console.error('Error o sin asignaciones:', asignError);
+          setClientes([]);
+          setLoading(false);
+          return;
+        }
+
+        empresaIds = asignaciones.map((a) => a.empresa_id);
       }
 
-      const empresaIds = asignaciones.map((a) => a.empresa_id);
-
       // Obtener datos de las empresas
-      const { data: empresas, error: empError } = await supabase
+      let empresasQuery = supabase
         .from('empresas')
         .select('id, nombre, nit, activa, presupuesto_global_mensual, odoo_partner_id, created_at')
-        .in('id', empresaIds)
         .order('nombre');
+
+      if (empresaIds) {
+        empresasQuery = empresasQuery.in('id', empresaIds);
+      }
+
+      const { data: empresas, error: empError } = await empresasQuery;
 
       if (empError || !empresas) {
         console.error('Error fetching empresas:', empError);

@@ -21,6 +21,7 @@ import {
   Package,
   DollarSign,
   Activity,
+  Building2,
   X,
 } from 'lucide-react';
 
@@ -32,7 +33,15 @@ interface SidebarItem {
 }
 
 const MENU_BY_ROLE: Record<UserRole, SidebarItem[]> = {
-  super_admin: [], // Super Admin usa /admin con layout propio
+  super_admin: [
+    { label: 'Resumen Ejecutivo', href: '/dashboard', icon: <LayoutDashboard className="w-5 h-5" />, activePattern: '/dashboard$' },
+    { label: 'Pedidos', href: '/dashboard/pedidos', icon: <ClipboardList className="w-5 h-5" />, activePattern: '/dashboard/pedidos' },
+    { label: 'Clientes', href: '/dashboard/clientes', icon: <Users className="w-5 h-5" />, activePattern: '/dashboard/clientes' },
+    { label: 'Catálogo', href: '/dashboard/catalogo', icon: <ShoppingBag className="w-5 h-5" />, activePattern: '/dashboard/catalogo' },
+    { label: 'Presupuestos', href: '/dashboard/presupuestos', icon: <DollarSign className="w-5 h-5" />, activePattern: '/dashboard/presupuestos' },
+    { label: 'Reportes', href: '/dashboard/reportes', icon: <BarChart3 className="w-5 h-5" />, activePattern: '/dashboard/reportes' },
+    { label: 'Panel Admin', href: '/admin', icon: <Settings className="w-5 h-5" />, activePattern: '/admin' },
+  ],
   comprador: [
     { label: 'Catálogo', href: '/dashboard/catalogo', icon: <ShoppingBag className="w-5 h-5" />, activePattern: '/dashboard/catalogo' },
     { label: 'Mis Pedidos', href: '/dashboard/pedidos', icon: <ClipboardList className="w-5 h-5" />, activePattern: '/dashboard/pedidos' },
@@ -54,6 +63,8 @@ const MENU_BY_ROLE: Record<UserRole, SidebarItem[]> = {
   ],
   direccion: [
     { label: 'Resumen Ejecutivo', href: '/dashboard', icon: <LayoutDashboard className="w-5 h-5" />, activePattern: '/dashboard$' },
+    { label: 'Clientes', href: '/dashboard/clientes', icon: <Building2 className="w-5 h-5" />, activePattern: '/dashboard/clientes' },
+    { label: 'Pedidos', href: '/dashboard/pedidos', icon: <ClipboardList className="w-5 h-5" />, activePattern: '/dashboard/pedidos' },
     { label: 'Analítica Ventas', href: '/dashboard/analitica', icon: <TrendingUp className="w-5 h-5" />, activePattern: '/dashboard/analitica' },
     { label: 'Equipo Ventas', href: '/dashboard/equipo', icon: <Users className="w-5 h-5" />, activePattern: '/dashboard/equipo' },
     { label: 'Control Operativo', href: '/dashboard/operativo', icon: <Activity className="w-5 h-5" />, activePattern: '/dashboard/operativo' },
