@@ -1,0 +1,352 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { createClient as createSupabaseClient } from '@supabase/supabase-js';
+import { createServerSupabaseClient } from '@/lib/supabase/server';
+
+type PerfilActual = {
+  id: string;
+  rol: string;
+  empresa_id: string | null;
+  nombre: string | null;
+  apellido: string | null;
+};
+
+function getSupabaseAdmin() {
+  return createSupabaseClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  );
+}
+
+// ─── DELETE: Eliminar pedido (solo super_admin) ───
+
+export async function DELETE(
+  _request: NextRequest,
+  context: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id: pedidoId } = await context.params;
+    const supabase = await createServerSupabaseClient();
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      return NextResponse.json(
+        { error: 'UNAUTHORIZED', details: userError?.message ?? null },
+        { status: 401 }
+      );
+    }
+
+    const { data: perfilData, error: perfilError } = await supabase.rpc('get_mi_perfil');
+
+    if (perfilError || !perfilData) {
+      return NextResponse.json(
+        { error: 'PROFILE_NOT_FOUND', details: perfilError?.message ?? null },
+        { status: 403 }
+      );
+    }
+
+    const perfil = perfilData as PerfilActual;
+    if (perfil.rol !== 'super_admin') {
+      return NextResponse.json(
+        { error: 'FORBIDDEN', details: 'Solo el super administrador puede eliminar pedidos.' },
+        { status: 403 }
+      );
+    }
+
+    const admin = getSupabaseAdmin();
+
+    const { data: pedido, error: pedidoError } = await admin
+      .from('pedidos')
+      .select('id, numero, estado, empresa_id')
+      .eq('id', pedidoId)
+      .single();
+
+    if (pedidoError || !pedido) {
+      return NextResponse.json(
+        { error: 'PEDIDO_NOT_FOUND', details: pedidoError?.message ?? null },
+        { status: 404 }
+      );
+    }
+
+    // pedido_items, logs_trazabilidad se eliminan por ON DELETE CASCADE
+    const { error: deleteError } = await admin
+      .from('pedidos')
+      .delete()
+      .eq('id', pedidoId);
+
+    if (deleteError) {
+      return NextResponse.json(
+        { error: 'DELETE_ERROR', details: deleteError.message },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({
+      ok: true,
+      deleted: {
+        id: pedidoId,
+        numero: pedido.numero,
+      },
+    });
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error: 'INTERNAL_ERROR',
+        details: error instanceof Error ? error.message : 'Unknown error',
+      },
+      { status: 500 }
+    );
+  }
+}
+
+// ─── PATCH: Editar items de pedido (aprobador, solo en_aprobacion) ───
+
+type PatchItemInput = {
+  id: string;
+  cantidad?: number;
+  eliminar?: boolean;
+};
+
+type NewItemInput = {
+  odoo_product_id: number;
+  nombre_producto: string;
+  cantidad: number;
+  precio_unitario_cop: number;
+};
+
+type PatchPedidoRequest = {
+  items: PatchItemInput[];
+  newItems?: NewItemInput[];
+  comentarios_aprobador?: string | null;
+};
+
+export async function PATCH(
+  request: NextRequest,
+  context: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id: pedidoId } = await context.params;
+    const supabase = await createServerSupabaseClient();
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      return NextResponse.json(
+        { error: 'UNAUTHORIZED', details: userError?.message ?? null },
+        { status: 401 }
+      );
+    }
+
+    const { data: perfilData, error: perfilError } = await supabase.rpc('get_mi_perfil');
+
+    if (perfilError || !perfilData) {
+      return NextResponse.json(
+        { error: 'PROFILE_NOT_FOUND', details: perfilError?.message ?? null },
+        { status: 403 }
+      );
+    }
+
+    const perfil = perfilData as PerfilActual;
+    if (!['aprobador', 'super_admin'].includes(perfil.rol)) {
+      return NextResponse.json(
+        { error: 'FORBIDDEN', details: 'Tu rol no puede editar pedidos.' },
+        { status: 403 }
+      );
+    }
+
+    const admin = getSupabaseAdmin();
+
+    const { data: pedido, error: pedidoError } = await admin
+      .from('pedidos')
+      .select('id, numero, estado, empresa_id')
+      .eq('id', pedidoId)
+      .single();
+
+    if (pedidoError || !pedido) {
+      return NextResponse.json(
+        { error: 'PEDIDO_NOT_FOUND', details: pedidoError?.message ?? null },
+        { status: 404 }
+      );
+    }
+
+    if (perfil.rol === 'aprobador' && perfil.empresa_id !== pedido.empresa_id) {
+      return NextResponse.json(
+        { error: 'FORBIDDEN', details: 'No tienes acceso a este pedido.' },
+        { status: 403 }
+      );
+    }
+
+    if (pedido.estado !== 'en_aprobacion') {
+      return NextResponse.json(
+        {
+          error: 'INVALID_STATE',
+          details: `El pedido ${pedido.numero} está en estado "${pedido.estado}". Solo se pueden editar pedidos pendientes de aprobación.`,
+        },
+        { status: 409 }
+      );
+    }
+
+    const body = (await request.json()) as PatchPedidoRequest;
+    const itemChanges = Array.isArray(body.items) ? body.items : [];
+    const newItems = Array.isArray(body.newItems) ? body.newItems.filter(
+      (ni) => ni.odoo_product_id && ni.nombre_producto && ni.cantidad > 0 && ni.precio_unitario_cop >= 0
+    ) : [];
+
+    if (itemChanges.length === 0 && newItems.length === 0 && body.comentarios_aprobador === undefined) {
+      return NextResponse.json(
+        { error: 'EMPTY_PATCH', details: 'No se proporcionaron cambios.' },
+        { status: 422 }
+      );
+    }
+
+    const itemsToDelete = itemChanges.filter((i) => i.eliminar === true).map((i) => i.id);
+    const itemsToUpdate = itemChanges.filter(
+      (i) => !i.eliminar && i.cantidad !== undefined && Number.isFinite(i.cantidad) && i.cantidad > 0
+    );
+
+    // Eliminar items marcados
+    if (itemsToDelete.length > 0) {
+      const { error: delError } = await admin
+        .from('pedido_items')
+        .delete()
+        .in('id', itemsToDelete)
+        .eq('pedido_id', pedidoId);
+
+      if (delError) {
+        return NextResponse.json(
+          { error: 'ITEM_DELETE_ERROR', details: delError.message },
+          { status: 500 }
+        );
+      }
+    }
+
+    // Actualizar cantidades
+    for (const item of itemsToUpdate) {
+      const { error: updError } = await admin
+        .from('pedido_items')
+        .update({ cantidad: item.cantidad })
+        .eq('id', item.id)
+        .eq('pedido_id', pedidoId);
+
+      if (updError) {
+        return NextResponse.json(
+          { error: 'ITEM_UPDATE_ERROR', details: updError.message },
+          { status: 500 }
+        );
+      }
+    }
+
+    // Insertar nuevos items
+    if (newItems.length > 0) {
+      const insertPayload = newItems.map((ni) => ({
+        pedido_id: pedidoId,
+        odoo_product_id: ni.odoo_product_id,
+        nombre_producto: ni.nombre_producto,
+        cantidad: ni.cantidad,
+        precio_unitario_cop: ni.precio_unitario_cop,
+      }));
+
+      const { error: insertError } = await admin
+        .from('pedido_items')
+        .insert(insertPayload);
+
+      if (insertError) {
+        return NextResponse.json(
+          { error: 'ITEM_INSERT_ERROR', details: insertError.message },
+          { status: 500 }
+        );
+      }
+    }
+
+    // Recalcular totales del pedido
+    const { data: remainingItems, error: itemsError } = await admin
+      .from('pedido_items')
+      .select('cantidad, precio_unitario_cop')
+      .eq('pedido_id', pedidoId);
+
+    if (itemsError) {
+      return NextResponse.json(
+        { error: 'ITEMS_FETCH_ERROR', details: itemsError.message },
+        { status: 500 }
+      );
+    }
+
+    if (!remainingItems || remainingItems.length === 0) {
+      return NextResponse.json(
+        { error: 'EMPTY_ORDER', details: 'No se pueden eliminar todos los items. El pedido debe tener al menos un producto.' },
+        { status: 422 }
+      );
+    }
+
+    const newTotalItems = remainingItems.reduce((s, i) => s + (i.cantidad ?? 0), 0);
+    const newValorTotal = remainingItems.reduce(
+      (s, i) => s + (i.cantidad ?? 0) * (i.precio_unitario_cop ?? 0),
+      0
+    );
+
+    const updatePayload: Record<string, unknown> = {
+      total_items: newTotalItems,
+      valor_total_cop: newValorTotal,
+    };
+
+    if (body.comentarios_aprobador !== undefined) {
+      updatePayload.comentarios_aprobador = body.comentarios_aprobador?.trim() || null;
+    }
+
+    const { error: pedidoUpdateError } = await admin
+      .from('pedidos')
+      .update(updatePayload)
+      .eq('id', pedidoId);
+
+    if (pedidoUpdateError) {
+      return NextResponse.json(
+        { error: 'PEDIDO_UPDATE_ERROR', details: pedidoUpdateError.message },
+        { status: 500 }
+      );
+    }
+
+    // Log de trazabilidad
+    const nombreUsuario = [perfil.nombre, perfil.apellido].filter(Boolean).join(' ').trim() || user.email || 'Usuario';
+    const cambios: string[] = [];
+    if (newItems.length > 0) cambios.push(`${newItems.length} item(s) agregado(s)`);
+    if (itemsToDelete.length > 0) cambios.push(`${itemsToDelete.length} item(s) eliminado(s)`);
+    if (itemsToUpdate.length > 0) cambios.push(`${itemsToUpdate.length} item(s) modificado(s)`);
+    if (body.comentarios_aprobador !== undefined) cambios.push('comentarios actualizados');
+
+    await admin.from('logs_trazabilidad').insert({
+      pedido_id: pedidoId,
+      accion: 'edicion',
+      descripcion: `Pedido editado por ${nombreUsuario}: ${cambios.join(', ')}.`,
+      usuario_id: perfil.id,
+      usuario_nombre: nombreUsuario,
+      metadata: {
+        items_eliminados: itemsToDelete.length,
+        items_modificados: itemsToUpdate.length,
+        nuevo_total_items: newTotalItems,
+        nuevo_valor_total: newValorTotal,
+      },
+    });
+
+    return NextResponse.json({
+      ok: true,
+      pedido: {
+        id: pedidoId,
+        numero: pedido.numero,
+        total_items: newTotalItems,
+        valor_total_cop: newValorTotal,
+      },
+    });
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error: 'INTERNAL_ERROR',
+        details: error instanceof Error ? error.message : 'Unknown error',
+      },
+      { status: 500 }
+    );
+  }
+}

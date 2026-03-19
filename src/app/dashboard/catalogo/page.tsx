@@ -180,35 +180,33 @@ export default function CatalogoPage() {
       </div>
 
       {/* Búsqueda y filtros */}
-      <div className="bg-white rounded-xl border border-border p-4">
-        <div className="flex flex-col md:flex-row gap-4">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
-            <input
-              type="text"
-              placeholder="Buscar por nombre o referencia..."
-              value={busqueda}
-              onChange={(e) => setBusqueda(e.target.value)}
-              className="w-full pl-10 pr-4 py-2.5 bg-background-light border-0 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
-            />
-          </div>
-          <div className="flex items-center gap-2 overflow-x-auto pb-1">
-            <Filter className="w-4 h-4 text-muted shrink-0" />
-            {categorias.map((cat) => (
-              <button
-                key={String(cat.id)}
-                onClick={() => setCategoriaActiva(cat.id)}
-                className={cn(
-                  'px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors',
-                  categoriaActiva === cat.id
-                    ? 'bg-primary text-white'
-                    : 'bg-background-light text-muted hover:bg-border'
-                )}
-              >
-                {cat.label}
-              </button>
-            ))}
-          </div>
+      <div className="bg-white rounded-xl border border-border p-4 space-y-3">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
+          <input
+            type="text"
+            placeholder="Buscar por nombre o referencia..."
+            value={busqueda}
+            onChange={(e) => setBusqueda(e.target.value)}
+            className="w-full pl-10 pr-4 py-2.5 bg-background-light border-0 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
+          />
+        </div>
+        <div className="flex items-center gap-2 overflow-x-auto pb-1">
+          <Filter className="w-4 h-4 text-muted shrink-0" />
+          {categorias.map((cat) => (
+            <button
+              key={String(cat.id)}
+              onClick={() => setCategoriaActiva(cat.id)}
+              className={cn(
+                'px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors',
+                categoriaActiva === cat.id
+                  ? 'bg-primary text-white'
+                  : 'bg-background-light text-muted hover:bg-border'
+              )}
+            >
+              {cat.label}
+            </button>
+          ))}
         </div>
       </div>
 
