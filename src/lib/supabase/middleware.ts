@@ -25,7 +25,7 @@ export async function updateSession(request: NextRequest) {
     }
   );
 
-  const publicPaths = ['/login', '/auth/callback', '/api/odoo', '/api/auth'];
+  const publicPaths = ['/login', '/auth/callback', '/api/odoo', '/api/auth', '/api/internal'];
   const isPublicPath = publicPaths.some((path) =>
     request.nextUrl.pathname.startsWith(path)
   );
