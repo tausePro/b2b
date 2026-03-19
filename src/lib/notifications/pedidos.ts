@@ -3,6 +3,7 @@ import {
   getNotificationEmailTemplate,
   renderEditableNotificationTemplate,
 } from '@/lib/notifications/emailTemplateStore';
+import { processPendingEmailNotifications } from '@/lib/notifications/processPendingEmails';
 import type { NivelNotificacion, TipoNotificacion } from '@/types';
 
 type PedidoNotificationEvent = TipoNotificacion;
@@ -391,9 +392,22 @@ export async function enqueuePedidoNotifications(input: EnqueuePedidoNotificatio
     throw new Error(emailRes.error.message);
   }
 
+  // Envío inmediato: intentar enviar los emails ahora mismo.
+  // Si falla, el cron los recogerá como respaldo.
+  let sentImmediately = 0;
+  if (emailRows.length > 0) {
+    try {
+      const result = await processPendingEmailNotifications({ limit: emailRows.length + 5 });
+      sentImmediately = result.sent;
+    } catch {
+      // Silencioso: el cron reintentará
+    }
+  }
+
   return {
     inAppCount: inAppRows.length,
     emailCount: emailRows.length,
+    sentImmediately,
   };
 }
 
