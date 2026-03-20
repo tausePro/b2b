@@ -57,7 +57,7 @@ export default function CatalogoPage() {
 
       const { data: configEmpresa } = await supabase
         .from('empresa_configs')
-        .select('configuracion_extra')
+        .select('configuracion_extra, odoo_pricelist_id')
         .eq('empresa_id', user.empresa_id)
         .maybeSingle();
 
@@ -78,8 +78,13 @@ export default function CatalogoPage() {
       const restringirCatalogo = Boolean(extra.restringir_catalogo_portal);
       const autorizadosSet = new Set((productosAutorizados || []).map((item) => item.odoo_product_id));
 
-      // 2. Obtener productos desde Odoo filtrados por el partner_id
-      const res = await fetch(`/api/odoo/productos?partner_id=${empresa.odoo_partner_id}`);
+      // 2. Obtener productos desde Odoo filtrados por el partner_id y pricelist
+      const catalogParams = new URLSearchParams({ partner_id: String(empresa.odoo_partner_id) });
+      const plId = (configEmpresa as Record<string, unknown> | null)?.odoo_pricelist_id;
+      if (plId && Number.isFinite(Number(plId)) && Number(plId) > 0) {
+        catalogParams.set('pricelist_id', String(plId));
+      }
+      const res = await fetch(`/api/odoo/productos?${catalogParams.toString()}`);
       const data = await res.json();
 
       if (!res.ok) throw new Error(data.error || 'Error cargando productos');
