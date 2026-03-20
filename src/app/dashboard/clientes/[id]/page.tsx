@@ -22,6 +22,8 @@ import {
   Users,
   Eye,
   BadgeCheck,
+  Package,
+  Search,
 } from 'lucide-react';
 
 interface ClienteDetalle {
@@ -40,6 +42,8 @@ interface EmpresaConfigDetalle {
   slug: string | null;
   logo_url: string | null;
   color_primario: string | null;
+  odoo_partner_id: number | null;
+  configuracion_extra: Record<string, unknown> | null;
 }
 
 interface SedeCliente {
@@ -70,6 +74,16 @@ interface PedidoCliente {
   sede: { nombre_sede: string } | null;
 }
 
+interface ProductoOdooCliente {
+  id: number;
+  name: string;
+  list_price: number;
+  uom_name: string;
+  categ_id: [number, string] | false;
+  image_128: string | false;
+  default_code: string | false;
+}
+
 const supabase = createClient();
 
 export default function ClienteDetallePage() {
@@ -89,6 +103,10 @@ export default function ClienteDetallePage() {
   const [pedidosPendientes, setPedidosPendientes] = useState(0);
   const [pedidosProcesados, setPedidosProcesados] = useState(0);
   const [valorMes, setValorMes] = useState(0);
+  const [productosAutorizadosIds, setProductosAutorizadosIds] = useState<Set<number>>(new Set());
+  const [productosOdoo, setProductosOdoo] = useState<ProductoOdooCliente[]>([]);
+  const [loadingProductos, setLoadingProductos] = useState(false);
+  const [busquedaProducto, setBusquedaProducto] = useState('');
 
   useEffect(() => {
     const fetchClienteDetalle = async () => {
@@ -130,6 +148,7 @@ export default function ClienteDetallePage() {
         pedidosPendientesRes,
         pedidosProcesadosRes,
         pedidosMesRes,
+        productosAuthRes,
       ] = await Promise.all([
         supabase
           .from('empresas')
@@ -138,7 +157,7 @@ export default function ClienteDetallePage() {
           .single(),
         supabase
           .from('empresa_configs')
-          .select('slug, logo_url, color_primario')
+          .select('slug, logo_url, color_primario, odoo_partner_id, configuracion_extra')
           .eq('empresa_id', clienteId)
           .maybeSingle(),
         supabase
@@ -176,6 +195,11 @@ export default function ClienteDetallePage() {
           .select('valor_total_cop')
           .eq('empresa_id', clienteId)
           .gte('fecha_creacion', inicioMes),
+        supabase
+          .from('productos_autorizados')
+          .select('odoo_product_id')
+          .eq('empresa_id', clienteId)
+          .eq('activo', true),
       ]);
 
       if (clienteRes.error || !clienteRes.data) {
@@ -214,11 +238,55 @@ export default function ClienteDetallePage() {
           0
         )
       );
+
+      if (productosAuthRes.data) {
+        const ids = (productosAuthRes.data as Array<{ odoo_product_id: number }>).map(p => p.odoo_product_id);
+        setProductosAutorizadosIds(new Set(ids));
+      }
+
       setLoading(false);
     };
 
     fetchClienteDetalle();
   }, [clienteId, user]);
+
+  useEffect(() => {
+    const partnerDesdeConfig = config?.odoo_partner_id;
+    const partnerId = (partnerDesdeConfig && partnerDesdeConfig > 0) ? partnerDesdeConfig : cliente?.odoo_partner_id;
+    if (!partnerId || !cliente) return;
+
+    const fetchProductos = async () => {
+      setLoadingProductos(true);
+      try {
+        const res = await fetch(`/api/odoo/productos?partner_id=${partnerId}&limit=500&include_tag_names=true`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+
+        const todos = (data.productos || []) as ProductoOdooCliente[];
+
+        if (productosAutorizadosIds.size > 0) {
+          setProductosOdoo(todos.filter(p => productosAutorizadosIds.has(p.id)));
+        } else {
+          setProductosOdoo(todos);
+        }
+      } catch {
+        setProductosOdoo([]);
+      } finally {
+        setLoadingProductos(false);
+      }
+    };
+
+    void fetchProductos();
+  }, [cliente, config?.odoo_partner_id, productosAutorizadosIds]);
+
+  const productosFiltrados = useMemo(() => {
+    if (!busquedaProducto.trim()) return productosOdoo;
+    const term = busquedaProducto.toLowerCase();
+    return productosOdoo.filter(p =>
+      p.name.toLowerCase().includes(term) ||
+      (typeof p.default_code === 'string' && p.default_code.toLowerCase().includes(term))
+    );
+  }, [productosOdoo, busquedaProducto]);
 
   const usuariosActivos = useMemo(() => usuarios.filter((usuario) => usuario.activo).length, [usuarios]);
 
@@ -442,6 +510,78 @@ export default function ClienteDetallePage() {
                   </div>
                 ))}
               </div>
+            )}
+          </div>
+          <div className="bg-white rounded-xl border border-border p-5">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Package className="w-4 h-4 text-muted" />
+                <h2 className="font-semibold text-foreground">Productos autorizados</h2>
+                {!loadingProductos && (
+                  <span className="text-xs text-muted">({productosFiltrados.length})</span>
+                )}
+              </div>
+            </div>
+
+            {loadingProductos ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="w-6 h-6 animate-spin text-primary" />
+              </div>
+            ) : productosOdoo.length === 0 ? (
+              <p className="text-sm text-muted">
+                {productosAutorizadosIds.size === 0
+                  ? 'No se han configurado productos específicos para esta empresa.'
+                  : 'No se encontraron productos en Odoo para los IDs autorizados.'}
+              </p>
+            ) : (
+              <>
+                {productosOdoo.length > 6 && (
+                  <div className="relative mb-4">
+                    <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+                    <input
+                      type="text"
+                      value={busquedaProducto}
+                      onChange={(e) => setBusquedaProducto(e.target.value)}
+                      placeholder="Buscar producto por nombre o referencia"
+                      className="w-full rounded-lg border border-border bg-background-light py-2 pl-9 pr-3 text-sm"
+                    />
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                  {productosFiltrados.map((producto) => (
+                    <div key={producto.id} className="rounded-lg border border-border p-3">
+                      <div className="flex gap-3">
+                        {producto.image_128 ? (
+                          <img
+                            src={`data:image/png;base64,${producto.image_128}`}
+                            alt={producto.name}
+                            className="w-14 h-14 rounded-lg border border-border object-contain bg-background-light p-1 flex-shrink-0"
+                          />
+                        ) : (
+                          <div className="w-14 h-14 rounded-lg border border-border bg-background-light flex items-center justify-center flex-shrink-0">
+                            <Package className="w-5 h-5 text-muted/40" />
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-foreground leading-tight truncate">{producto.name}</p>
+                          <p className="text-xs text-muted mt-1">
+                            Ref: {typeof producto.default_code === 'string' ? producto.default_code : '—'}
+                          </p>
+                          {Array.isArray(producto.categ_id) && (
+                            <p className="text-xs text-muted">{producto.categ_id[1]}</p>
+                          )}
+                          {showPrices && (
+                            <p className="text-xs font-semibold text-primary mt-1">
+                              {new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(producto.list_price || 0)}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
             )}
           </div>
         </div>
