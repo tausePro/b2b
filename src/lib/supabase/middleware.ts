@@ -25,10 +25,12 @@ export async function updateSession(request: NextRequest) {
     }
   );
 
-  const publicPaths = ['/login', '/auth/callback', '/api/odoo', '/api/auth', '/api/internal'];
-  const isPublicPath = publicPaths.some((path) =>
-    request.nextUrl.pathname.startsWith(path)
-  );
+  const publicPaths = ['/login', '/auth/callback', '/api/odoo', '/api/auth', '/api/internal', '/api/landing'];
+  const landingPaths = ['/', '/nosotros', '/servicios', '/contacto', '/faq'];
+  const pathname = request.nextUrl.pathname;
+
+  const isPublicPath = publicPaths.some((path) => pathname.startsWith(path));
+  const isLandingPath = landingPaths.includes(pathname);
 
   try {
     const {
@@ -36,16 +38,17 @@ export async function updateSession(request: NextRequest) {
       error,
     } = await supabase.auth.getUser();
 
-    if (!user && !isPublicPath) {
-      const url = request.nextUrl.clone();
-      url.pathname = '/login';
-      return NextResponse.redirect(url);
-    }
-    
-    // Si hay sesión y está en el login, redirigir a dashboard
-    if (user && request.nextUrl.pathname === '/login') {
+    // Usuario autenticado en landing o login → redirigir a dashboard
+    if (user && (isLandingPath || pathname === '/login')) {
       const url = request.nextUrl.clone();
       url.pathname = '/dashboard';
+      return NextResponse.redirect(url);
+    }
+
+    // Usuario NO autenticado en ruta protegida → redirigir a login
+    if (!user && !isPublicPath && !isLandingPath) {
+      const url = request.nextUrl.clone();
+      url.pathname = '/login';
       return NextResponse.redirect(url);
     }
   } catch (err) {

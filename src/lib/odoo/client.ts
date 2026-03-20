@@ -875,42 +875,6 @@ export async function getProductosByPricelist(
   });
 }
 
-export async function getProductosByPartner(
-  session: OdooSession,
-  partnerId: number,
-  options: { limit?: number; offset?: number; categIds?: number[] } = {}
-): Promise<OdooProduct[]> {
-  const partners = await read(
-    'res.partner',
-    [partnerId],
-    ['id', 'name', 'category_id'],
-    session
-  );
-
-  if (!partners.length) return [];
-
-  const partner = partners[0];
-  // category_id en res.partner son las etiquetas del cliente (res.partner.category)
-  // Se usan como filtro de product_tag_ids en productos
-  const tagIds = Array.isArray(partner.category_id) ? (partner.category_id as number[]) : [];
-
-  if (!tagIds.length) {
-    // Si el partner no tiene etiquetas, devolver todos los productos
-    return getProductos(session, {
-      limit: options.limit,
-      offset: options.offset,
-      categIds: options.categIds,
-    });
-  }
-
-  return getProductos(session, {
-    tagIds,
-    limit: options.limit,
-    offset: options.offset,
-    categIds: options.categIds,
-  });
-}
-
 export async function getEtiquetasProducto(
   session: OdooSession
 ): Promise<OdooProductTag[]> {
@@ -934,6 +898,18 @@ export async function getCategoriasProducto(
     { order: 'complete_name asc', session }
   );
   return result as unknown as OdooCategory[];
+}
+
+export async function getPricelists(
+  session: OdooSession
+): Promise<{ id: number; name: string; currency_id: [number, string] | null }[]> {
+  const result = await searchRead(
+    'product.pricelist',
+    [],
+    ['id', 'name', 'currency_id'],
+    { order: 'name asc', session }
+  );
+  return result as unknown as { id: number; name: string; currency_id: [number, string] | null }[];
 }
 
 export async function getEtiquetasCliente(

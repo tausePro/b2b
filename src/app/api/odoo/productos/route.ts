@@ -3,7 +3,6 @@ import {
   authenticate,
   getEtiquetasCliente,
   getProductos,
-  getProductosByPartner,
   getProductosByPricelist,
   getEtiquetasProducto,
   read,
@@ -22,12 +21,14 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url);
     const partnerId = searchParams.get('partner_id');
+    const pricelistIdParam = searchParams.get('pricelist_id');
     const tagIds = searchParams.get('tag_ids');
     const categIds = searchParams.get('categ_ids');
     const includeTagNames = searchParams.get('include_tag_names') === 'true';
     const limit = parseInt(searchParams.get('limit') || '200', 10);
     const offset = parseInt(searchParams.get('offset') || '0', 10);
     const parsedPartnerId = partnerId ? parseInt(partnerId, 10) : null;
+    const parsedPricelistId = pricelistIdParam ? parseInt(pricelistIdParam, 10) : null;
     const parsedCategIds = (categIds || '')
       .split(',')
       .map((id) => parseInt(id.trim(), 10))
@@ -92,24 +93,41 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    if (parsedPartnerId) {
-      const productosPorPartner = await getProductosByPartner(session, parsedPartnerId, {
-        limit,
-        offset,
-        categIds: parsedCategIds,
-      });
+    // Pricelist efectiva: 1) override manual (query param), 2) pricelist del partner en Odoo
+    const effectivePricelistId = parsedPricelistId ?? partnerContext?.pricelist?.id ?? null;
 
-      if (productosPorPartner.length > 0) {
-        productos = productosPorPartner;
-      } else if (partnerContext?.pricelist?.id) {
-        productos = await getProductosByPricelist(session, partnerContext.pricelist.id, {
+    if (parsedPartnerId) {
+      // Prioridad: 1) Lista de precios (override o Odoo), 2) Etiquetas del partner, 3) Catálogo general
+      if (effectivePricelistId) {
+        productos = await getProductosByPricelist(session, effectivePricelistId, {
           limit,
           offset,
           categIds: parsedCategIds,
         });
       } else {
-        productos = productosPorPartner;
+        const partnerTagIds = partnerContext?.tag_ids ?? [];
+        if (partnerTagIds.length > 0) {
+          productos = await getProductos(session, {
+            tagIds: partnerTagIds,
+            limit,
+            offset,
+            categIds: parsedCategIds,
+          });
+        } else {
+          productos = await getProductos(session, {
+            limit,
+            offset,
+            categIds: parsedCategIds,
+          });
+        }
       }
+    } else if (parsedPricelistId) {
+      // Pricelist sin partner específico
+      productos = await getProductosByPricelist(session, parsedPricelistId, {
+        limit,
+        offset,
+        categIds: parsedCategIds,
+      });
     } else if (tagIds) {
       // Productos filtrados por IDs de etiquetas específicas
       const ids = tagIds.split(',').map((id) => parseInt(id.trim(), 10)).filter(Boolean);
