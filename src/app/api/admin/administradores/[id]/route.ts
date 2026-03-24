@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 
-const INTERNAL_ROLES = new Set(['super_admin', 'asesor', 'direccion'] as const);
+const INTERNAL_ROLES = new Set(['super_admin', 'asesor', 'direccion', 'editor_contenido'] as const);
 
 function getSupabaseAdmin() {
   return createSupabaseClient(

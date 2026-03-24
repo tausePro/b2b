@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 
-const INTERNAL_ROLES = new Set(['super_admin', 'asesor', 'direccion'] as const);
-type InternalRole = 'super_admin' | 'asesor' | 'direccion';
+const INTERNAL_ROLES = new Set(['super_admin', 'asesor', 'direccion', 'editor_contenido'] as const);
+type InternalRole = 'super_admin' | 'asesor' | 'direccion' | 'editor_contenido';
 
 const USER_SELECT =
   'id, auth_id, odoo_user_id, email, nombre, apellido, rol, empresa_id, activo, created_at, updated_at';
@@ -50,7 +50,7 @@ export async function GET() {
     const { data: usuarios, error: queryError } = await admin
       .from('usuarios')
       .select(USER_SELECT)
-      .in('rol', ['super_admin', 'asesor', 'direccion'])
+      .in('rol', ['super_admin', 'asesor', 'direccion', 'editor_contenido'])
       .order('created_at', { ascending: false });
 
     if (queryError) {
@@ -138,7 +138,7 @@ export async function POST(request: NextRequest) {
 
     if (!INTERNAL_ROLES.has(rol)) {
       return NextResponse.json(
-        { error: 'Rol no válido. Roles permitidos: super_admin, asesor, direccion.' },
+        { error: 'Rol no válido. Roles permitidos: super_admin, asesor, direccion, editor_contenido.' },
         { status: 400 }
       );
     }

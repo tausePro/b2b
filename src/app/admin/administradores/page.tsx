@@ -17,7 +17,7 @@ import {
   Building2,
 } from 'lucide-react';
 
-type InternalRole = 'super_admin' | 'asesor' | 'direccion';
+type InternalRole = 'super_admin' | 'asesor' | 'direccion' | 'editor_contenido';
 
 interface AdminUser {
   id: string;
@@ -37,6 +37,7 @@ const ROLE_LABELS: Record<InternalRole, { label: string; color: string; icon: Re
   super_admin: { label: 'Super Admin', color: 'bg-red-100 text-red-700', icon: Shield },
   asesor: { label: 'Asesor Comercial', color: 'bg-blue-100 text-blue-700', icon: Briefcase },
   direccion: { label: 'Dirección', color: 'bg-purple-100 text-purple-700', icon: Eye },
+  editor_contenido: { label: 'Editor Contenido', color: 'bg-emerald-100 text-emerald-700', icon: Briefcase },
 };
 
 export default function AdministradoresPage() {
@@ -474,6 +475,7 @@ export default function AdministradoresPage() {
                 >
                   <option value="asesor">Asesor Comercial</option>
                   <option value="direccion">Dirección</option>
+                  <option value="editor_contenido">Editor Contenido</option>
                   <option value="super_admin">Super Admin</option>
                 </select>
               </div>
@@ -548,6 +550,7 @@ export default function AdministradoresPage() {
                 >
                   <option value="asesor">Asesor Comercial</option>
                   <option value="direccion">Dirección</option>
+                  <option value="editor_contenido">Editor Contenido</option>
                   <option value="super_admin">Super Admin</option>
                 </select>
               </div>
