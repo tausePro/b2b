@@ -17,6 +17,7 @@ import {
   X,
   Bell,
   Search,
+  FileText,
 } from 'lucide-react';
 
 interface MenuItem {
@@ -39,6 +40,12 @@ const menuSections: MenuSection[] = [
       { href: '/admin/empresas', label: 'Empresas', icon: Building2 },
       { href: '/admin/pedidos', label: 'Pedidos', icon: Receipt },
       { href: '/admin/sincronizacion', label: 'Sincronización Odoo', icon: RefreshCw },
+    ],
+  },
+  {
+    label: 'Contenido',
+    items: [
+      { href: '/admin/cms', label: 'CMS Landing', icon: FileText },
     ],
   },
   {

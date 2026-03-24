@@ -24,6 +24,7 @@ export async function GET(request: NextRequest) {
     const pricelistIdParam = searchParams.get('pricelist_id');
     const tagIds = searchParams.get('tag_ids');
     const categIds = searchParams.get('categ_ids');
+    const search = searchParams.get('search') || '';
     const includeTagNames = searchParams.get('include_tag_names') === 'true';
     const limit = parseInt(searchParams.get('limit') || '200', 10);
     const offset = parseInt(searchParams.get('offset') || '0', 10);
@@ -103,6 +104,7 @@ export async function GET(request: NextRequest) {
           limit,
           offset,
           categIds: parsedCategIds,
+          search,
         });
       } else {
         const partnerTagIds = partnerContext?.tag_ids ?? [];
@@ -112,29 +114,29 @@ export async function GET(request: NextRequest) {
             limit,
             offset,
             categIds: parsedCategIds,
+            search,
           });
         } else {
           productos = await getProductos(session, {
             limit,
             offset,
             categIds: parsedCategIds,
+            search,
           });
         }
       }
     } else if (parsedPricelistId) {
-      // Pricelist sin partner específico
       productos = await getProductosByPricelist(session, parsedPricelistId, {
         limit,
         offset,
         categIds: parsedCategIds,
+        search,
       });
     } else if (tagIds) {
-      // Productos filtrados por IDs de etiquetas específicas
       const ids = tagIds.split(',').map((id) => parseInt(id.trim(), 10)).filter(Boolean);
-      productos = await getProductos(session, { tagIds: ids, categIds: parsedCategIds, limit, offset });
+      productos = await getProductos(session, { tagIds: ids, categIds: parsedCategIds, limit, offset, search });
     } else {
-      // Todos los productos activos
-      productos = await getProductos(session, { categIds: parsedCategIds, limit, offset });
+      productos = await getProductos(session, { categIds: parsedCategIds, limit, offset, search });
     }
 
     if (includeTagNames) {

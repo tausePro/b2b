@@ -683,7 +683,7 @@ export async function getClientes(
 
 export async function getProductos(
   session: OdooSession,
-  options: { tagIds?: number[]; categIds?: number[]; limit?: number; offset?: number } = {}
+  options: { tagIds?: number[]; categIds?: number[]; limit?: number; offset?: number; search?: string } = {}
 ): Promise<OdooProduct[]> {
   const domain: unknown[] = [['sale_ok', '=', true], ['active', '=', true]];
   if (options.tagIds && options.tagIds.length > 0) {
@@ -691,6 +691,10 @@ export async function getProductos(
   }
   if (options.categIds && options.categIds.length > 0) {
     domain.push(['categ_id', 'in', options.categIds]);
+  }
+  if (options.search && options.search.trim().length >= 2) {
+    const term = options.search.trim();
+    domain.push('|', ['name', 'ilike', term], ['default_code', 'ilike', term]);
   }
 
   const result = await searchRead(
@@ -729,7 +733,7 @@ function sortAndSliceProductos(
 export async function getProductosByPricelist(
   session: OdooSession,
   pricelistId: number,
-  options: { limit?: number; offset?: number; categIds?: number[] } = {}
+  options: { limit?: number; offset?: number; categIds?: number[]; search?: string } = {}
 ): Promise<OdooProduct[]> {
   const pricelistItems = await searchRead(
     'product.pricelist.item',
@@ -808,6 +812,7 @@ export async function getProductosByPricelist(
       categIds: options.categIds,
       limit: options.limit,
       offset: options.offset,
+      search: options.search,
     });
   } else {
     const chunks: OdooProduct[][] = [];
@@ -820,6 +825,10 @@ export async function getProductosByPricelist(
       ];
       if (options.categIds && options.categIds.length > 0) {
         explicitDomain.push(['categ_id', 'in', options.categIds]);
+      }
+      if (options.search && options.search.trim().length >= 2) {
+        const term = options.search.trim();
+        explicitDomain.push('|', ['name', 'ilike', term], ['default_code', 'ilike', term]);
       }
 
       const explicitProducts = await searchRead(
@@ -838,9 +847,14 @@ export async function getProductosByPricelist(
           : Array.from(categoryIds);
 
       if (allowedCategoryIds.length > 0) {
+        const catDomain: unknown[] = [['sale_ok', '=', true], ['active', '=', true], ['categ_id', 'in', allowedCategoryIds]];
+        if (options.search && options.search.trim().length >= 2) {
+          const term = options.search.trim();
+          catDomain.push('|', ['name', 'ilike', term], ['default_code', 'ilike', term]);
+        }
         const categoryProducts = await searchRead(
           'product.template',
-          [['sale_ok', '=', true], ['active', '=', true], ['categ_id', 'in', allowedCategoryIds]],
+          catDomain,
           productFields,
           { order: 'name asc', session }
         );
