@@ -83,13 +83,8 @@ export default async function LandingPage() {
         <nav className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-20">
             <div className="flex items-center gap-8">
-              <Link href="/" className="flex items-center gap-3">
-                <div className="text-primary">
-                  <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M24 0.757355L47.2426 24L24 47.2426L0.757355 24L24 0.757355ZM21 35.7574V12.2426L9.24264 24L21 35.7574Z" />
-                  </svg>
-                </div>
-                <span className="text-2xl font-extrabold tracking-tight">Imprima<span className="text-primary">.</span></span>
+              <Link href="/" className="flex items-center">
+                <img src="/logo-imprima-horizontal.png" alt="Imprima" className="h-10 w-auto" />
               </Link>
               <div className="hidden md:flex items-center gap-6 text-sm font-semibold text-slate-600">
                 <a className="hover:text-primary transition-colors" href="#categorias">Categorías</a>
@@ -320,13 +315,8 @@ export default async function LandingPage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid md:grid-cols-4 gap-12 mb-16">
             <div className="col-span-2">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="text-primary">
-                  <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M24 0.757355L47.2426 24L24 47.2426L0.757355 24L24 0.757355ZM21 35.7574V12.2426L9.24264 24L21 35.7574Z" />
-                  </svg>
-                </div>
-                <span className="text-2xl font-extrabold">Imprima<span className="text-primary">.</span></span>
+              <div className="mb-6">
+                <img src="/logo-imprima-horizontal.png" alt="Imprima" className="h-10 w-auto" />
               </div>
               <p className="text-slate-500 max-w-sm mb-6 leading-relaxed">
                 {foot?.subtitulo ?? 'Líderes en soluciones integrales de suministros para el sector corporativo en Colombia.'}
