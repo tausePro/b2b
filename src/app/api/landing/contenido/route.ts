@@ -47,7 +47,7 @@ async function verificarAdmin(): Promise<boolean> {
       .eq('auth_id', user.id)
       .single();
 
-    return perfil?.rol === 'super_admin' || perfil?.rol === 'direccion';
+    return perfil?.rol === 'super_admin' || perfil?.rol === 'direccion' || perfil?.rol === 'editor_contenido';
   } catch {
     return false;
   }

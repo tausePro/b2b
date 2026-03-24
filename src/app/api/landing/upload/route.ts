@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
       .eq('auth_id', user.id)
       .single();
 
-    if (perfil?.rol !== 'super_admin' && perfil?.rol !== 'direccion') {
+    if (perfil?.rol !== 'super_admin' && perfil?.rol !== 'direccion' && perfil?.rol !== 'editor_contenido') {
       return NextResponse.json({ error: 'No autorizado' }, { status: 403 });
     }
 
