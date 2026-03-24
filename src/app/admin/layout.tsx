@@ -33,9 +33,12 @@ interface MenuSection {
   items: MenuItem[];
 }
 
-const menuSections: MenuSection[] = [
+const ADMIN_ROLES = ['super_admin', 'direccion', 'editor_contenido'];
+
+const allMenuSections: (MenuSection & { roles?: string[] })[] = [
   {
     label: 'Resumen',
+    roles: ['super_admin', 'direccion'],
     items: [
       { href: '/admin', label: 'Panel de Control', icon: LayoutDashboard },
       { href: '/admin/empresas', label: 'Empresas', icon: Building2 },
@@ -52,12 +55,19 @@ const menuSections: MenuSection[] = [
   },
   {
     label: 'Ajustes',
+    roles: ['super_admin'],
     items: [
       { href: '/admin/administradores', label: 'Administradores', icon: Users },
       { href: '/admin/configuracion', label: 'Configuración', icon: Settings },
     ],
   },
 ];
+
+const ROLE_LABELS: Record<string, string> = {
+  super_admin: 'Super Admin',
+  direccion: 'Dirección',
+  editor_contenido: 'Editor Contenido',
+};
 
 export default function AdminLayout({
   children,
@@ -79,7 +89,7 @@ export default function AdminLayout({
           console.warn('[AdminLayout] Sin sesión activa. Redirigiendo a /login');
           router.replace('/login');
         }
-      } else if (user.rol !== 'super_admin') {
+      } else if (!ADMIN_ROLES.includes(user.rol)) {
         console.warn('[AdminLayout] Rol no autorizado:', user.rol);
         router.replace('/dashboard');
       }
@@ -97,7 +107,7 @@ export default function AdminLayout({
     );
   }
 
-  if (!user || user.rol !== 'super_admin') {
+  if (!user || !ADMIN_ROLES.includes(user.rol)) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background-light">
         <div className="flex flex-col items-center gap-4 max-w-md text-center px-4">
@@ -138,7 +148,7 @@ export default function AdminLayout({
 
       {/* Nav */}
       <div className="flex-1 overflow-y-auto py-6 px-3 space-y-1">
-        {menuSections.map((section) => (
+        {allMenuSections.filter((s) => !s.roles || s.roles.includes(user.rol)).map((section) => (
           <div key={section.label}>
             <div className="px-3 mb-2 mt-4 first:mt-0 text-xs font-semibold uppercase tracking-wider text-slate-400">
               {section.label}
@@ -179,7 +189,7 @@ export default function AdminLayout({
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-semibold text-slate-900 truncate">{user.nombre} {user.apellido}</p>
-            <p className="text-xs text-slate-500 truncate">Super Admin</p>
+            <p className="text-xs text-slate-500 truncate">{ROLE_LABELS[user.rol] || user.rol}</p>
           </div>
           <button
             onClick={handleSignOut}
