@@ -42,7 +42,7 @@ INSERT INTO public.landing_contenido (id, titulo, subtitulo, contenido, imagen_u
   'hero',
   'Simplificamos las compras de tu empresa',
   'Soluciones integrales de suministros para su compañía con tecnología de vanguardia. Eficiencia, control y ahorro en un solo lugar.',
-  '{"badge": "Soluciones Corporativas 2025", "cta_primario": "Ver Catálogo de Productos", "cta_secundario": "Hablar con un Asesor", "cta_primario_url": "/login", "cta_secundario_url": "/contacto"}'::jsonb,
+  '{"badge": "Soluciones Corporativas 2025", "cta_primario": "Ver Catálogo de Productos", "cta_secundario": "Hablar con un Asesor", "cta_primario_url": "/catalogo", "cta_secundario_url": "/contacto"}'::jsonb,
   NULL,
   1,
   true
@@ -56,7 +56,7 @@ INSERT INTO public.landing_contenido (id, titulo, subtitulo, contenido, imagen_u
     {"titulo": "Aseo y Desinfección", "descripcion": "Ambientes limpios, seguros y certificados.", "icono": "sanitizer", "imagen_url": null},
     {"titulo": "Cafetería y Snacks", "descripcion": "Insumos de alta calidad para su equipo.", "icono": "coffee", "imagen_url": null},
     {"titulo": "Productos Personalizados", "descripcion": "Marca propia, dotación y merchandising.", "icono": "loyalty", "imagen_url": null}
-  ], "cta_texto": "Ver todo el catálogo", "cta_url": "/login"}'::jsonb,
+  ], "cta_texto": "Ver todo el catálogo", "cta_url": "/catalogo"}'::jsonb,
   NULL,
   2,
   true

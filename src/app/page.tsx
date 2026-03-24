@@ -93,7 +93,7 @@ export default async function LandingPage() {
               </Link>
               <div className="hidden md:flex items-center gap-6 text-sm font-semibold text-slate-600">
                 <a className="hover:text-primary transition-colors" href="#categorias">Categorías</a>
-                <a className="hover:text-primary transition-colors" href="#servicios">Servicios</a>
+                <Link className="hover:text-primary transition-colors" href="/catalogo">Catálogo</Link>
                 <a className="hover:text-primary transition-colors" href="#testimonios">Testimonios</a>
                 <a className="hover:text-primary transition-colors" href="#contacto">Contacto</a>
               </div>
