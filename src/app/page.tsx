@@ -7,10 +7,38 @@ import {
   Building2,
 } from 'lucide-react';
 
-export const metadata: Metadata = {
-  title: 'Imprima | Suministros Corporativos B2B',
-  description: 'Soluciones integrales de suministros para el sector corporativo en Colombia. Eficiencia, control y ahorro en un solo lugar.',
-};
+export async function generateMetadata(): Promise<Metadata> {
+  try {
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
+    const { data: seo } = await supabase
+      .from('landing_contenido')
+      .select('*')
+      .eq('id', 'seo')
+      .single();
+
+    if (seo) {
+      const c = seo.contenido || {};
+      return {
+        title: seo.titulo || 'Imprima | Suministros Corporativos B2B',
+        description: seo.subtitulo || 'Soluciones integrales de suministros para el sector corporativo en Colombia.',
+        openGraph: {
+          title: (c.og_title as string) || seo.titulo || undefined,
+          description: (c.og_description as string) || seo.subtitulo || undefined,
+          images: (c.og_image as string) ? [{ url: c.og_image as string }] : undefined,
+        },
+        robots: (c.robots as string) || 'index, follow',
+        alternates: { canonical: (c.canonical_url as string) || undefined },
+      };
+    }
+  } catch {}
+  return {
+    title: 'Imprima | Suministros Corporativos B2B',
+    description: 'Soluciones integrales de suministros para el sector corporativo en Colombia.',
+  };
+}
 
 export const revalidate = 60;
 
@@ -60,6 +88,45 @@ async function getContenido(): Promise<Record<string, LandingSeccion>> {
   }
 }
 
+function buildJsonLd(seo: LandingSeccion | undefined, faqs: Array<{ pregunta: string; respuesta: string }>) {
+  const schemas: Record<string, unknown>[] = [];
+  if (seo) {
+    const org = (seo.contenido.organization || {}) as Record<string, unknown>;
+    const addr = (org.address || {}) as Record<string, string>;
+    if (org.name) {
+      schemas.push({
+        '@context': 'https://schema.org',
+        '@type': 'Organization',
+        name: org.name,
+        url: org.url || undefined,
+        logo: org.logo || undefined,
+        telephone: org.telephone || undefined,
+        email: org.email || undefined,
+        address: addr.streetAddress ? {
+          '@type': 'PostalAddress',
+          streetAddress: addr.streetAddress,
+          addressLocality: addr.addressLocality,
+          addressRegion: addr.addressRegion,
+          postalCode: addr.postalCode,
+          addressCountry: addr.addressCountry,
+        } : undefined,
+      });
+    }
+  }
+  if (faqs.length > 0) {
+    schemas.push({
+      '@context': 'https://schema.org',
+      '@type': 'FAQPage',
+      mainEntity: faqs.map((f) => ({
+        '@type': 'Question',
+        name: f.pregunta,
+        acceptedAnswer: { '@type': 'Answer', text: f.respuesta },
+      })),
+    });
+  }
+  return schemas;
+}
+
 export default async function LandingPage() {
   const c = await getContenido();
   const hero = c.hero;
@@ -69,6 +136,10 @@ export default async function LandingPage() {
   const testi = c.testimonios;
   const cta = c.cta;
   const foot = c.footer;
+  const seo = c.seo;
+
+  const faqs = (seo?.contenido?.faqs || []) as Array<{ pregunta: string; respuesta: string }>;
+  const jsonLdSchemas = buildJsonLd(seo, faqs);
 
   const catItems = (cats?.contenido?.items ?? []) as Array<{ titulo: string; descripcion: string; icono: string; imagen_url: string | null }>;
   const efiItems = (efi?.contenido?.items ?? []) as Array<{ titulo: string; descripcion: string; icono: string }>;
@@ -78,22 +149,26 @@ export default async function LandingPage() {
 
   return (
     <div className="min-h-screen flex flex-col bg-[#f8f8f5] text-slate-900 antialiased font-display">
+      {/* ───── JSON-LD Schemas ───── */}
+      {jsonLdSchemas.map((schema, i) => (
+        <script
+          key={i}
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
+        />
+      ))}
+
       {/* ───── Header ───── */}
       <header className="sticky top-0 z-50 bg-[#f8f8f5]/80 backdrop-blur-md border-b border-primary/10">
         <nav className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-20">
             <div className="flex items-center gap-8">
-              <Link href="/" className="flex items-center gap-3">
-                <div className="text-primary">
-                  <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M24 0.757355L47.2426 24L24 47.2426L0.757355 24L24 0.757355ZM21 35.7574V12.2426L9.24264 24L21 35.7574Z" />
-                  </svg>
-                </div>
-                <span className="text-2xl font-extrabold tracking-tight">Imprima<span className="text-primary">.</span></span>
+              <Link href="/" className="flex items-center">
+                <img src="/logo-imprima-horizontal.png" alt="Imprima" className="h-10 w-auto" />
               </Link>
               <div className="hidden md:flex items-center gap-6 text-sm font-semibold text-slate-600">
                 <a className="hover:text-primary transition-colors" href="#categorias">Categorías</a>
-                <a className="hover:text-primary transition-colors" href="#servicios">Servicios</a>
+                <Link className="hover:text-primary transition-colors" href="/catalogo">Catálogo</Link>
                 <a className="hover:text-primary transition-colors" href="#testimonios">Testimonios</a>
                 <a className="hover:text-primary transition-colors" href="#contacto">Contacto</a>
               </div>
@@ -320,13 +395,8 @@ export default async function LandingPage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid md:grid-cols-4 gap-12 mb-16">
             <div className="col-span-2">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="text-primary">
-                  <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M24 0.757355L47.2426 24L24 47.2426L0.757355 24L24 0.757355ZM21 35.7574V12.2426L9.24264 24L21 35.7574Z" />
-                  </svg>
-                </div>
-                <span className="text-2xl font-extrabold">Imprima<span className="text-primary">.</span></span>
+              <div className="mb-6">
+                <img src="/logo-imprima-horizontal.png" alt="Imprima" className="h-10 w-auto" />
               </div>
               <p className="text-slate-500 max-w-sm mb-6 leading-relaxed">
                 {foot?.subtitulo ?? 'Líderes en soluciones integrales de suministros para el sector corporativo en Colombia.'}
