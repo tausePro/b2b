@@ -7,10 +7,38 @@ import {
   Building2,
 } from 'lucide-react';
 
-export const metadata: Metadata = {
-  title: 'Imprima | Suministros Corporativos B2B',
-  description: 'Soluciones integrales de suministros para el sector corporativo en Colombia. Eficiencia, control y ahorro en un solo lugar.',
-};
+export async function generateMetadata(): Promise<Metadata> {
+  try {
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
+    const { data: seo } = await supabase
+      .from('landing_contenido')
+      .select('*')
+      .eq('id', 'seo')
+      .single();
+
+    if (seo) {
+      const c = seo.contenido || {};
+      return {
+        title: seo.titulo || 'Imprima | Suministros Corporativos B2B',
+        description: seo.subtitulo || 'Soluciones integrales de suministros para el sector corporativo en Colombia.',
+        openGraph: {
+          title: (c.og_title as string) || seo.titulo || undefined,
+          description: (c.og_description as string) || seo.subtitulo || undefined,
+          images: (c.og_image as string) ? [{ url: c.og_image as string }] : undefined,
+        },
+        robots: (c.robots as string) || 'index, follow',
+        alternates: { canonical: (c.canonical_url as string) || undefined },
+      };
+    }
+  } catch {}
+  return {
+    title: 'Imprima | Suministros Corporativos B2B',
+    description: 'Soluciones integrales de suministros para el sector corporativo en Colombia.',
+  };
+}
 
 export const revalidate = 60;
 
@@ -60,6 +88,45 @@ async function getContenido(): Promise<Record<string, LandingSeccion>> {
   }
 }
 
+function buildJsonLd(seo: LandingSeccion | undefined, faqs: Array<{ pregunta: string; respuesta: string }>) {
+  const schemas: Record<string, unknown>[] = [];
+  if (seo) {
+    const org = (seo.contenido.organization || {}) as Record<string, unknown>;
+    const addr = (org.address || {}) as Record<string, string>;
+    if (org.name) {
+      schemas.push({
+        '@context': 'https://schema.org',
+        '@type': 'Organization',
+        name: org.name,
+        url: org.url || undefined,
+        logo: org.logo || undefined,
+        telephone: org.telephone || undefined,
+        email: org.email || undefined,
+        address: addr.streetAddress ? {
+          '@type': 'PostalAddress',
+          streetAddress: addr.streetAddress,
+          addressLocality: addr.addressLocality,
+          addressRegion: addr.addressRegion,
+          postalCode: addr.postalCode,
+          addressCountry: addr.addressCountry,
+        } : undefined,
+      });
+    }
+  }
+  if (faqs.length > 0) {
+    schemas.push({
+      '@context': 'https://schema.org',
+      '@type': 'FAQPage',
+      mainEntity: faqs.map((f) => ({
+        '@type': 'Question',
+        name: f.pregunta,
+        acceptedAnswer: { '@type': 'Answer', text: f.respuesta },
+      })),
+    });
+  }
+  return schemas;
+}
+
 export default async function LandingPage() {
   const c = await getContenido();
   const hero = c.hero;
@@ -69,6 +136,10 @@ export default async function LandingPage() {
   const testi = c.testimonios;
   const cta = c.cta;
   const foot = c.footer;
+  const seo = c.seo;
+
+  const faqs = (seo?.contenido?.faqs || []) as Array<{ pregunta: string; respuesta: string }>;
+  const jsonLdSchemas = buildJsonLd(seo, faqs);
 
   const catItems = (cats?.contenido?.items ?? []) as Array<{ titulo: string; descripcion: string; icono: string; imagen_url: string | null }>;
   const efiItems = (efi?.contenido?.items ?? []) as Array<{ titulo: string; descripcion: string; icono: string }>;
@@ -78,6 +149,15 @@ export default async function LandingPage() {
 
   return (
     <div className="min-h-screen flex flex-col bg-[#f8f8f5] text-slate-900 antialiased font-display">
+      {/* ───── JSON-LD Schemas ───── */}
+      {jsonLdSchemas.map((schema, i) => (
+        <script
+          key={i}
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
+        />
+      ))}
+
       {/* ───── Header ───── */}
       <header className="sticky top-0 z-50 bg-[#f8f8f5]/80 backdrop-blur-md border-b border-primary/10">
         <nav className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
