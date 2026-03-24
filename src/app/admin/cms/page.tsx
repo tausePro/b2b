@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   Save, Loader2, Upload, Trash2, Plus, ChevronDown, ChevronRight,
-  Globe, FileText, Layout, Image as ImageIcon, AlertCircle, Check,
+  Globe, FileText, Layout, Image as ImageIcon, AlertCircle, Check, MessageCircle,
 } from 'lucide-react';
 
 // ─── Types ───────────────────────────────────────────────────
@@ -37,6 +37,7 @@ const SECTION_LABELS: Record<string, string> = {
   pagina_faq: 'Preguntas Frecuentes',
   pagina_terminos: 'Términos y Condiciones',
   pagina_privacidad: 'Política de Privacidad',
+  config_whatsapp: 'WhatsApp / Asesor',
 };
 
 // ─── Main Component ──────────────────────────────────────────
@@ -574,6 +575,18 @@ export default function CMSPage() {
     );
   };
 
+  // ─── WhatsApp Config Editor ───────────────────────────────────
+  const renderWhatsApp = () => {
+    const s = secciones.config_whatsapp;
+    if (!s) return null;
+    const c = s.contenido;
+    return renderSectionCard('config_whatsapp', <>
+      {renderInput('Número WhatsApp (con código país, ej: 573001234567)', (c.numero as string) || '', (v) => updateContenido('config_whatsapp', 'numero', v), { placeholder: '573001234567' })}
+      {renderInput('Texto del botón CTA', (c.cta_texto as string) || '', (v) => updateContenido('config_whatsapp', 'cta_texto', v))}
+      {renderTextarea('Mensaje por defecto', (c.mensaje_default as string) || '', (v) => updateContenido('config_whatsapp', 'mensaje_default', v), 2)}
+    </>);
+  };
+
   // ─── Main Render ─────────────────────────────────────────────
   if (loading) {
     return (
@@ -629,6 +642,7 @@ export default function CMSPage() {
           {renderTestimonios()}
           {renderCtaFinal()}
           {renderFooter()}
+          {renderWhatsApp()}
         </div>
       )}
 

@@ -18,6 +18,7 @@ import {
   Bell,
   Search,
   FileText,
+  UserPlus,
 } from 'lucide-react';
 
 interface MenuItem {
@@ -46,6 +47,7 @@ const menuSections: MenuSection[] = [
     label: 'Contenido',
     items: [
       { href: '/admin/cms', label: 'CMS Landing', icon: FileText },
+      { href: '/admin/leads', label: 'Leads', icon: UserPlus },
     ],
   },
   {
