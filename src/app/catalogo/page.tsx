@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Search, Package, ArrowRight, Phone, Building2, ChevronRight } from 'lucide-react';
+import { Search, Package, ArrowRight, Building2, ChevronRight } from 'lucide-react';
 import Link from 'next/link';
+import LeadButton from '@/components/public/LeadButton';
 
 interface ProductoPublico {
   id: number;
@@ -169,13 +170,7 @@ export default function CatalogoPublicoPage() {
                     Regístrese para comprar
                     <ArrowRight className="w-4 h-4" />
                   </Link>
-                  <Link
-                    href="/contacto"
-                    className="bg-slate-900 text-white px-8 py-3.5 rounded-xl font-bold hover:bg-slate-800 transition-all flex items-center gap-2"
-                  >
-                    <Phone className="w-4 h-4" />
-                    Contactar un asesor
-                  </Link>
+                  <LeadButton fuente="catalogo_hero" texto="Contactar un asesor" variant="whatsapp" className="px-8 py-3.5" />
                 </div>
               </div>
             )}
@@ -190,14 +185,7 @@ export default function CatalogoPublicoPage() {
                 <p className="text-slate-500 text-sm mt-2 mb-6">
                   Intente con otro nombre o referencia
                 </p>
-                <Link
-                  href="/contacto"
-                  className="inline-flex items-center gap-2 text-primary hover:text-primary/80 font-bold text-sm transition-colors"
-                >
-                  <Phone className="w-4 h-4" />
-                  ¿No encuentra lo que busca? Contáctenos
-                  <ChevronRight className="w-4 h-4" />
-                </Link>
+                <LeadButton fuente="catalogo_sin_resultados" texto="¿No encuentra lo que busca? Contáctenos" variant="outline" className="text-sm" />
               </div>
             )}
 
@@ -271,13 +259,7 @@ export default function CatalogoPublicoPage() {
                       Registrar mi empresa
                       <ArrowRight className="w-4 h-4" />
                     </Link>
-                    <Link
-                      href="/contacto"
-                      className="bg-slate-900 text-white px-8 py-3.5 rounded-xl font-bold hover:bg-slate-800 transition-all flex items-center gap-2"
-                    >
-                      <Phone className="w-4 h-4" />
-                      Hablar con un asesor
-                    </Link>
+                    <LeadButton fuente="catalogo_cta" texto="Hablar con un asesor" variant="whatsapp" className="px-8 py-3.5" />
                   </div>
                 </div>
               </>

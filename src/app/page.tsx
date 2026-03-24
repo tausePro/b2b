@@ -6,6 +6,7 @@ import {
   BarChart3, HeadphonesIcon, Star, ChevronRight,
   Building2,
 } from 'lucide-react';
+import LeadButton from '@/components/public/LeadButton';
 
 export async function generateMetadata(): Promise<Metadata> {
   try {
@@ -214,12 +215,12 @@ export default async function LandingPage() {
                   >
                     {(hero?.contenido?.cta_primario as string) ?? 'Ver Catálogo de Productos'}
                   </Link>
-                  <Link
-                    href={(hero?.contenido?.cta_secundario_url as string) ?? '#contacto'}
-                    className="bg-white border border-slate-200 px-8 py-4 rounded-xl font-bold text-lg hover:bg-slate-50 transition-all text-center"
-                  >
-                    {(hero?.contenido?.cta_secundario as string) ?? 'Hablar con un Asesor'}
-                  </Link>
+                  <LeadButton
+                    fuente="landing_hero"
+                    texto={(hero?.contenido?.cta_secundario as string) ?? 'Hablar con un Asesor'}
+                    variant="outline"
+                    className="px-8 py-4 text-lg"
+                  />
                 </div>
               </div>
               <div className="relative hidden lg:block">
@@ -379,12 +380,12 @@ export default async function LandingPage() {
               >
                 {(cta?.contenido?.cta_primario as string) ?? 'Crear Cuenta Corporativa'}
               </Link>
-              <Link
-                href={(cta?.contenido?.cta_secundario_url as string) ?? '#contacto'}
-                className="bg-slate-900 text-white px-10 py-4 rounded-xl font-bold text-lg hover:bg-slate-800 transition-all"
-              >
-                {(cta?.contenido?.cta_secundario as string) ?? 'Hablar con un Consultor'}
-              </Link>
+              <LeadButton
+                fuente="landing_cta"
+                texto={(cta?.contenido?.cta_secundario as string) ?? 'Hablar con un Consultor'}
+                variant="whatsapp"
+                className="px-10 py-4 text-lg"
+              />
             </div>
           </div>
         </section>
