@@ -7,6 +7,7 @@ import {
   Building2,
 } from 'lucide-react';
 import LeadButton from '@/components/public/LeadButton';
+import WhatsAppBubble from '@/components/public/WhatsAppBubble';
 
 export async function generateMetadata(): Promise<Metadata> {
   try {
@@ -425,6 +426,7 @@ export default async function LandingPage() {
           </div>
         </div>
       </footer>
+      <WhatsAppBubble />
     </div>
   );
 }

@@ -32,7 +32,20 @@ export default async function ContactoPage() {
   const direccion = (c.direccion as string) || '';
   const ciudad = (c.ciudad as string) || '';
   const horario = (c.horario as string) || '';
-  const mapaUrl = (c.mapa_url as string) || '';
+  const mapaUrlRaw = (c.mapa_url as string) || '';
+
+  // Convertir URL de Google Maps a formato embed
+  let mapaEmbedUrl = '';
+  if (mapaUrlRaw) {
+    if (mapaUrlRaw.includes('/embed')) {
+      mapaEmbedUrl = mapaUrlRaw;
+    } else {
+      // Extraer query de la URL de place o usar la dirección
+      const addressQuery = [direccion, ciudad].filter(Boolean).join(', ');
+      const q = encodeURIComponent(addressQuery || mapaUrlRaw);
+      mapaEmbedUrl = `https://maps.google.com/maps?q=${q}&output=embed&z=16`;
+    }
+  }
 
   const contactItems = [
     { icon: Phone, label: 'Teléfono', value: telefono, href: telefono ? `tel:${telefono}` : undefined },
@@ -68,10 +81,10 @@ export default async function ContactoPage() {
             ))}
           </div>
 
-          {mapaUrl && (
+          {mapaEmbedUrl && (
             <div className="rounded-2xl overflow-hidden border border-border">
               <iframe
-                src={mapaUrl}
+                src={mapaEmbedUrl}
                 className="w-full h-80"
                 style={{ border: 0 }}
                 allowFullScreen
