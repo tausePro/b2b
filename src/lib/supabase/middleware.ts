@@ -28,6 +28,15 @@ export async function updateSession(request: NextRequest) {
   const publicPaths = ['/login', '/auth/callback', '/api/odoo', '/api/auth', '/api/internal', '/api/landing', '/api/leads', '/catalogo', '/nosotros', '/contacto', '/faq', '/terminos', '/privacidad'];
   const landingPaths = ['/', '/servicios'];
   const pathname = request.nextUrl.pathname;
+  const hostname = request.headers.get('host') || '';
+
+  // b2b.imprima.com.co → subdominio B2B, redirigir raíz a /login
+  const isB2BSubdomain = hostname.startsWith('b2b.');
+  if (isB2BSubdomain && landingPaths.includes(pathname)) {
+    const url = request.nextUrl.clone();
+    url.pathname = '/login';
+    return NextResponse.redirect(url);
+  }
 
   const isPublicPath = publicPaths.some((path) => pathname.startsWith(path));
   const isLandingPath = landingPaths.includes(pathname);
