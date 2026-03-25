@@ -750,6 +750,12 @@ export default function EmpresaConfigPage() {
       })
       .eq('empresa_id', empresaId);
 
+    // Sincronizar requiere_aprobacion a tabla empresas (el trigger de pedidos lee de ahí)
+    const { error: empresaSyncError } = await supabase
+      .from('empresas')
+      .update({ requiere_aprobacion: config.requiere_aprobacion })
+      .eq('id', empresaId);
+
     let partnerUpdateError: string | null = null;
     const partnerDesdeConfig = Number(config.odoo_partner_id);
     if (Number.isFinite(partnerDesdeConfig) && partnerDesdeConfig > 0) {
@@ -767,11 +773,11 @@ export default function EmpresaConfigPage() {
 
     setSaving(false);
 
-    if (!error && !partnerUpdateError) {
+    if (!error && !partnerUpdateError && !empresaSyncError) {
       setConfig((prev) => (prev ? { ...prev, configuracion_extra: configuracionExtraPortal } : prev));
       setToast('Cambios guardados correctamente.');
     } else {
-      setToast(partnerUpdateError || error?.message || 'No se pudieron guardar todos los cambios.');
+      setToast(empresaSyncError?.message || partnerUpdateError || error?.message || 'No se pudieron guardar todos los cambios.');
     }
     setTimeout(() => setToast(null), 3000);
   };
