@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { Building2 } from 'lucide-react';
+import WhatsAppBubble from './WhatsAppBubble';
 
 interface PublicLayoutProps {
   children: React.ReactNode;
@@ -37,6 +38,7 @@ export default function PublicLayout({ children }: PublicLayoutProps) {
       </header>
 
       <main className="flex-1">{children}</main>
+      <WhatsAppBubble />
 
       {/* ───── Footer ───── */}
       <footer className="bg-slate-50 pt-12 pb-8 border-t border-slate-200">
