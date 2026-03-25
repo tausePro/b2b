@@ -3,7 +3,7 @@ import PublicLayout from '@/components/public/PublicLayout';
 import { getSeccion } from '@/lib/landing/getContenido';
 import { Mail, Phone, MapPin, Clock } from 'lucide-react';
 
-export const revalidate = 60;
+export const dynamic = 'force-dynamic';
 
 export async function generateMetadata(): Promise<Metadata> {
   const s = await getSeccion('pagina_contacto');

@@ -12,6 +12,10 @@ const manrope = Manrope({
 export const metadata: Metadata = {
   title: "Imprima B2B - Gestión de Pedidos Corporativos",
   description: "Plataforma de gestión de pedidos corporativos Imprima B2B",
+  icons: {
+    icon: '/icon.png',
+    apple: '/icon.png',
+  },
 };
 
 export default function RootLayout({
