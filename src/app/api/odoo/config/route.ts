@@ -1,5 +1,5 @@
 import { NextResponse, NextRequest } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { authorizeApiRoles } from '@/lib/auth/apiRouteGuards';
 import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
 
@@ -26,6 +26,11 @@ async function getSupabaseServer() {
 // GET: Obtener configuración Odoo global
 export async function GET() {
   try {
+    const authorized = await authorizeApiRoles(['super_admin', 'direccion']);
+    if (authorized instanceof NextResponse) {
+      return authorized;
+    }
+
     const supabase = await getSupabaseServer();
 
     const { data, error } = await supabase
@@ -50,6 +55,11 @@ export async function GET() {
 // POST: Guardar/actualizar configuración Odoo global
 export async function POST(request: NextRequest) {
   try {
+    const authorized = await authorizeApiRoles(['super_admin', 'direccion']);
+    if (authorized instanceof NextResponse) {
+      return authorized;
+    }
+
     const supabase = await getSupabaseServer();
     const body = await request.json();
 

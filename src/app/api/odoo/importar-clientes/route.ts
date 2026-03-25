@@ -2,6 +2,7 @@ import { NextResponse, NextRequest } from 'next/server';
 import { authenticate, searchCount, searchRead } from '@/lib/odoo/client';
 import { getServerOdooConfig } from '@/lib/odoo/serverConfig';
 import { syncOdooAsesor } from '@/lib/odoo/syncOdooAsesor';
+import { authorizeApiRoles } from '@/lib/auth/apiRouteGuards';
 import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
@@ -49,6 +50,11 @@ type OdooPartnerListRow = {
 // GET: Listar partners de Odoo disponibles para importar
 export async function GET(request: NextRequest) {
   try {
+    const authorized = await authorizeApiRoles(['super_admin', 'direccion']);
+    if (authorized instanceof NextResponse) {
+      return authorized;
+    }
+
     const includeContacts = request.nextUrl.searchParams.get('include_contacts') === 'true';
     const searchQuery = request.nextUrl.searchParams.get('q')?.trim() || '';
     const config = await getServerOdooConfig();
@@ -162,6 +168,11 @@ export async function GET(request: NextRequest) {
 // POST: Importar un partner de Odoo como empresa en Supabase
 export async function POST(request: NextRequest) {
   try {
+    const authorized = await authorizeApiRoles(['super_admin', 'direccion']);
+    if (authorized instanceof NextResponse) {
+      return authorized;
+    }
+
     const body = await request.json();
     const {
       modo_importacion = 'empresa',
