@@ -8,6 +8,29 @@ import {
   read,
 } from '@/lib/odoo/client';
 import { getServerOdooConfig } from '@/lib/odoo/serverConfig';
+import { authorizeApiRoles, getAccessibleOdooPartnerIds } from '@/lib/auth/apiRouteGuards';
+
+const AUTHENTICATED_PRODUCT_ROLES = ['super_admin', 'direccion', 'asesor', 'comprador', 'aprobador'] as const;
+const AUTHENTICATED_MAX_LIMIT = 500;
+const PUBLIC_MAX_LIMIT = 50;
+
+function normalizeLimit(rawValue: string | null, fallback: number, max: number) {
+  const parsed = Number.parseInt(rawValue || '', 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+
+  return Math.min(parsed, max);
+}
+
+function normalizeOffset(rawValue: string | null) {
+  const parsed = Number.parseInt(rawValue || '', 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return 0;
+  }
+
+  return parsed;
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -24,16 +47,21 @@ export async function GET(request: NextRequest) {
     const pricelistIdParam = searchParams.get('pricelist_id');
     const tagIds = searchParams.get('tag_ids');
     const categIds = searchParams.get('categ_ids');
-    const search = searchParams.get('search') || '';
+    const search = searchParams.get('search')?.trim() || '';
     const includeTagNames = searchParams.get('include_tag_names') === 'true';
-    const limit = parseInt(searchParams.get('limit') || '200', 10);
-    const offset = parseInt(searchParams.get('offset') || '0', 10);
     const parsedPartnerId = partnerId ? parseInt(partnerId, 10) : null;
     const parsedPricelistId = pricelistIdParam ? parseInt(pricelistIdParam, 10) : null;
     const parsedCategIds = (categIds || '')
       .split(',')
       .map((id) => parseInt(id.trim(), 10))
       .filter(Boolean);
+    const publicCatalogRequest =
+      !parsedPartnerId &&
+      !parsedPricelistId &&
+      !tagIds &&
+      parsedCategIds.length === 0 &&
+      !includeTagNames &&
+      search.length >= 3;
 
     if (partnerId && (!parsedPartnerId || Number.isNaN(parsedPartnerId))) {
       return NextResponse.json(
@@ -41,6 +69,45 @@ export async function GET(request: NextRequest) {
         { status: 400 }
       );
     }
+
+    if (!publicCatalogRequest) {
+      const authorized = await authorizeApiRoles(AUTHENTICATED_PRODUCT_ROLES);
+      if (authorized instanceof NextResponse) {
+        return authorized;
+      }
+
+      const actorRole = authorized.actor.rol as (typeof AUTHENTICATED_PRODUCT_ROLES)[number];
+
+      if (!parsedPartnerId && (actorRole === 'comprador' || actorRole === 'aprobador')) {
+        return NextResponse.json(
+          {
+            error: 'FORBIDDEN',
+            details: 'Debes consultar el catálogo con el partner asociado a tu empresa.',
+          },
+          { status: 403 }
+        );
+      }
+
+      if (parsedPartnerId) {
+        const accessiblePartnerIds = await getAccessibleOdooPartnerIds(authorized);
+        if (!accessiblePartnerIds.has(parsedPartnerId)) {
+          return NextResponse.json(
+            {
+              error: 'FORBIDDEN',
+              details: 'No tienes acceso al partner Odoo solicitado.',
+            },
+            { status: 403 }
+          );
+        }
+      }
+    }
+
+    const limit = normalizeLimit(
+      searchParams.get('limit'),
+      publicCatalogRequest ? PUBLIC_MAX_LIMIT : 200,
+      publicCatalogRequest ? PUBLIC_MAX_LIMIT : AUTHENTICATED_MAX_LIMIT
+    );
+    const offset = publicCatalogRequest ? 0 : normalizeOffset(searchParams.get('offset'));
 
     const session = await authenticate(config);
 
