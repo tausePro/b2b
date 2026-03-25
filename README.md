@@ -86,6 +86,34 @@ Mejoras implementadas en dashboard cliente:
 4. Validar blindaje RLS de items:
    - Con `restringir_catalogo_portal = true`, insertar item no autorizado debe fallar en `pedido_items`.
 
+## Hardening incremental de `/api/odoo/*`
+
+Se aplicó una primera fase de blindaje sobre la superficie HTTP de Odoo para reducir exposición pública sin romper los flujos actuales del portal y del admin.
+
+### Qué quedó protegido
+
+- `/api/odoo/pricelists`, `/api/odoo/importar-clientes`, `/api/odoo/test`, `/api/odoo/config`, `/api/odoo/clientes` y `/api/odoo/categorias` ahora requieren sesión válida y rol interno autorizado.
+- `/api/odoo/productos` mantiene soporte público solo para el catálogo abierto (`search` con límite acotado) y exige sesión para consultas contextualizadas por `partner_id`, `pricelist_id`, etiquetas o diagnóstico interno.
+- Las consultas autenticadas a `/api/odoo/productos` validan además que el `partner_id` solicitado pertenezca a la empresa del usuario o a su cartera autorizada.
+
+### Verificación local ejecutada
+
+Sobre `http://localhost:3001` se validó lo siguiente:
+
+- `/login` responde `200`.
+- `/dashboard` sin sesión redirige a `/login` (`307`).
+- `/api/odoo/productos?search=papel&limit=3` responde `200` como catálogo público.
+- `/api/odoo/pricelists` sin sesión responde `401`.
+- `/api/odoo/importar-clientes` sin sesión responde `401`.
+- `/api/odoo/productos?partner_id=15&limit=1` sin sesión responde `401`.
+
+### Riesgos residuales / siguiente fase
+
+- Sigue pendiente verificar manualmente los flujos autenticados por rol (`super_admin`, `direccion`, `asesor`, `comprador`, `aprobador`) con credenciales locales reales.
+- `src/app/admin/sincronizacion/page.tsx` todavía carga `odoo_configs` directo desde cliente; aunque RLS limita el acceso, la siguiente fase debería mover esa lectura sensible a backend y evitar exponer credenciales completas en UI.
+- Falta endurecer validación de secretos/SSRF de Odoo y revisar si conviene retirar `/api/odoo` de `publicPaths` una vez que las excepciones públicas queden totalmente encapsuladas.
+- Falta complementar este blindaje HTTP con endurecimiento de BD/RLS para cualquier nueva superficie administrativa que use `service role`.
+
 You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
 
 ## Deploy on Vercel

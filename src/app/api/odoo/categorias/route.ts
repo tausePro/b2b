@@ -6,9 +6,15 @@ import {
   getEtiquetasCliente,
 } from '@/lib/odoo/client';
 import { getServerOdooConfig } from '@/lib/odoo/serverConfig';
+import { authorizeApiRoles } from '@/lib/auth/apiRouteGuards';
 
 export async function GET() {
   try {
+    const authorized = await authorizeApiRoles(['super_admin', 'direccion']);
+    if (authorized instanceof NextResponse) {
+      return authorized;
+    }
+
     const config = await getServerOdooConfig();
     if (!config) {
       return NextResponse.json(

@@ -1,5 +1,6 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { testConnectionWithConfig, configFromParams } from '@/lib/odoo/client';
+import { authorizeApiRoles } from '@/lib/auth/apiRouteGuards';
 import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
 
@@ -26,6 +27,11 @@ async function getSupabaseServer() {
 // POST: Test con credenciales enviadas directamente (para probar antes de guardar)
 export async function POST(request: NextRequest) {
   try {
+    const authorized = await authorizeApiRoles(['super_admin', 'direccion']);
+    if (authorized instanceof NextResponse) {
+      return authorized;
+    }
+
     const body = await request.json();
     const { odoo_url, odoo_db, odoo_username, odoo_password } = body;
 
@@ -76,6 +82,11 @@ export async function POST(request: NextRequest) {
 // GET: Test usando config guardada en BD
 export async function GET() {
   try {
+    const authorized = await authorizeApiRoles(['super_admin', 'direccion']);
+    if (authorized instanceof NextResponse) {
+      return authorized;
+    }
+
     const supabase = await getSupabaseServer();
 
     const { data, error } = await supabase
