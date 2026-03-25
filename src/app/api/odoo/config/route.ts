@@ -1,26 +1,39 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { authorizeApiRoles } from '@/lib/auth/apiRouteGuards';
-import { cookies } from 'next/headers';
-import { createServerClient } from '@supabase/ssr';
+import { createServerSupabaseClient } from '@/lib/supabase/server';
 
-async function getSupabaseServer() {
-  const cookieStore = await cookies();
-  return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return cookieStore.getAll();
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) =>
-            cookieStore.set(name, value, options)
-          );
-        },
-      },
-    }
-  );
+type StoredOdooConfigRecord = {
+  id: string;
+  odoo_url: string | null;
+  odoo_db: string | null;
+  odoo_username: string | null;
+  odoo_password: string | null;
+  odoo_version: string | null;
+  ultimo_test_exitoso: boolean | null;
+  ultimo_test_fecha: string | null;
+  ultimo_test_mensaje: string | null;
+};
+
+function normalizeString(value: unknown) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function sanitizeConfig(record: StoredOdooConfigRecord | null) {
+  if (!record) {
+    return null;
+  }
+
+  return {
+    id: record.id,
+    odoo_url: record.odoo_url ?? '',
+    odoo_db: record.odoo_db ?? '',
+    odoo_username: record.odoo_username ?? '',
+    odoo_version: record.odoo_version ?? '18.0',
+    has_password: Boolean(record.odoo_password),
+    ultimo_test_exitoso: record.ultimo_test_exitoso,
+    ultimo_test_fecha: record.ultimo_test_fecha,
+    ultimo_test_mensaje: record.ultimo_test_mensaje,
+  };
 }
 
 // GET: Obtener configuración Odoo global
@@ -31,19 +44,19 @@ export async function GET() {
       return authorized;
     }
 
-    const supabase = await getSupabaseServer();
+    const supabase = await createServerSupabaseClient();
 
     const { data, error } = await supabase
       .from('odoo_configs')
-      .select('*')
+      .select('id, odoo_url, odoo_db, odoo_username, odoo_password, odoo_version, ultimo_test_exitoso, ultimo_test_fecha, ultimo_test_mensaje')
       .is('empresa_id', null)
-      .single();
+      .maybeSingle<StoredOdooConfigRecord>();
 
-    if (error && error.code !== 'PGRST116') {
+    if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    return NextResponse.json({ config: data || null });
+    return NextResponse.json({ config: sanitizeConfig(data ?? null) });
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : 'Error interno' },
@@ -60,43 +73,49 @@ export async function POST(request: NextRequest) {
       return authorized;
     }
 
-    const supabase = await getSupabaseServer();
+    const supabase = await createServerSupabaseClient();
     const body = await request.json();
 
-    const { odoo_url, odoo_db, odoo_username, odoo_password, odoo_version } = body;
+    const { data: existing, error: existingError } = await supabase
+      .from('odoo_configs')
+      .select('id, odoo_url, odoo_db, odoo_username, odoo_password, odoo_version, ultimo_test_exitoso, ultimo_test_fecha, ultimo_test_mensaje')
+      .is('empresa_id', null)
+      .maybeSingle<StoredOdooConfigRecord>();
 
-    if (!odoo_url || !odoo_db || !odoo_username || !odoo_password) {
+    if (existingError) {
+      return NextResponse.json({ error: existingError.message }, { status: 500 });
+    }
+
+    const odoo_url = normalizeString(body.odoo_url);
+    const odoo_db = normalizeString(body.odoo_db);
+    const odoo_username = normalizeString(body.odoo_username);
+    const submittedPassword = typeof body.odoo_password === 'string' ? body.odoo_password : '';
+    const odoo_version = normalizeString(body.odoo_version) || existing?.odoo_version || '18.0';
+    const effectivePassword = submittedPassword || existing?.odoo_password || '';
+
+    if (!odoo_url || !odoo_db || !odoo_username || !effectivePassword) {
       return NextResponse.json(
         { error: 'Todos los campos son requeridos: odoo_url, odoo_db, odoo_username, odoo_password' },
         { status: 400 }
       );
     }
 
-    // Verificar si ya existe config global
-    const { data: existing } = await supabase
-      .from('odoo_configs')
-      .select('id')
-      .is('empresa_id', null)
-      .single();
-
     let result;
 
     if (existing) {
-      // Actualizar
       result = await supabase
         .from('odoo_configs')
         .update({
           odoo_url,
           odoo_db,
           odoo_username,
-          odoo_password,
-          odoo_version: odoo_version || '18.0',
+          odoo_password: effectivePassword,
+          odoo_version,
         })
         .eq('id', existing.id)
-        .select()
+        .select('id, odoo_url, odoo_db, odoo_username, odoo_password, odoo_version, ultimo_test_exitoso, ultimo_test_fecha, ultimo_test_mensaje')
         .single();
     } else {
-      // Insertar
       result = await supabase
         .from('odoo_configs')
         .insert({
@@ -104,10 +123,10 @@ export async function POST(request: NextRequest) {
           odoo_url,
           odoo_db,
           odoo_username,
-          odoo_password,
-          odoo_version: odoo_version || '18.0',
+          odoo_password: effectivePassword,
+          odoo_version,
         })
-        .select()
+        .select('id, odoo_url, odoo_db, odoo_username, odoo_password, odoo_version, ultimo_test_exitoso, ultimo_test_fecha, ultimo_test_mensaje')
         .single();
     }
 
@@ -115,7 +134,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: result.error.message }, { status: 500 });
     }
 
-    return NextResponse.json({ config: result.data });
+    return NextResponse.json({ config: sanitizeConfig((result.data ?? null) as StoredOdooConfigRecord | null) });
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : 'Error interno' },

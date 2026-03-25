@@ -282,6 +282,76 @@ async function xmlRpcCall(
 // Config helpers
 // =============================================
 
+function isPrivateIpv4(hostname: string) {
+  const parts = hostname.split('.').map((segment) => Number.parseInt(segment, 10));
+  if (parts.length !== 4 || parts.some((value) => Number.isNaN(value) || value < 0 || value > 255)) {
+    return false;
+  }
+
+  return (
+    parts[0] === 10 ||
+    parts[0] === 127 ||
+    (parts[0] === 169 && parts[1] === 254) ||
+    (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
+    (parts[0] === 192 && parts[1] === 168)
+  );
+}
+
+function isPrivateHostname(hostname: string) {
+  const normalized = hostname.toLowerCase();
+  return (
+    normalized === 'localhost' ||
+    normalized === '0.0.0.0' ||
+    normalized === '::1' ||
+    normalized === '[::1]' ||
+    normalized.endsWith('.local') ||
+    isPrivateIpv4(normalized)
+  );
+}
+
+function getAllowedOdooHosts() {
+  return (process.env.ODOO_ALLOWED_HOSTS || '')
+    .split(',')
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function normalizeOdooUrl(rawUrl: string) {
+  let parsed: URL;
+
+  try {
+    parsed = new URL(rawUrl.trim());
+  } catch {
+    throw new Error('La URL de Odoo debe ser absoluta y válida.');
+  }
+
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    throw new Error('La URL de Odoo debe usar http o https.');
+  }
+
+  if (parsed.username || parsed.password) {
+    throw new Error('La URL de Odoo no puede incluir credenciales embebidas.');
+  }
+
+  if (parsed.search || parsed.hash) {
+    throw new Error('La URL de Odoo no puede incluir query params ni hash.');
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+  const allowedHosts = getAllowedOdooHosts();
+  if (allowedHosts.length > 0 && !allowedHosts.includes(hostname)) {
+    throw new Error('El host configurado para Odoo no está permitido por la política del servidor.');
+  }
+
+  const allowPrivateHosts = process.env.ODOO_ALLOW_PRIVATE_HOSTS === 'true' || process.env.NODE_ENV !== 'production';
+  if (!allowPrivateHosts && isPrivateHostname(hostname)) {
+    throw new Error('El host configurado para Odoo no está permitido por la política del servidor.');
+  }
+
+  const sanitizedPath = parsed.pathname.replace(/\/+$/, '');
+  return `${parsed.origin}${sanitizedPath === '/' ? '' : sanitizedPath}`;
+}
+
 export function getConfigFromEnv(): OdooConfig | null {
   const url = process.env.ODOO_URL;
   const db = process.env.ODOO_DB;
@@ -290,7 +360,7 @@ export function getConfigFromEnv(): OdooConfig | null {
   const apiKey = process.env.ODOO_API_KEY;
 
   if (!url || !db || !username || !password) return null;
-  return { url, db, username, password, apiKey };
+  return configFromParams({ url, db, username, password, apiKey });
 }
 
 export function configFromParams(params: {
@@ -300,7 +370,10 @@ export function configFromParams(params: {
   password: string;
   apiKey?: string;
 }): OdooConfig {
-  return { ...params };
+  return {
+    ...params,
+    url: normalizeOdooUrl(params.url),
+  };
 }
 
 function getConfig(): OdooConfig {

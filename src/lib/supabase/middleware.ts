@@ -25,7 +25,8 @@ export async function updateSession(request: NextRequest) {
     }
   );
 
-  const publicPaths = ['/login', '/auth/callback', '/api/odoo', '/api/auth', '/api/internal', '/api/landing', '/api/leads', '/catalogo', '/nosotros', '/contacto', '/faq', '/terminos', '/privacidad'];
+  const publicPaths = ['/login', '/auth/callback', '/api/auth', '/api/internal', '/api/landing', '/api/leads', '/catalogo', '/nosotros', '/contacto', '/faq', '/terminos', '/privacidad'];
+  const passthroughApiPrefixes = ['/api/odoo'];
   const landingPaths = ['/', '/servicios'];
   const pathname = request.nextUrl.pathname;
   const hostname = request.headers.get('host') || '';
@@ -39,12 +40,12 @@ export async function updateSession(request: NextRequest) {
   }
 
   const isPublicPath = publicPaths.some((path) => pathname.startsWith(path));
+  const isPassthroughApiPath = passthroughApiPrefixes.some((path) => pathname.startsWith(path));
   const isLandingPath = landingPaths.includes(pathname);
 
   try {
     const {
       data: { user },
-      error,
     } = await supabase.auth.getUser();
 
     // Usuario autenticado en landing o login → redirigir a dashboard
@@ -55,12 +56,12 @@ export async function updateSession(request: NextRequest) {
     }
 
     // Usuario NO autenticado en ruta protegida → redirigir a login
-    if (!user && !isPublicPath && !isLandingPath) {
+    if (!user && !isPublicPath && !isLandingPath && !isPassthroughApiPath) {
       const url = request.nextUrl.clone();
       url.pathname = '/login';
       return NextResponse.redirect(url);
     }
-  } catch (err) {
+  } catch {
     // Falla silenciosa para evitar trabar la app, el cliente maneja el fallback
     return supabaseResponse;
   }

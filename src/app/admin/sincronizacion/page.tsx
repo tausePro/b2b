@@ -1,12 +1,10 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { createClient } from '@/lib/supabase/client';
 import {
   CloudCog,
   Key,
   GitBranch,
-  RefreshCw,
   History,
   Check,
   AlertTriangle,
@@ -25,8 +23,6 @@ import {
   FileText,
 } from 'lucide-react';
 
-const supabase = createClient();
-
 interface TestResult {
   success: boolean;
   version?: { server_version?: string };
@@ -40,12 +36,25 @@ interface TestResult {
   error?: string;
 }
 
+interface OdooConfigSummary {
+  id: string;
+  odoo_url: string;
+  odoo_db: string;
+  odoo_username: string;
+  odoo_version: string;
+  has_password: boolean;
+  ultimo_test_exitoso: boolean | null;
+  ultimo_test_fecha: string | null;
+  ultimo_test_mensaje: string | null;
+}
+
 export default function SincronizacionOdooPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [configId, setConfigId] = useState<string | null>(null);
+  const [hasStoredPassword, setHasStoredPassword] = useState(false);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
   const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
@@ -67,29 +76,34 @@ export default function SincronizacionOdooPage() {
   useEffect(() => {
     const loadConfig = async () => {
       try {
-        const { data, error } = await supabase
-          .from('odoo_configs')
-          .select('*')
-          .is('empresa_id', null)
-          .single();
+        const response = await fetch('/api/odoo/config', {
+          cache: 'no-store',
+        });
+        const payload = await response.json();
+        const config = (payload.config ?? null) as OdooConfigSummary | null;
 
-        if (!error && data) {
-          setConfigId(data.id);
+        if (response.ok && config) {
+          setConfigId(config.id);
+          setHasStoredPassword(config.has_password);
           setForm({
-            odoo_url: data.odoo_url || '',
-            odoo_db: data.odoo_db || '',
-            odoo_username: data.odoo_username || '',
-            odoo_password: data.odoo_password || '',
-            odoo_version: data.odoo_version || '16.0',
+            odoo_url: config.odoo_url || '',
+            odoo_db: config.odoo_db || '',
+            odoo_username: config.odoo_username || '',
+            odoo_password: '',
+            odoo_version: config.odoo_version || '16.0',
           });
-          setLastTest({
-            exitoso: data.ultimo_test_exitoso,
-            fecha: data.ultimo_test_fecha,
-            mensaje: data.ultimo_test_mensaje,
-          });
+          setLastTest(
+            config.ultimo_test_exitoso !== null || config.ultimo_test_fecha || config.ultimo_test_mensaje
+              ? {
+                  exitoso: Boolean(config.ultimo_test_exitoso),
+                  fecha: config.ultimo_test_fecha,
+                  mensaje: config.ultimo_test_mensaje,
+                }
+              : null
+          );
         }
-      } catch (e) {
-        console.error('Error cargando config Odoo:', e);
+      } catch (error) {
+        console.error('Error cargando config Odoo:', error);
       }
       setLoading(false);
     };
@@ -103,7 +117,7 @@ export default function SincronizacionOdooPage() {
 
   // Guardar configuración
   const handleSave = async () => {
-    if (!form.odoo_url || !form.odoo_db || !form.odoo_username || !form.odoo_password) {
+    if (!form.odoo_url || !form.odoo_db || !form.odoo_username || (!form.odoo_password && !hasStoredPassword)) {
       showToast('error', 'Todos los campos son requeridos');
       return;
     }
@@ -121,9 +135,18 @@ export default function SincronizacionOdooPage() {
         showToast('error', data.error || 'Error al guardar');
       } else {
         setConfigId(data.config?.id || configId);
+        setHasStoredPassword(Boolean(data.config?.has_password));
+        setForm((current) => ({
+          ...current,
+          odoo_url: data.config?.odoo_url || current.odoo_url,
+          odoo_db: data.config?.odoo_db || current.odoo_db,
+          odoo_username: data.config?.odoo_username || current.odoo_username,
+          odoo_password: '',
+          odoo_version: data.config?.odoo_version || current.odoo_version,
+        }));
         showToast('success', 'Configuración guardada correctamente');
       }
-    } catch (e) {
+    } catch {
       showToast('error', 'Error de red al guardar');
     }
     setSaving(false);
@@ -131,7 +154,7 @@ export default function SincronizacionOdooPage() {
 
   // Test de conexión
   const handleTest = async () => {
-    if (!form.odoo_url || !form.odoo_db || !form.odoo_username || !form.odoo_password) {
+    if (!form.odoo_url || !form.odoo_db || !form.odoo_username || (!form.odoo_password && !hasStoredPassword)) {
       showToast('error', 'Completa todos los campos antes de probar');
       return;
     }
@@ -166,7 +189,7 @@ export default function SincronizacionOdooPage() {
         });
         showToast('error', data.error || 'Error de conexión');
       }
-    } catch (e) {
+    } catch {
       showToast('error', 'Error de red al probar conexión');
     }
     setTesting(false);
@@ -281,7 +304,7 @@ export default function SincronizacionOdooPage() {
                   <input
                     className="block w-full px-3 py-2.5 pr-10 text-sm border border-border rounded-lg bg-white text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary"
                     type={showPassword ? 'text' : 'password'}
-                    placeholder="Contraseña de acceso a la API"
+                    placeholder={hasStoredPassword ? 'Contraseña guardada. Déjala vacía para conservarla' : 'Contraseña de acceso a la API'}
                     value={form.odoo_password}
                     onChange={(e) => setForm({ ...form, odoo_password: e.target.value })}
                   />
@@ -293,6 +316,11 @@ export default function SincronizacionOdooPage() {
                     {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>
+                <p className="mt-2 text-xs text-slate-500">
+                  {hasStoredPassword
+                    ? 'Por seguridad, la contraseña guardada no se expone al navegador. Solo escribe una nueva si deseas reemplazarla.'
+                    : 'La contraseña solo se usa del lado servidor para autenticar contra Odoo.'}
+                </p>
               </div>
             </div>
 

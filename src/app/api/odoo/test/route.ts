@@ -1,27 +1,18 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { testConnectionWithConfig, configFromParams } from '@/lib/odoo/client';
 import { authorizeApiRoles } from '@/lib/auth/apiRouteGuards';
-import { cookies } from 'next/headers';
-import { createServerClient } from '@supabase/ssr';
+import { createServerSupabaseClient } from '@/lib/supabase/server';
 
-async function getSupabaseServer() {
-  const cookieStore = await cookies();
-  return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return cookieStore.getAll();
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) =>
-            cookieStore.set(name, value, options)
-          );
-        },
-      },
-    }
-  );
+type StoredOdooConfigRecord = {
+  id: string;
+  odoo_url: string | null;
+  odoo_db: string | null;
+  odoo_username: string | null;
+  odoo_password: string | null;
+};
+
+function normalizeString(value: unknown) {
+  return typeof value === 'string' ? value.trim() : '';
 }
 
 // POST: Test con credenciales enviadas directamente (para probar antes de guardar)
@@ -32,8 +23,20 @@ export async function POST(request: NextRequest) {
       return authorized;
     }
 
+    const supabase = await createServerSupabaseClient();
     const body = await request.json();
-    const { odoo_url, odoo_db, odoo_username, odoo_password } = body;
+    const { data: storedConfig } = await supabase
+      .from('odoo_configs')
+      .select('id, odoo_url, odoo_db, odoo_username, odoo_password')
+      .is('empresa_id', null)
+      .maybeSingle<StoredOdooConfigRecord>();
+
+    const odoo_url = normalizeString(body.odoo_url) || storedConfig?.odoo_url || '';
+    const odoo_db = normalizeString(body.odoo_db) || storedConfig?.odoo_db || '';
+    const odoo_username = normalizeString(body.odoo_username) || storedConfig?.odoo_username || '';
+    const odoo_password = typeof body.odoo_password === 'string' && body.odoo_password.length > 0
+      ? body.odoo_password
+      : storedConfig?.odoo_password || '';
 
     if (!odoo_url || !odoo_db || !odoo_username || !odoo_password) {
       return NextResponse.json(
@@ -52,9 +55,8 @@ export async function POST(request: NextRequest) {
     const result = await testConnectionWithConfig(cfg);
 
     // Si el test fue exitoso, actualizar estado en BD
-    if (result.success) {
+    if (result.success && storedConfig) {
       try {
-        const supabase = await getSupabaseServer();
         await supabase
           .from('odoo_configs')
           .update({
@@ -87,7 +89,7 @@ export async function GET() {
       return authorized;
     }
 
-    const supabase = await getSupabaseServer();
+    const supabase = await createServerSupabaseClient();
 
     const { data, error } = await supabase
       .from('odoo_configs')

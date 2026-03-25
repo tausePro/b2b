@@ -110,8 +110,8 @@ Sobre `http://localhost:3001` se validó lo siguiente:
 ### Riesgos residuales / siguiente fase
 
 - Sigue pendiente verificar manualmente los flujos autenticados por rol (`super_admin`, `direccion`, `asesor`, `comprador`, `aprobador`) con credenciales locales reales.
-- `src/app/admin/sincronizacion/page.tsx` todavía carga `odoo_configs` directo desde cliente; aunque RLS limita el acceso, la siguiente fase debería mover esa lectura sensible a backend y evitar exponer credenciales completas en UI.
-- Falta endurecer validación de secretos/SSRF de Odoo y revisar si conviene retirar `/api/odoo` de `publicPaths` una vez que las excepciones públicas queden totalmente encapsuladas.
+- `src/app/admin/sincronizacion/page.tsx` ya consume `/api/odoo/config` y `/api/odoo/test` con payload saneado; la contraseña almacenada queda server-only. Sigue pendiente auditar que cualquier futura pantalla administrativa reutilice este patrón y no vuelva a leer `odoo_configs` desde cliente.
+- Ya existe una validación base de URL/host para Odoo en servidor y `/api/odoo` dejó de estar abierto de forma amplia en `publicPaths`; la siguiente fase es endurecer la política operativa (`ODOO_ALLOWED_HOSTS`, monitoreo y pruebas de borde) y revisar si conviene segmentar aún más las excepciones públicas por endpoint.
 - Falta complementar este blindaje HTTP con endurecimiento de BD/RLS para cualquier nueva superficie administrativa que use `service role`.
 
 You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
