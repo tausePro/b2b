@@ -249,22 +249,22 @@ export default function CatalogoPage() {
             return (
               <div
                 key={producto.id}
-                className="bg-white rounded-xl border border-border hover:border-primary/30 hover:shadow-sm transition-all overflow-hidden"
+                className="bg-white rounded-xl border border-border hover:border-primary/30 hover:shadow-sm transition-all overflow-hidden flex flex-col"
               >
                 {/* Imagen o placeholder */}
-                <div className="w-full h-36 bg-background-light flex items-center justify-center">
+                <div className="w-full h-44 bg-background-light flex items-center justify-center p-4">
                   {producto.image_128 ? (
                     <img
                       src={`data:image/png;base64,${producto.image_128}`}
                       alt={producto.name}
-                      className="h-full w-full object-contain p-2"
+                      className="max-h-full max-w-full object-contain"
                     />
                   ) : (
                     <Package className="w-10 h-10 text-border" />
                   )}
                 </div>
 
-                <div className="p-4">
+                <div className="p-4 flex flex-col flex-1">
                   {categoriaLabel && (
                     <span className="text-xs font-medium text-primary bg-primary/10 px-2 py-0.5 rounded-full">
                       {categoriaLabel}
@@ -286,7 +286,7 @@ export default function CatalogoPage() {
                     </p>
                   )}
 
-                  <div className="mt-3 pt-3 border-t border-border">
+                  <div className="mt-auto pt-3 border-t border-border">
                     {cantidadEnCarrito > 0 ? (
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
