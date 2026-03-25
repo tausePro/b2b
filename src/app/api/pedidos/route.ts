@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
+import { authenticate, createSaleOrderQuotation, read } from '@/lib/odoo/client';
+import { getServerOdooConfig } from '@/lib/odoo/serverConfig';
 import { safeEnqueuePedidoNotifications } from '@/lib/notifications/pedidos';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 
@@ -101,7 +103,7 @@ export async function POST(request: NextRequest) {
     const admin = getSupabaseAdmin();
     const { data: empresa, error: empresaError } = await admin
       .from('empresas')
-      .select('id, nombre, requiere_aprobacion, usa_sedes')
+      .select('id, nombre, requiere_aprobacion, usa_sedes, odoo_partner_id, odoo_comercial_id')
       .eq('id', perfil.empresa_id)
       .single();
 
@@ -113,6 +115,7 @@ export async function POST(request: NextRequest) {
     }
 
     let sedeId: string | null = null;
+    let sedeData: { id: string; nombre_sede: string; direccion: string | null; ciudad: string | null; odoo_address_id: number | null } | null = null;
     if (empresa.usa_sedes) {
       if (!perfil.sede_id) {
         return NextResponse.json(
@@ -123,7 +126,7 @@ export async function POST(request: NextRequest) {
 
       const { data: sede, error: sedeError } = await admin
         .from('sedes')
-        .select('id')
+        .select('id, nombre_sede, direccion, ciudad, odoo_address_id')
         .eq('id', perfil.sede_id)
         .eq('empresa_id', perfil.empresa_id)
         .maybeSingle();
@@ -136,6 +139,7 @@ export async function POST(request: NextRequest) {
       }
 
       sedeId = perfil.sede_id;
+      sedeData = sede;
     }
 
     const totalItems = items.reduce((sum, item) => sum + item.cantidad, 0);
@@ -202,15 +206,105 @@ export async function POST(request: NextRequest) {
       pedidoId: pedido.id,
     });
 
-    const warning = [logError?.message, notificationResult.error].filter(Boolean).join(' | ') || null;
+    let odooSyncResult: { odoo_sale_order_id: number | null; odoo_warning: string | null } = {
+      odoo_sale_order_id: null,
+      odoo_warning: null,
+    };
+
+    // Si es auto-aprobado y la empresa tiene odoo_partner_id, enviar a Odoo
+    if (!flujoEsAprobacion && empresa.odoo_partner_id) {
+      try {
+        const odooConfig = await getServerOdooConfig();
+        if (!odooConfig) {
+          odooSyncResult.odoo_warning = 'No hay configuración de Odoo disponible.';
+        } else {
+          const session = await authenticate(odooConfig);
+          const partnerRows = await read(
+            'res.partner',
+            [Number(empresa.odoo_partner_id)],
+            ['id', 'property_product_pricelist'],
+            session
+          );
+          const partner = partnerRows[0];
+          const partnerPricelist = Array.isArray(partner?.property_product_pricelist)
+            ? Number(partner.property_product_pricelist[0])
+            : null;
+
+          const noteLines = [
+            `Pedido B2B ${pedido.numero}`,
+            sedeData?.nombre_sede ? `Sede: ${sedeData.nombre_sede}` : null,
+            sedeData?.direccion ? `Dirección: ${sedeData.direccion}` : null,
+            sedeData?.ciudad ? `Ciudad: ${sedeData.ciudad}` : null,
+            body.comentarios_sede?.trim() ? `Comentarios: ${body.comentarios_sede.trim()}` : null,
+          ].filter(Boolean).join('\n');
+
+          const quotation = await createSaleOrderQuotation(session, {
+            partnerId: Number(empresa.odoo_partner_id),
+            invoicePartnerId: Number(empresa.odoo_partner_id),
+            shippingPartnerId: sedeData?.odoo_address_id ? Number(sedeData.odoo_address_id) : Number(empresa.odoo_partner_id),
+            pricelistId: partnerPricelist,
+            salespersonId: empresa.odoo_comercial_id ? Number(empresa.odoo_comercial_id) : null,
+            clientReference: pedido.numero,
+            origin: pedido.numero,
+            dateOrder: new Date().toISOString(),
+            note: noteLines || null,
+            lines: items.map((item) => ({
+              productTemplateId: Number(item.odoo_product_id),
+              name: item.nombre_producto.trim(),
+              quantity: Number(item.cantidad),
+              priceUnit: Number(item.precio_unitario_cop),
+            })),
+          });
+
+          odooSyncResult.odoo_sale_order_id = quotation.id;
+
+          await admin
+            .from('pedidos')
+            .update({
+              estado: 'procesado_odoo',
+              odoo_sale_order_id: quotation.id,
+            })
+            .eq('id', pedido.id);
+
+          await admin.from('logs_trazabilidad').insert({
+            pedido_id: pedido.id,
+            accion: 'aprobacion',
+            descripcion: quotation.existing
+              ? `Pedido auto-aprobado, cotización existente en Odoo (${quotation.name || quotation.id}).`
+              : `Pedido auto-aprobado y cotización creada en Odoo (${quotation.name || quotation.id}).`,
+            usuario_id: perfil.id,
+            usuario_nombre: nombreUsuario,
+            metadata: {
+              odoo_sale_order_id: quotation.id,
+              odoo_sale_order_name: quotation.name,
+              odoo_state: quotation.state,
+              existing: quotation.existing,
+              auto_aprobado: true,
+            },
+          });
+
+          await safeEnqueuePedidoNotifications({
+            actorUserId: perfil.id,
+            event: 'pedido_procesado_odoo',
+            pedidoId: pedido.id,
+          });
+        }
+      } catch (odooError) {
+        odooSyncResult.odoo_warning = odooError instanceof Error ? odooError.message : 'Error al sincronizar con Odoo';
+        console.error('[Pedido Auto-Aprobado] Error Odoo:', odooError);
+      }
+    }
+
+    const warning = [logError?.message, notificationResult.error, odooSyncResult.odoo_warning].filter(Boolean).join(' | ') || null;
 
     return NextResponse.json({
       ok: true,
       pedido: {
         id: pedido.id,
         numero: pedido.numero,
-        estado: pedido.estado,
+        estado: odooSyncResult.odoo_sale_order_id ? 'procesado_odoo' : pedido.estado,
         fecha_aprobacion: pedido.fecha_aprobacion,
+        odoo_sale_order_id: odooSyncResult.odoo_sale_order_id,
       },
       notifications: notificationResult.result,
       warning,
