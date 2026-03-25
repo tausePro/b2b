@@ -33,6 +33,7 @@ interface Empresa {
   odoo_comercial_nombre: string | null;
   activa: boolean;
   usa_sedes: boolean;
+  requiere_aprobacion: boolean;
   slug: string | null;
   created_at: string;
 }
@@ -42,7 +43,6 @@ interface EmpresaConfig {
   empresa_id: string;
   color_primario: string | null;
   logo_url: string | null;
-  requiere_aprobacion: boolean;
   monto_aprobacion: number | null;
   control_presupuesto: boolean;
   odoo_partner_id: string | null;
@@ -740,7 +740,6 @@ export default function EmpresaConfigPage() {
       .update({
         color_primario: config.color_primario,
         logo_url: config.logo_url,
-        requiere_aprobacion: config.requiere_aprobacion,
         monto_aprobacion: config.monto_aprobacion,
         control_presupuesto: config.control_presupuesto,
         odoo_partner_id: config.odoo_partner_id,
@@ -750,10 +749,10 @@ export default function EmpresaConfigPage() {
       })
       .eq('empresa_id', empresaId);
 
-    // Sincronizar requiere_aprobacion a tabla empresas (el trigger de pedidos lee de ahí)
+    // Guardar requiere_aprobacion directamente en empresas (el trigger de pedidos lee de ahí)
     const { error: empresaSyncError } = await supabase
       .from('empresas')
-      .update({ requiere_aprobacion: config.requiere_aprobacion })
+      .update({ requiere_aprobacion: empresa?.requiere_aprobacion ?? true })
       .eq('id', empresaId);
 
     let partnerUpdateError: string | null = null;
@@ -1193,7 +1192,7 @@ export default function EmpresaConfigPage() {
                 <div className="flex-1">
                   <h3 className="text-base font-semibold text-slate-900">Requerir Aprobación de Gerente</h3>
                   <p className="text-sm text-slate-500 mt-1">Los pedidos superiores a cierto monto requerirán aprobación manual.</p>
-                  {config?.requiere_aprobacion && (
+                  {empresa?.requiere_aprobacion && (
                     <div className="mt-4 flex items-center gap-3">
                       <span className="text-sm font-medium text-slate-600">Monto mínimo: $</span>
                       <input
@@ -1209,8 +1208,8 @@ export default function EmpresaConfigPage() {
                   <input
                     type="checkbox"
                     className="sr-only peer"
-                    checked={config?.requiere_aprobacion || false}
-                    onChange={(e) => config && setConfig({ ...config, requiere_aprobacion: e.target.checked })}
+                    checked={empresa?.requiere_aprobacion || false}
+                    onChange={(e) => empresa && setEmpresa({ ...empresa, requiere_aprobacion: e.target.checked })}
                   />
                   <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary/50 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary" />
                 </label>
