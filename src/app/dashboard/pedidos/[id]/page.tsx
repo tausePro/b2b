@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { createClient } from '@/lib/supabase/client';
-import { formatCOP, formatDateTime, getEstadoColor, getEstadoLabel } from '@/lib/utils';
+import { formatCOP, formatDateTime } from '@/lib/utils';
 import StatusBadge from '@/components/ui/StatusBadge';
 import {
   ArrowLeft,
@@ -50,11 +50,15 @@ interface PedidoDetalle {
 
 interface ItemDetalle {
   id: string;
-  odoo_product_id: number;
+  tipo_item: 'catalogo' | 'especial';
+  odoo_product_id: number | null;
   nombre_producto: string;
   cantidad: number;
   precio_unitario_cop: number;
   subtotal_cop: number;
+  unidad?: string | null;
+  referencia_cliente?: string | null;
+  comentarios_item?: string | null;
 }
 
 interface LogEntry {
@@ -67,10 +71,22 @@ interface LogEntry {
 
 interface NewItemLocal {
   tempId: string;
-  odoo_product_id: number;
+  tipo_item: 'catalogo' | 'especial';
+  odoo_product_id: number | null;
   nombre_producto: string;
   cantidad: number;
   precio_unitario_cop: number;
+  unidad?: string | null;
+  referencia_cliente?: string | null;
+  comentarios_item?: string | null;
+}
+
+interface SpecialDraftState {
+  nombre_producto: string;
+  cantidad: number;
+  unidad: string;
+  referencia_cliente: string;
+  comentarios_item: string;
 }
 
 interface OdooProductSearch {
@@ -90,6 +106,14 @@ interface OdooSaleOrderSummary {
   amountTotal: number;
   currencyName: string | null;
 }
+
+const INITIAL_SPECIAL_DRAFT: SpecialDraftState = {
+  nombre_producto: '',
+  cantidad: 1,
+  unidad: 'und',
+  referencia_cliente: '',
+  comentarios_item: '',
+};
 
 export default function DetallePedidoPage() {
   const { user, showPrices } = useAuth();
@@ -111,16 +135,14 @@ export default function DetallePedidoPage() {
   const [deleting, setDeleting] = useState(false);
   const [newItems, setNewItems] = useState<NewItemLocal[]>([]);
   const [showProductSearch, setShowProductSearch] = useState(false);
+  const [showSpecialForm, setShowSpecialForm] = useState(false);
   const [searchProducts, setSearchProducts] = useState<OdooProductSearch[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loadingProducts, setLoadingProducts] = useState(false);
-  const supabase = createClient();
+  const [specialDraft, setSpecialDraft] = useState<SpecialDraftState>(INITIAL_SPECIAL_DRAFT);
+  const [supabase] = useState(() => createClient());
 
-  useEffect(() => {
-    fetchPedido();
-  }, [pedidoId]);
-
-  const fetchOdooSummary = async (targetPedidoId: string) => {
+  const fetchOdooSummary = useCallback(async (targetPedidoId: string) => {
     setLoadingOdooSummary(true);
 
     try {
@@ -138,9 +160,9 @@ export default function DetallePedidoPage() {
     } finally {
       setLoadingOdooSummary(false);
     }
-  };
+  }, []);
 
-  const fetchPedido = async () => {
+  const fetchPedido = useCallback(async () => {
     setLoading(true);
 
     const [pedidoRes, itemsRes, logsRes] = await Promise.all([
@@ -158,7 +180,7 @@ export default function DetallePedidoPage() {
         .single(),
       supabase
         .from('pedido_items')
-        .select('id, odoo_product_id, nombre_producto, cantidad, precio_unitario_cop, subtotal_cop')
+        .select('id, tipo_item, odoo_product_id, nombre_producto, cantidad, precio_unitario_cop, subtotal_cop, unidad, referencia_cliente, comentarios_item')
         .eq('pedido_id', pedidoId)
         .order('created_at'),
       supabase
@@ -187,7 +209,11 @@ export default function DetallePedidoPage() {
     if (logsRes.data) setLogs(logsRes.data as LogEntry[]);
 
     setLoading(false);
-  };
+  }, [fetchOdooSummary, pedidoId, supabase]);
+
+  useEffect(() => {
+    fetchPedido();
+  }, [fetchPedido]);
 
   const handleAction = async (accion: 'aprobar' | 'rechazar' | 'validar') => {
     if (!user || !pedido) return;
@@ -268,6 +294,10 @@ export default function DetallePedidoPage() {
     }
   };
 
+  const resetSpecialDraft = () => {
+    setSpecialDraft({ ...INITIAL_SPECIAL_DRAFT });
+  };
+
   const handleAddNewItem = (product: OdooProductSearch) => {
     // Verificar que no esté ya en items existentes o nuevos
     const alreadyExists = items.some((i) => i.odoo_product_id === product.id) ||
@@ -278,12 +308,46 @@ export default function DetallePedidoPage() {
       ...prev,
       {
         tempId: `new-${Date.now()}-${product.id}`,
+        tipo_item: 'catalogo',
         odoo_product_id: product.id,
         nombre_producto: product.name,
         cantidad: 1,
         precio_unitario_cop: product.list_price,
+        unidad: null,
+        referencia_cliente: null,
+        comentarios_item: null,
       },
     ]);
+  };
+
+  const handleAddSpecialItem = () => {
+    if (!specialDraft.nombre_producto.trim()) {
+      alert('Describe el producto especial que deseas agregar.');
+      return;
+    }
+
+    if (!Number.isFinite(specialDraft.cantidad) || specialDraft.cantidad <= 0) {
+      alert('La cantidad del producto especial debe ser mayor a cero.');
+      return;
+    }
+
+    setNewItems((prev) => [
+      ...prev,
+      {
+        tempId: globalThis.crypto?.randomUUID?.() ?? `new-special-${Date.now()}`,
+        tipo_item: 'especial',
+        odoo_product_id: null,
+        nombre_producto: specialDraft.nombre_producto.trim(),
+        cantidad: specialDraft.cantidad,
+        precio_unitario_cop: 0,
+        unidad: specialDraft.unidad.trim() || null,
+        referencia_cliente: specialDraft.referencia_cliente.trim() || null,
+        comentarios_item: specialDraft.comentarios_item.trim() || null,
+      },
+    ]);
+
+    resetSpecialDraft();
+    setShowSpecialForm(false);
   };
 
   const enterEditMode = () => {
@@ -302,7 +366,9 @@ export default function DetallePedidoPage() {
     setEditComment('');
     setNewItems([]);
     setShowProductSearch(false);
+    setShowSpecialForm(false);
     setSearchQuery('');
+    resetSpecialDraft();
   };
 
   const handleSaveEdit = async () => {
@@ -322,16 +388,20 @@ export default function DetallePedidoPage() {
 
       const activeItems = Object.values(editedItems).filter((e) => !e.eliminar);
       if (activeItems.length === 0 && newItems.length === 0) {
-        alert('El pedido debe tener al menos un producto.');
+        alert('El pedido debe tener al menos un ítem.');
         setSavingEdit(false);
         return;
       }
 
       const newItemsPayload = newItems.map((ni) => ({
+        tipo_item: ni.tipo_item,
         odoo_product_id: ni.odoo_product_id,
         nombre_producto: ni.nombre_producto,
         cantidad: ni.cantidad,
         precio_unitario_cop: ni.precio_unitario_cop,
+        unidad: ni.unidad || null,
+        referencia_cliente: ni.referencia_cliente || null,
+        comentarios_item: ni.comentarios_item || null,
       }));
 
       const body: Record<string, unknown> = { items: changedItems };
@@ -361,7 +431,9 @@ export default function DetallePedidoPage() {
       setEditedItems({});
       setNewItems([]);
       setShowProductSearch(false);
+      setShowSpecialForm(false);
       setSearchQuery('');
+      resetSpecialDraft();
       await fetchPedido();
     } catch (error) {
       alert(error instanceof Error ? error.message : 'No se pudo guardar los cambios.');
@@ -406,6 +478,31 @@ export default function DetallePedidoPage() {
   const canValidate = user?.rol === 'asesor' && pedido.estado === 'aprobado' && !pedido.odoo_sale_order_id;
   const estadoVisual = pedido.estado;
   const subtotalVisual = odooSummary?.amountUntaxed ?? pedido.valor_total_cop;
+  const subtotalEdicionVisual = editMode
+    ? items.reduce((sum, item) => {
+        const editState = editedItems[item.id];
+
+        if (editState?.eliminar) {
+          return sum;
+        }
+
+        const cantidad = editState?.cantidad ?? item.cantidad;
+        return sum + (item.tipo_item === 'catalogo' ? cantidad * item.precio_unitario_cop : 0);
+      }, 0) + newItems.reduce((sum, item) => {
+        return sum + (item.tipo_item === 'catalogo' ? item.cantidad * item.precio_unitario_cop : 0);
+      }, 0)
+    : subtotalVisual;
+  const totalItemsVisual = editMode
+    ? items.reduce((sum, item) => {
+        const editState = editedItems[item.id];
+
+        if (editState?.eliminar) {
+          return sum;
+        }
+
+        return sum + (editState?.cantidad ?? item.cantidad);
+      }, 0) + newItems.reduce((sum, item) => sum + item.cantidad, 0)
+    : pedido.total_items;
 
   return (
     <div className="space-y-6">
@@ -509,7 +606,7 @@ export default function DetallePedidoPage() {
           <div className="bg-white rounded-xl border border-border overflow-hidden">
             <div className="px-5 py-4 border-b border-border">
               <h2 className="font-semibold text-foreground">Productos del Pedido</h2>
-              <p className="text-xs text-muted mt-0.5">{pedido.total_items} items</p>
+              <p className="text-xs text-muted mt-0.5">{totalItemsVisual} items</p>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -538,11 +635,20 @@ export default function DetallePedidoPage() {
                       <tr key={item.id} className={`border-b border-border/50 ${isMarkedForDeletion ? 'opacity-30 line-through' : ''}`}>
                         <td className="py-3 px-4">
                           <p className="font-medium text-foreground">{item.nombre_producto}</p>
-                          <p className="text-xs text-muted">Odoo ID: {item.odoo_product_id}</p>
+                          {item.tipo_item === 'catalogo' && item.odoo_product_id ? (
+                            <p className="text-xs text-muted">Odoo ID: {item.odoo_product_id}</p>
+                          ) : (
+                            <div className="mt-1 space-y-0.5">
+                              <p className="text-xs font-medium text-amber-700">Producto especial</p>
+                              {item.unidad && <p className="text-xs text-muted">Unidad: {item.unidad}</p>}
+                              {item.referencia_cliente && <p className="text-xs text-muted">Referencia cliente: {item.referencia_cliente}</p>}
+                              {item.comentarios_item && <p className="text-xs text-muted">Comentarios: {item.comentarios_item}</p>}
+                            </div>
+                          )}
                         </td>
                         <td className="py-3 px-4">
-                          <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full">
-                            Producto
+                          <span className={`text-xs px-2 py-0.5 rounded-full ${item.tipo_item === 'especial' ? 'bg-amber-100 text-amber-700' : 'bg-primary/10 text-primary'}`}>
+                            {item.tipo_item === 'especial' ? 'Especial' : 'Producto'}
                           </span>
                         </td>
                         <td className="py-3 px-4 text-center font-medium">
@@ -568,8 +674,12 @@ export default function DetallePedidoPage() {
                         </td>
                         {showPrices && (
                           <>
-                            <td className="py-3 px-4 text-right text-muted">{formatCOP(item.precio_unitario_cop)}</td>
-                            <td className="py-3 px-4 text-right font-semibold">{formatCOP(editMode ? currentSubtotal : item.subtotal_cop)}</td>
+                            <td className="py-3 px-4 text-right text-muted">
+                              {item.tipo_item === 'especial' ? 'Por cotizar' : formatCOP(item.precio_unitario_cop)}
+                            </td>
+                            <td className="py-3 px-4 text-right font-semibold">
+                              {item.tipo_item === 'especial' ? 'Por cotizar' : formatCOP(editMode ? currentSubtotal : item.subtotal_cop)}
+                            </td>
                           </>
                         )}
                         {editMode && (
@@ -596,18 +706,29 @@ export default function DetallePedidoPage() {
                     );
                   })}
                   {editMode && newItems.map((ni) => (
-                    <tr key={ni.tempId} className="border-b border-border/50 bg-green-50/50">
+                    <tr key={ni.tempId} className={`border-b border-border/50 ${ni.tipo_item === 'especial' ? 'bg-amber-50/60' : 'bg-green-50/50'}`}>
                       <td className="py-3 px-4">
                         <div className="flex items-center gap-2">
                           <span className="text-[10px] bg-green-600 text-white px-1.5 py-0.5 rounded font-semibold uppercase">Nuevo</span>
                           <div>
                             <p className="font-medium text-foreground">{ni.nombre_producto}</p>
-                            <p className="text-xs text-muted">Odoo ID: {ni.odoo_product_id}</p>
+                            {ni.tipo_item === 'catalogo' && ni.odoo_product_id ? (
+                              <p className="text-xs text-muted">Odoo ID: {ni.odoo_product_id}</p>
+                            ) : (
+                              <div className="mt-1 space-y-0.5">
+                                <p className="text-xs font-medium text-amber-700">Producto especial</p>
+                                {ni.unidad && <p className="text-xs text-muted">Unidad: {ni.unidad}</p>}
+                                {ni.referencia_cliente && <p className="text-xs text-muted">Referencia cliente: {ni.referencia_cliente}</p>}
+                                {ni.comentarios_item && <p className="text-xs text-muted">Comentarios: {ni.comentarios_item}</p>}
+                              </div>
+                            )}
                           </div>
                         </div>
                       </td>
                       <td className="py-3 px-4">
-                        <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full">Producto</span>
+                        <span className={`text-xs px-2 py-0.5 rounded-full ${ni.tipo_item === 'especial' ? 'bg-amber-100 text-amber-700' : 'bg-primary/10 text-primary'}`}>
+                          {ni.tipo_item === 'especial' ? 'Especial' : 'Producto'}
+                        </span>
                       </td>
                       <td className="py-3 px-4 text-center">
                         <input
@@ -627,8 +748,12 @@ export default function DetallePedidoPage() {
                       </td>
                       {showPrices && (
                         <>
-                          <td className="py-3 px-4 text-right text-muted">{formatCOP(ni.precio_unitario_cop)}</td>
-                          <td className="py-3 px-4 text-right font-semibold">{formatCOP(ni.cantidad * ni.precio_unitario_cop)}</td>
+                          <td className="py-3 px-4 text-right text-muted">
+                            {ni.tipo_item === 'especial' ? 'Por cotizar' : formatCOP(ni.precio_unitario_cop)}
+                          </td>
+                          <td className="py-3 px-4 text-right font-semibold">
+                            {ni.tipo_item === 'especial' ? 'Por cotizar' : formatCOP(ni.cantidad * ni.precio_unitario_cop)}
+                          </td>
                         </>
                       )}
                       <td className="py-3 px-4 text-center">
@@ -648,29 +773,45 @@ export default function DetallePedidoPage() {
                     <tr className="bg-background-light/50">
                       <td colSpan={3} />
                       <td className="py-3 px-4 text-right font-semibold text-muted">Subtotal</td>
-                      <td className="py-3 px-4 text-right font-bold text-lg text-primary">{formatCOP(pedido.valor_total_cop)}</td>
+                      <td className="py-3 px-4 text-right font-bold text-lg text-primary">{formatCOP(subtotalEdicionVisual)}</td>
                     </tr>
                   </tfoot>
                 )}
               </table>
             </div>
             {editMode && (
-              <div className="border-t border-border px-5 py-4">
-                {!showProductSearch ? (
+              <div className="border-t border-border px-5 py-4 space-y-4">
+                <div className="flex flex-wrap gap-2">
                   <button
                     onClick={() => {
-                      setShowProductSearch(true);
-                      if (searchProducts.length === 0) fetchProductosParaAgregar();
+                      const nextValue = !showProductSearch;
+                      setShowProductSearch(nextValue);
+                      if (nextValue && searchProducts.length === 0) {
+                        fetchProductosParaAgregar();
+                      }
                     }}
-                    className="inline-flex items-center gap-2 px-4 py-2 border border-dashed border-primary/40 text-primary rounded-lg text-sm font-medium hover:bg-primary/5 transition-colors"
+                    className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${showProductSearch ? 'border border-primary bg-primary/5 text-primary' : 'border border-dashed border-primary/40 text-primary hover:bg-primary/5'}`}
                   >
                     <Plus className="w-4 h-4" />
-                    Agregar Producto
+                    {showProductSearch ? 'Ocultar catálogo' : 'Agregar producto de catálogo'}
                   </button>
-                ) : (
+                  <button
+                    onClick={() => {
+                      if (showSpecialForm) {
+                        resetSpecialDraft();
+                      }
+                      setShowSpecialForm((prev) => !prev);
+                    }}
+                    className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${showSpecialForm ? 'border border-amber-300 bg-amber-50 text-amber-800' : 'border border-dashed border-amber-300 text-amber-800 hover:bg-amber-50/70'}`}
+                  >
+                    <Plus className="w-4 h-4" />
+                    {showSpecialForm ? 'Ocultar producto especial' : 'Agregar producto especial'}
+                  </button>
+                </div>
+                {showProductSearch && (
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
-                      <h3 className="text-sm font-semibold text-foreground">Agregar productos al pedido</h3>
+                      <h3 className="text-sm font-semibold text-foreground">Agregar productos del catálogo al pedido</h3>
                       <button
                         onClick={() => { setShowProductSearch(false); setSearchQuery(''); }}
                         className="text-xs text-muted hover:text-foreground"
@@ -731,6 +872,88 @@ export default function DetallePedidoPage() {
                         )}
                       </div>
                     )}
+                  </div>
+                )}
+                {showSpecialForm && (
+                  <div className="grid grid-cols-1 gap-4 rounded-lg border border-amber-200 bg-amber-50/40 p-4 md:grid-cols-2">
+                    <div className="md:col-span-2">
+                      <label className="block text-sm font-medium text-foreground mb-1.5">
+                        Descripción del producto especial
+                      </label>
+                      <textarea
+                        value={specialDraft.nombre_producto}
+                        onChange={(e) => setSpecialDraft((prev) => ({ ...prev, nombre_producto: e.target.value }))}
+                        rows={3}
+                        placeholder="Describe la referencia, material, marca, presentación o condición requerida"
+                        className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/10 resize-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-foreground mb-1.5">
+                        Cantidad
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        value={specialDraft.cantidad}
+                        onChange={(e) => setSpecialDraft((prev) => ({ ...prev, cantidad: Number(e.target.value) || 0 }))}
+                        className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/10"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-foreground mb-1.5">
+                        Unidad
+                      </label>
+                      <input
+                        type="text"
+                        value={specialDraft.unidad}
+                        onChange={(e) => setSpecialDraft((prev) => ({ ...prev, unidad: e.target.value }))}
+                        placeholder="und, caja, paquete..."
+                        className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/10"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-foreground mb-1.5">
+                        Referencia del cliente
+                      </label>
+                      <input
+                        type="text"
+                        value={specialDraft.referencia_cliente}
+                        onChange={(e) => setSpecialDraft((prev) => ({ ...prev, referencia_cliente: e.target.value }))}
+                        placeholder="Código interno o referencia"
+                        className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/10"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-foreground mb-1.5">
+                        Comentarios
+                      </label>
+                      <input
+                        type="text"
+                        value={specialDraft.comentarios_item}
+                        onChange={(e) => setSpecialDraft((prev) => ({ ...prev, comentarios_item: e.target.value }))}
+                        placeholder="Urgencia, color, empaque o detalle adicional"
+                        className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/10"
+                      />
+                    </div>
+                    <div className="md:col-span-2 flex items-center justify-end gap-3">
+                      <button
+                        onClick={() => {
+                          resetSpecialDraft();
+                          setShowSpecialForm(false);
+                        }}
+                        className="px-4 py-2 text-sm font-medium text-muted hover:text-foreground transition-colors"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        onClick={handleAddSpecialItem}
+                        className="inline-flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-amber-600"
+                      >
+                        <Plus className="w-4 h-4" />
+                        Agregar especial
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -859,7 +1082,7 @@ export default function DetallePedidoPage() {
               <div className="space-y-2">
                 <div className="flex justify-between text-sm">
                   <span className="text-muted">Subtotal</span>
-                  <span className="font-medium">{formatCOP(subtotalVisual)}</span>
+                  <span className="font-medium">{formatCOP(subtotalEdicionVisual)}</span>
                 </div>
               </div>
               {loadingOdooSummary ? (

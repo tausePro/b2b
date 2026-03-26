@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
+import { normalizeTipoPedidoItem } from '@/lib/pedidoItems';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
+import type { TipoPedidoItem } from '@/types';
 
 type PerfilActual = {
   id: string;
@@ -110,10 +112,14 @@ type PatchItemInput = {
 };
 
 type NewItemInput = {
-  odoo_product_id: number;
+  tipo_item: TipoPedidoItem;
+  odoo_product_id: number | null;
   nombre_producto: string;
   cantidad: number;
   precio_unitario_cop: number;
+  unidad?: string | null;
+  referencia_cliente?: string | null;
+  comentarios_item?: string | null;
 };
 
 type PatchPedidoRequest = {
@@ -121,6 +127,48 @@ type PatchPedidoRequest = {
   newItems?: NewItemInput[];
   comentarios_aprobador?: string | null;
 };
+
+function normalizeNewItemInput(item: Partial<NewItemInput>): NewItemInput {
+  const tipo_item = normalizeTipoPedidoItem(item.tipo_item);
+  const rawOdooProductId = item.odoo_product_id;
+  const odoo_product_id = tipo_item === 'catalogo' && rawOdooProductId !== null && rawOdooProductId !== undefined
+    ? Number(rawOdooProductId)
+    : null;
+
+  return {
+    tipo_item,
+    odoo_product_id,
+    nombre_producto: typeof item.nombre_producto === 'string' ? item.nombre_producto.trim() : '',
+    cantidad: Number(item.cantidad),
+    precio_unitario_cop: Number(item.precio_unitario_cop ?? 0),
+    unidad: typeof item.unidad === 'string' ? item.unidad.trim() || null : null,
+    referencia_cliente: typeof item.referencia_cliente === 'string' ? item.referencia_cliente.trim() || null : null,
+    comentarios_item: typeof item.comentarios_item === 'string' ? item.comentarios_item.trim() || null : null,
+  };
+}
+
+function isValidNewItem(item: NewItemInput) {
+  if (item.tipo_item === 'especial') {
+    return (
+      Number.isFinite(item.cantidad) &&
+      Number.isFinite(item.precio_unitario_cop) &&
+      item.odoo_product_id === null &&
+      item.cantidad > 0 &&
+      item.precio_unitario_cop >= 0 &&
+      Boolean(item.nombre_producto.trim())
+    );
+  }
+
+  return (
+    Number.isFinite(item.odoo_product_id) &&
+    Number.isFinite(item.cantidad) &&
+    Number.isFinite(item.precio_unitario_cop) &&
+    (item.odoo_product_id ?? 0) > 0 &&
+    item.cantidad > 0 &&
+    item.precio_unitario_cop >= 0 &&
+    Boolean(item.nombre_producto.trim())
+  );
+}
 
 export async function PATCH(
   request: NextRequest,
@@ -192,9 +240,17 @@ export async function PATCH(
 
     const body = (await request.json()) as PatchPedidoRequest;
     const itemChanges = Array.isArray(body.items) ? body.items : [];
-    const newItems = Array.isArray(body.newItems) ? body.newItems.filter(
-      (ni) => ni.odoo_product_id && ni.nombre_producto && ni.cantidad > 0 && ni.precio_unitario_cop >= 0
-    ) : [];
+    const normalizedNewItems = Array.isArray(body.newItems)
+      ? body.newItems.map((item) => normalizeNewItemInput(item))
+      : [];
+    const newItems = normalizedNewItems.filter(isValidNewItem);
+
+    if (Array.isArray(body.newItems) && normalizedNewItems.length !== newItems.length) {
+      return NextResponse.json(
+        { error: 'INVALID_NEW_ITEMS', details: 'Uno o más items nuevos son inválidos.' },
+        { status: 422 }
+      );
+    }
 
     if (itemChanges.length === 0 && newItems.length === 0 && body.comentarios_aprobador === undefined) {
       return NextResponse.json(
@@ -244,10 +300,14 @@ export async function PATCH(
     if (newItems.length > 0) {
       const insertPayload = newItems.map((ni) => ({
         pedido_id: pedidoId,
+        tipo_item: ni.tipo_item,
         odoo_product_id: ni.odoo_product_id,
         nombre_producto: ni.nombre_producto,
         cantidad: ni.cantidad,
         precio_unitario_cop: ni.precio_unitario_cop,
+        unidad: ni.unidad,
+        referencia_cliente: ni.referencia_cliente,
+        comentarios_item: ni.comentarios_item,
       }));
 
       const { error: insertError } = await admin
@@ -277,7 +337,7 @@ export async function PATCH(
 
     if (!remainingItems || remainingItems.length === 0) {
       return NextResponse.json(
-        { error: 'EMPTY_ORDER', details: 'No se pueden eliminar todos los items. El pedido debe tener al menos un producto.' },
+        { error: 'EMPTY_ORDER', details: 'No se pueden eliminar todos los items. El pedido debe tener al menos un ítem.' },
         { status: 422 }
       );
     }
