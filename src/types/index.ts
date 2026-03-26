@@ -151,14 +151,20 @@ export type EstadoPedido =
   | 'en_validacion_imprima'
   | 'procesado_odoo';
 
+export type TipoPedidoItem = 'catalogo' | 'especial';
+
 export interface PedidoItem {
   id: string;
   pedido_id: string;
-  odoo_product_id: number;
+  tipo_item: TipoPedidoItem;
+  odoo_product_id: number | null;
   nombre_producto: string;
   cantidad: number;
   precio_unitario_cop: number;
   subtotal_cop: number; // Calculado: cantidad * precio_unitario_cop
+  unidad?: string | null;
+  referencia_cliente?: string | null;
+  comentarios_item?: string | null;
 }
 
 export interface Pedido {

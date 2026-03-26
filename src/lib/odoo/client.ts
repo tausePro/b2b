@@ -539,7 +539,7 @@ export async function createSaleOrderQuotation(
     note?: string | null;
   }
 ): Promise<OdooSaleOrderResult> {
-  if (!params.lines.length) {
+  if (!params.lines.length && !params.note?.trim()) {
     throw new Error('No hay líneas para crear la cotización en Odoo.');
   }
 
@@ -564,25 +564,27 @@ export async function createSaleOrderQuotation(
   }
 
   const templateIds = Array.from(new Set(params.lines.map((line) => line.productTemplateId)));
-  const productVariants = await searchRead(
-    'product.product',
-    [['product_tmpl_id', 'in', templateIds]],
-    ['id', 'product_tmpl_id'],
-    { session }
-  );
-
   const variantByTemplateId = new Map<number, number>();
-  for (const variant of productVariants) {
-    if (!Array.isArray(variant.product_tmpl_id)) continue;
-    const templateId = Number(variant.product_tmpl_id[0]);
-    if (!variantByTemplateId.has(templateId)) {
-      variantByTemplateId.set(templateId, Number(variant.id));
-    }
-  }
+  if (templateIds.length > 0) {
+    const productVariants = await searchRead(
+      'product.product',
+      [['product_tmpl_id', 'in', templateIds]],
+      ['id', 'product_tmpl_id'],
+      { session }
+    );
 
-  const missingTemplateIds = templateIds.filter((templateId) => !variantByTemplateId.has(templateId));
-  if (missingTemplateIds.length > 0) {
-    throw new Error(`No se encontraron variantes Odoo para product.template: ${missingTemplateIds.join(', ')}`);
+    for (const variant of productVariants) {
+      if (!Array.isArray(variant.product_tmpl_id)) continue;
+      const templateId = Number(variant.product_tmpl_id[0]);
+      if (!variantByTemplateId.has(templateId)) {
+        variantByTemplateId.set(templateId, Number(variant.id));
+      }
+    }
+
+    const missingTemplateIds = templateIds.filter((templateId) => !variantByTemplateId.has(templateId));
+    if (missingTemplateIds.length > 0) {
+      throw new Error(`No se encontraron variantes Odoo para product.template: ${missingTemplateIds.join(', ')}`);
+    }
   }
 
   const orderLineCommands = params.lines.map((line) => {
@@ -612,8 +614,11 @@ export async function createSaleOrderQuotation(
     client_order_ref: params.clientReference,
     origin: params.origin ?? params.clientReference,
     date_order: formatOdooDatetime(params.dateOrder ?? new Date()),
-    order_line: orderLineCommands,
   };
+
+  if (orderLineCommands.length > 0) {
+    orderValues.order_line = orderLineCommands;
+  }
 
   if (params.pricelistId) {
     orderValues.pricelist_id = params.pricelistId;

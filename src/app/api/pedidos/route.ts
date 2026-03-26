@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { authenticate, createSaleOrderQuotation, read } from '@/lib/odoo/client';
+import { mergePedidoNoteWithSpecialItems, normalizeTipoPedidoItem, partitionPedidoItems } from '@/lib/pedidoItems';
 import { getServerOdooConfig } from '@/lib/odoo/serverConfig';
 import { safeEnqueuePedidoNotifications } from '@/lib/notifications/pedidos';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
+import type { TipoPedidoItem } from '@/types';
 
 type PerfilActual = {
   id: string;
@@ -15,10 +17,14 @@ type PerfilActual = {
 };
 
 type CreatePedidoItemInput = {
-  odoo_product_id: number;
+  tipo_item: TipoPedidoItem;
+  odoo_product_id: number | null;
   nombre_producto: string;
   cantidad: number;
   precio_unitario_cop: number;
+  unidad?: string | null;
+  referencia_cliente?: string | null;
+  comentarios_item?: string | null;
 };
 
 type CreatePedidoRequest = {
@@ -34,15 +40,45 @@ function getSupabaseAdmin() {
 }
 
 function isValidItem(item: CreatePedidoItemInput) {
+  if (item.tipo_item === 'especial') {
+    return (
+      Number.isFinite(item.cantidad) &&
+      Number.isFinite(item.precio_unitario_cop) &&
+      item.odoo_product_id === null &&
+      item.cantidad > 0 &&
+      item.precio_unitario_cop >= 0 &&
+      Boolean(item.nombre_producto?.trim())
+    );
+  }
+
   return (
     Number.isFinite(item.odoo_product_id) &&
     Number.isFinite(item.cantidad) &&
     Number.isFinite(item.precio_unitario_cop) &&
-    item.odoo_product_id > 0 &&
+    (item.odoo_product_id ?? 0) > 0 &&
     item.cantidad > 0 &&
     item.precio_unitario_cop >= 0 &&
     Boolean(item.nombre_producto?.trim())
   );
+}
+
+function normalizeCreatePedidoItemInput(item: Partial<CreatePedidoItemInput>): CreatePedidoItemInput {
+  const tipo_item = normalizeTipoPedidoItem(item.tipo_item);
+  const rawOdooProductId = item.odoo_product_id;
+  const odoo_product_id = tipo_item === 'catalogo' && rawOdooProductId !== null && rawOdooProductId !== undefined
+    ? Number(rawOdooProductId)
+    : null;
+
+  return {
+    tipo_item,
+    odoo_product_id,
+    nombre_producto: typeof item.nombre_producto === 'string' ? item.nombre_producto.trim() : '',
+    cantidad: Number(item.cantidad),
+    precio_unitario_cop: Number(item.precio_unitario_cop ?? 0),
+    unidad: typeof item.unidad === 'string' ? item.unidad.trim() || null : null,
+    referencia_cliente: typeof item.referencia_cliente === 'string' ? item.referencia_cliente.trim() || null : null,
+    comentarios_item: typeof item.comentarios_item === 'string' ? item.comentarios_item.trim() || null : null,
+  };
 }
 
 export async function POST(request: NextRequest) {
@@ -84,7 +120,9 @@ export async function POST(request: NextRequest) {
     }
 
     const body = (await request.json()) as CreatePedidoRequest;
-    const items = Array.isArray(body.items) ? body.items : [];
+    const items = Array.isArray(body.items)
+      ? body.items.map((item) => normalizeCreatePedidoItemInput(item))
+      : [];
 
     if (items.length === 0) {
       return NextResponse.json(
@@ -168,9 +206,13 @@ export async function POST(request: NextRequest) {
     const itemsData = items.map((item) => ({
       pedido_id: pedido.id,
       odoo_product_id: item.odoo_product_id,
+      tipo_item: item.tipo_item,
       nombre_producto: item.nombre_producto.trim(),
       cantidad: item.cantidad,
       precio_unitario_cop: item.precio_unitario_cop,
+      unidad: item.unidad,
+      referencia_cliente: item.referencia_cliente,
+      comentarios_item: item.comentarios_item,
     }));
 
     const { error: itemsError } = await admin.from('pedido_items').insert(itemsData);
@@ -206,7 +248,7 @@ export async function POST(request: NextRequest) {
       pedidoId: pedido.id,
     });
 
-    let odooSyncResult: { odoo_sale_order_id: number | null; odoo_warning: string | null } = {
+    const odooSyncResult: { odoo_sale_order_id: number | null; odoo_warning: string | null } = {
       odoo_sale_order_id: null,
       odoo_warning: null,
     };
@@ -238,6 +280,8 @@ export async function POST(request: NextRequest) {
             body.comentarios_sede?.trim() ? `Comentarios: ${body.comentarios_sede.trim()}` : null,
           ].filter(Boolean).join('\n');
 
+          const { catalogItems, specialItems } = partitionPedidoItems(items);
+
           const quotation = await createSaleOrderQuotation(session, {
             partnerId: Number(empresa.odoo_partner_id),
             invoicePartnerId: Number(empresa.odoo_partner_id),
@@ -247,8 +291,8 @@ export async function POST(request: NextRequest) {
             clientReference: pedido.numero,
             origin: pedido.numero,
             dateOrder: new Date().toISOString(),
-            note: noteLines || null,
-            lines: items.map((item) => ({
+            note: mergePedidoNoteWithSpecialItems(noteLines || null, specialItems),
+            lines: catalogItems.map((item) => ({
               productTemplateId: Number(item.odoo_product_id),
               name: item.nombre_producto.trim(),
               quantity: Number(item.cantidad),

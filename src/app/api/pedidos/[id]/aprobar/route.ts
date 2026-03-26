@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { authenticate, createSaleOrderQuotation, read } from '@/lib/odoo/client';
+import { mergePedidoNoteWithSpecialItems, partitionPedidoItems } from '@/lib/pedidoItems';
 import { getServerOdooConfig } from '@/lib/odoo/serverConfig';
 import { safeEnqueuePedidoNotifications } from '@/lib/notifications/pedidos';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
+import type { TipoPedidoItem } from '@/types';
 
 function getSupabaseAdmin() {
   return createSupabaseClient(
@@ -53,10 +55,14 @@ type PedidoDetalle = {
 
 type PedidoItem = {
   id: string;
+  tipo_item: TipoPedidoItem;
   odoo_product_id: number | null;
   nombre_producto: string;
   cantidad: number;
   precio_unitario_cop: number;
+  unidad?: string | null;
+  referencia_cliente?: string | null;
+  comentarios_item?: string | null;
 };
 
 function buildQuotationNote(pedido: PedidoDetalle): string | null {
@@ -194,7 +200,7 @@ export async function POST(
 
     const { data: itemsData, error: itemsError } = await admin
       .from('pedido_items')
-      .select('id, odoo_product_id, nombre_producto, cantidad, precio_unitario_cop')
+      .select('id, tipo_item, odoo_product_id, nombre_producto, cantidad, precio_unitario_cop, unidad, referencia_cliente, comentarios_item')
       .eq('pedido_id', pedidoId)
       .order('created_at');
 
@@ -219,7 +225,9 @@ export async function POST(
       );
     }
 
-    const invalidItems = items.filter((item) => {
+    const { catalogItems, specialItems } = partitionPedidoItems(items);
+
+    const invalidItems = catalogItems.filter((item) => {
       const templateId = Number(item.odoo_product_id);
       return !Number.isFinite(templateId) || templateId <= 0;
     });
@@ -267,8 +275,8 @@ export async function POST(
       clientReference: pedido.numero,
       origin: pedido.numero,
       dateOrder: pedido.fecha_creacion,
-      note: buildQuotationNote(pedido),
-      lines: items.map((item) => ({
+      note: mergePedidoNoteWithSpecialItems(buildQuotationNote(pedido), specialItems),
+      lines: catalogItems.map((item) => ({
         productTemplateId: Number(item.odoo_product_id),
         name: item.nombre_producto,
         quantity: Number(item.cantidad),
