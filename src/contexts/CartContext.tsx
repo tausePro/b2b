@@ -1,54 +1,126 @@
 'use client';
 
 import { createContext, useContext, useState, useCallback } from 'react';
-import type { ProductoOdoo } from '@/types';
+import type { ProductoOdoo, TipoPedidoItem } from '@/types';
 
 export interface CartItem {
-  producto: ProductoOdoo;
+  id: string;
+  tipo_item: TipoPedidoItem;
+  odoo_product_id: number | null;
+  nombre_producto: string;
+  precio_unitario_cop: number;
+  unidad?: string | null;
+  categoria?: string;
+  disponible?: boolean;
+  imagen_url?: string;
+  referencia?: string | null;
+  referencia_cliente?: string | null;
+  comentarios_item?: string | null;
   cantidad: number;
+}
+
+export interface SpecialCartItemInput {
+  nombre_producto: string;
+  cantidad: number;
+  unidad?: string | null;
+  referencia_cliente?: string | null;
+  comentarios_item?: string | null;
 }
 
 interface CartContextType {
   items: CartItem[];
   totalItems: number;
   addItem: (producto: ProductoOdoo, cantidad?: number) => void;
-  removeItem: (odooProductId: number) => void;
-  updateQuantity: (odooProductId: number, cantidad: number) => void;
+  addSpecialItem: (item: SpecialCartItemInput) => void;
+  removeItem: (itemIdOrOdooProductId: string | number) => void;
+  updateQuantity: (itemIdOrOdooProductId: string | number, cantidad: number) => void;
   clearCart: () => void;
   getItemQuantity: (odooProductId: number) => number;
 }
 
 const CartContext = createContext<CartContextType | undefined>(undefined);
 
+function createCatalogItemId(odooProductId: number) {
+  return `catalogo:${odooProductId}`;
+}
+
+function createSpecialItemId() {
+  return globalThis.crypto?.randomUUID?.() ?? `especial-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function matchesCartItem(item: CartItem, itemIdOrOdooProductId: string | number) {
+  if (typeof itemIdOrOdooProductId === 'string') {
+    return item.id === itemIdOrOdooProductId;
+  }
+
+  return item.tipo_item === 'catalogo' && item.odoo_product_id === itemIdOrOdooProductId;
+}
+
 export function CartProvider({ children }: { children: React.ReactNode }) {
   const [items, setItems] = useState<CartItem[]>([]);
 
   const addItem = useCallback((producto: ProductoOdoo, cantidad: number = 1) => {
+    const itemId = createCatalogItemId(producto.odoo_product_id);
+
     setItems((prev) => {
-      const existing = prev.find((item) => item.producto.odoo_product_id === producto.odoo_product_id);
+      const existing = prev.find((item) => item.id === itemId);
       if (existing) {
         return prev.map((item) =>
-          item.producto.odoo_product_id === producto.odoo_product_id
+          item.id === itemId
             ? { ...item, cantidad: item.cantidad + cantidad }
             : item
         );
       }
-      return [...prev, { producto, cantidad }];
+
+      return [
+        ...prev,
+        {
+          id: itemId,
+          tipo_item: 'catalogo',
+          odoo_product_id: producto.odoo_product_id,
+          nombre_producto: producto.nombre,
+          precio_unitario_cop: producto.precio_unitario,
+          unidad: producto.unidad,
+          categoria: producto.categoria,
+          disponible: producto.disponible,
+          imagen_url: producto.imagen_url,
+          referencia: producto.referencia ?? null,
+          cantidad,
+        },
+      ];
     });
   }, []);
 
-  const removeItem = useCallback((odooProductId: number) => {
-    setItems((prev) => prev.filter((item) => item.producto.odoo_product_id !== odooProductId));
+  const addSpecialItem = useCallback((item: SpecialCartItemInput) => {
+    setItems((prev) => [
+      ...prev,
+      {
+        id: createSpecialItemId(),
+        tipo_item: 'especial',
+        odoo_product_id: null,
+        nombre_producto: item.nombre_producto.trim(),
+        precio_unitario_cop: 0,
+        unidad: item.unidad?.trim() || null,
+        referencia_cliente: item.referencia_cliente?.trim() || null,
+        comentarios_item: item.comentarios_item?.trim() || null,
+        cantidad: item.cantidad,
+      },
+    ]);
   }, []);
 
-  const updateQuantity = useCallback((odooProductId: number, cantidad: number) => {
+  const removeItem = useCallback((itemIdOrOdooProductId: string | number) => {
+    setItems((prev) => prev.filter((item) => !matchesCartItem(item, itemIdOrOdooProductId)));
+  }, []);
+
+  const updateQuantity = useCallback((itemIdOrOdooProductId: string | number, cantidad: number) => {
     if (cantidad <= 0) {
-      setItems((prev) => prev.filter((item) => item.producto.odoo_product_id !== odooProductId));
+      setItems((prev) => prev.filter((item) => !matchesCartItem(item, itemIdOrOdooProductId)));
       return;
     }
+
     setItems((prev) =>
       prev.map((item) =>
-        item.producto.odoo_product_id === odooProductId ? { ...item, cantidad } : item
+        matchesCartItem(item, itemIdOrOdooProductId) ? { ...item, cantidad } : item
       )
     );
   }, []);
@@ -59,7 +131,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
   const getItemQuantity = useCallback(
     (odooProductId: number) => {
-      return items.find((item) => item.producto.odoo_product_id === odooProductId)?.cantidad ?? 0;
+      return items.find((item) => item.tipo_item === 'catalogo' && item.odoo_product_id === odooProductId)?.cantidad ?? 0;
     },
     [items]
   );
@@ -72,6 +144,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         items,
         totalItems,
         addItem,
+        addSpecialItem,
         removeItem,
         updateQuantity,
         clearCart,
