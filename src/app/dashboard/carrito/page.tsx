@@ -113,6 +113,7 @@ export default function CarritoPage() {
           items: items.map((item) => ({
             tipo_item: item.tipo_item,
             odoo_product_id: item.odoo_product_id,
+            odoo_variant_id: item.odoo_variant_id || null,
             nombre_producto: item.nombre_producto,
             cantidad: item.cantidad,
             precio_unitario_cop: item.precio_unitario_cop,
@@ -214,6 +215,9 @@ export default function CarritoPage() {
                       <p className="text-xs text-amber-700 font-medium">Producto especial</p>
                     )}
                     <h3 className="text-sm font-semibold text-foreground">{item.nombre_producto}</h3>
+                    {item.variante_label && (
+                      <p className="text-xs text-primary font-medium mt-0.5">{item.variante_label}</p>
+                    )}
                     {item.tipo_item === 'catalogo' && showPrices && (
                       <p className="text-sm text-muted mt-0.5">
                         {formatCOP(item.precio_unitario_cop)} / {item.unidad || 'und'}

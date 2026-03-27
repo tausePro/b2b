@@ -48,7 +48,7 @@ export default function Header({ onToggleSidebar, portalBranding }: HeaderProps)
       if (!active) return;
 
       if (error) {
-        console.error('Error cargando contador de notificaciones:', error);
+        console.warn('Error cargando contador de notificaciones:', error);
         setUnreadCount(0);
         return;
       }

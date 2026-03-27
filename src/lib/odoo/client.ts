@@ -460,6 +460,44 @@ export interface OdooProduct {
   sale_ok: boolean;
   image_128: string | false;
   default_code: string | false;
+  product_variant_count?: number;
+  attribute_line_ids?: number[];
+}
+
+export interface OdooProductVariant {
+  id: number;
+  name: string;
+  product_tmpl_id: [number, string];
+  default_code: string | false;
+  image_128: string | false;
+  lst_price: number;
+  product_template_attribute_value_ids: number[];
+  active: boolean;
+}
+
+export interface OdooAttributeValue {
+  id: number;
+  name: string;
+  attribute_id: [number, string];
+  html_color: string | false;
+  is_custom: boolean;
+}
+
+export interface OdooAttributeLine {
+  id: number;
+  attribute_id: [number, string];
+  value_ids: number[];
+  product_template_value_ids: number[];
+}
+
+export interface OdooTemplateAttributeValue {
+  id: number;
+  name: string;
+  attribute_id: [number, string];
+  product_attribute_value_id: [number, string];
+  html_color: string | false;
+  price_extra: number;
+  ptav_active: boolean;
 }
 
 export interface OdooProductTag {
@@ -491,6 +529,7 @@ export interface OdooPricelistItem {
 
 export interface OdooSaleOrderLineInput {
   productTemplateId: number;
+  productId?: number;
   name: string;
   quantity: number;
   priceUnit: number;
@@ -563,9 +602,20 @@ export async function createSaleOrderQuotation(
     };
   }
 
-  const templateIds = Array.from(new Set(params.lines.map((line) => line.productTemplateId)));
+  // Separar líneas con variante explícita vs las que necesitan lookup
+  const linesWithVariant = params.lines.filter((l) => l.productId);
+  const linesWithoutVariant = params.lines.filter((l) => !l.productId);
+
   const variantByTemplateId = new Map<number, number>();
-  if (templateIds.length > 0) {
+
+  // Para líneas con variante explícita, mapear directamente
+  for (const line of linesWithVariant) {
+    variantByTemplateId.set(line.productTemplateId, line.productId!);
+  }
+
+  // Para líneas sin variante, buscar la variante por defecto del template
+  if (linesWithoutVariant.length > 0) {
+    const templateIds = Array.from(new Set(linesWithoutVariant.map((line) => line.productTemplateId)));
     const productVariants = await searchRead(
       'product.product',
       [['product_tmpl_id', 'in', templateIds]],
@@ -588,7 +638,7 @@ export async function createSaleOrderQuotation(
   }
 
   const orderLineCommands = params.lines.map((line) => {
-    const variantId = variantByTemplateId.get(line.productTemplateId);
+    const variantId = line.productId || variantByTemplateId.get(line.productTemplateId);
     if (!variantId) {
       throw new Error(`No se encontró product.product para el template ${line.productTemplateId}.`);
     }
@@ -686,6 +736,84 @@ export async function getClientes(
   return result as unknown as OdooPartner[];
 }
 
+const PRODUCT_TEMPLATE_FIELDS = [
+  'id', 'name', 'description_sale', 'list_price', 'uom_name', 'categ_id',
+  'product_tag_ids', 'active', 'sale_ok', 'image_128', 'default_code',
+  'product_variant_count', 'attribute_line_ids',
+];
+
+export interface ProductVariantsResult {
+  variants: OdooProductVariant[];
+  attributes: {
+    id: number;
+    name: string;
+    values: {
+      id: number;
+      ptavId: number;
+      name: string;
+      htmlColor: string | false;
+      priceExtra: number;
+    }[];
+  }[];
+}
+
+export async function getProductVariants(
+  session: OdooSession,
+  templateId: number
+): Promise<ProductVariantsResult> {
+  // 1. Obtener las líneas de atributo del template
+  const attrLines = await searchRead(
+    'product.template.attribute.line',
+    [['product_tmpl_id', '=', templateId]],
+    ['id', 'attribute_id', 'value_ids', 'product_template_value_ids'],
+    { session }
+  ) as unknown as OdooAttributeLine[];
+
+  // 2. Obtener los product.template.attribute.value (tienen precio extra y html_color)
+  const allPtavIds = attrLines.flatMap((line) => line.product_template_value_ids || []);
+  let ptavs: OdooTemplateAttributeValue[] = [];
+  if (allPtavIds.length > 0) {
+    ptavs = await read(
+      'product.template.attribute.value',
+      allPtavIds,
+      ['id', 'name', 'attribute_id', 'product_attribute_value_id', 'html_color', 'price_extra', 'ptav_active'],
+      session
+    ) as unknown as OdooTemplateAttributeValue[];
+  }
+
+  // 3. Construir estructura de atributos
+  const ptavMap = new Map(ptavs.filter((p) => p.ptav_active !== false).map((p) => [p.id, p]));
+  const attributes = attrLines.map((line) => {
+    const attrId = Array.isArray(line.attribute_id) ? line.attribute_id[0] : 0;
+    const attrName = Array.isArray(line.attribute_id) ? line.attribute_id[1] : '';
+    const values = (line.product_template_value_ids || [])
+      .map((ptavId) => {
+        const ptav = ptavMap.get(ptavId);
+        if (!ptav) return null;
+        return {
+          id: Array.isArray(ptav.product_attribute_value_id) ? ptav.product_attribute_value_id[0] : ptav.id,
+          ptavId: ptav.id,
+          name: ptav.name,
+          htmlColor: ptav.html_color,
+          priceExtra: ptav.price_extra || 0,
+        };
+      })
+      .filter(Boolean) as ProductVariantsResult['attributes'][number]['values'];
+
+    return { id: attrId, name: attrName, values };
+  }).filter((a) => a.values.length > 0);
+
+  // 4. Obtener variantes (product.product)
+  const variants = await searchRead(
+    'product.product',
+    [['product_tmpl_id', '=', templateId], ['active', '=', true]],
+    ['id', 'name', 'product_tmpl_id', 'default_code', 'image_128', 'lst_price', 'product_template_attribute_value_ids', 'active'],
+    { order: 'name asc', session }
+  ) as unknown as OdooProductVariant[];
+
+  return { variants, attributes };
+}
+
 export async function getProductos(
   session: OdooSession,
   options: { tagIds?: number[]; categIds?: number[]; limit?: number; offset?: number; search?: string } = {}
@@ -705,7 +833,7 @@ export async function getProductos(
   const result = await searchRead(
     'product.template',
     domain,
-    ['id', 'name', 'description_sale', 'list_price', 'uom_name', 'categ_id', 'product_tag_ids', 'active', 'sale_ok', 'image_128', 'default_code'],
+    PRODUCT_TEMPLATE_FIELDS,
     { limit: options.limit ?? 200, offset: options.offset ?? 0, order: 'name asc', session }
   );
   return result as unknown as OdooProduct[];
@@ -809,7 +937,6 @@ export async function getProductosByPricelist(
     }
   }
 
-  const productFields = ['id', 'name', 'description_sale', 'list_price', 'uom_name', 'categ_id', 'product_tag_ids', 'active', 'sale_ok', 'image_128', 'default_code'];
   let productos: OdooProduct[] = [];
 
   if (globalRule) {
@@ -839,7 +966,7 @@ export async function getProductosByPricelist(
       const explicitProducts = await searchRead(
         'product.template',
         explicitDomain,
-        productFields,
+        PRODUCT_TEMPLATE_FIELDS,
         { order: 'name asc', session }
       );
       chunks.push(explicitProducts as unknown as OdooProduct[]);
@@ -860,7 +987,7 @@ export async function getProductosByPricelist(
         const categoryProducts = await searchRead(
           'product.template',
           catDomain,
-          productFields,
+          PRODUCT_TEMPLATE_FIELDS,
           { order: 'name asc', session }
         );
         chunks.push(categoryProducts as unknown as OdooProduct[]);
