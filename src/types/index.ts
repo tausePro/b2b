@@ -3,7 +3,7 @@
 // Esquema Multitenant con aislamiento por empresa_id
 // ============================================
 
-export type UserRole = 'super_admin' | 'comprador' | 'aprobador' | 'asesor' | 'direccion';
+export type UserRole = 'super_admin' | 'comprador' | 'aprobador' | 'asesor' | 'direccion' | 'editor_contenido';
 
 export interface User {
   id: string;
@@ -363,6 +363,17 @@ export const ROLE_CONFIG: Record<UserRole, {
     canViewDashboard: true,
     canManageBudgets: true,
     canViewTraceability: true,
+    isImprima: true,
+  },
+  editor_contenido: {
+    label: 'Editor Contenido',
+    showPrices: false,
+    canCreateOrders: false,
+    canApproveOrders: false,
+    canValidateOrders: false,
+    canViewDashboard: false,
+    canManageBudgets: false,
+    canViewTraceability: false,
     isImprima: true,
   },
 };
