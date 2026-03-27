@@ -9,6 +9,7 @@ import { cn, formatCOP } from '@/lib/utils';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import VariantSelectorModal from '@/components/catalogo/VariantSelectorModal';
+import type { VariantSelection } from '@/components/catalogo/VariantSelectorModal';
 
 interface ProductoOdooRaw {
   id: number;
@@ -151,27 +152,22 @@ export default function CatalogoPage() {
     markAdded(producto.id);
   };
 
-  const handleAddVariant = (variant: {
-    variantId: number;
-    variantName: string;
-    price: number;
-    image: string | null;
-    defaultCode: string | null;
-    selectedAttributes: string;
-  }) => {
-    if (!variantModalProduct) return;
-    const input: VariantCartInput = {
-      templateId: variantModalProduct.id,
-      variantId: variant.variantId,
-      variantName: variant.variantName,
-      price: variant.price,
-      image: variant.image,
-      defaultCode: variant.defaultCode,
-      selectedAttributes: variant.selectedAttributes,
-      unidad: variantModalProduct.uom_name || 'und',
-      categoria: Array.isArray(variantModalProduct.categ_id) ? variantModalProduct.categ_id[1] : '',
-    };
-    addVariantItem(input, 1);
+  const handleAddVariant = (variants: VariantSelection[]) => {
+    if (!variantModalProduct || variants.length === 0) return;
+    for (const variant of variants) {
+      const input: VariantCartInput = {
+        templateId: variantModalProduct.id,
+        variantId: variant.variantId,
+        variantName: variant.variantName,
+        price: variant.price,
+        image: variant.image,
+        defaultCode: variant.defaultCode,
+        selectedAttributes: variant.selectedAttributes,
+        unidad: variantModalProduct.uom_name || 'und',
+        categoria: Array.isArray(variantModalProduct.categ_id) ? variantModalProduct.categ_id[1] : '',
+      };
+      addVariantItem(input, variant.quantity);
+    }
     markAdded(variantModalProduct.id);
   };
 
