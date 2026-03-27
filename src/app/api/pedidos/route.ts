@@ -19,6 +19,7 @@ type PerfilActual = {
 type CreatePedidoItemInput = {
   tipo_item: TipoPedidoItem;
   odoo_product_id: number | null;
+  odoo_variant_id?: number | null;
   nombre_producto: string;
   cantidad: number;
   precio_unitario_cop: number;
@@ -69,9 +70,15 @@ function normalizeCreatePedidoItemInput(item: Partial<CreatePedidoItemInput>): C
     ? Number(rawOdooProductId)
     : null;
 
+  const rawVariantId = (item as Record<string, unknown>).odoo_variant_id;
+  const odoo_variant_id = tipo_item === 'catalogo' && rawVariantId !== null && rawVariantId !== undefined
+    ? Number(rawVariantId)
+    : null;
+
   return {
     tipo_item,
     odoo_product_id,
+    odoo_variant_id: Number.isFinite(odoo_variant_id) && odoo_variant_id! > 0 ? odoo_variant_id : null,
     nombre_producto: typeof item.nombre_producto === 'string' ? item.nombre_producto.trim() : '',
     cantidad: Number(item.cantidad),
     precio_unitario_cop: Number(item.precio_unitario_cop ?? 0),
@@ -206,6 +213,7 @@ export async function POST(request: NextRequest) {
     const itemsData = items.map((item) => ({
       pedido_id: pedido.id,
       odoo_product_id: item.odoo_product_id,
+      odoo_variant_id: item.odoo_variant_id || null,
       tipo_item: item.tipo_item,
       nombre_producto: item.nombre_producto.trim(),
       cantidad: item.cantidad,
@@ -294,6 +302,7 @@ export async function POST(request: NextRequest) {
             note: mergePedidoNoteWithSpecialItems(noteLines || null, specialItems),
             lines: catalogItems.map((item) => ({
               productTemplateId: Number(item.odoo_product_id),
+              productId: item.odoo_variant_id ? Number(item.odoo_variant_id) : undefined,
               name: item.nombre_producto.trim(),
               quantity: Number(item.cantidad),
               priceUnit: Number(item.precio_unitario_cop),

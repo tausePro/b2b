@@ -57,6 +57,7 @@ type PedidoItem = {
   id: string;
   tipo_item: TipoPedidoItem;
   odoo_product_id: number | null;
+  odoo_variant_id?: number | null;
   nombre_producto: string;
   cantidad: number;
   precio_unitario_cop: number;
@@ -200,7 +201,7 @@ export async function POST(
 
     const { data: itemsData, error: itemsError } = await admin
       .from('pedido_items')
-      .select('id, tipo_item, odoo_product_id, nombre_producto, cantidad, precio_unitario_cop, unidad, referencia_cliente, comentarios_item')
+      .select('id, tipo_item, odoo_product_id, odoo_variant_id, nombre_producto, cantidad, precio_unitario_cop, unidad, referencia_cliente, comentarios_item')
       .eq('pedido_id', pedidoId)
       .order('created_at');
 
@@ -278,6 +279,7 @@ export async function POST(
       note: mergePedidoNoteWithSpecialItems(buildQuotationNote(pedido), specialItems),
       lines: catalogItems.map((item) => ({
         productTemplateId: Number(item.odoo_product_id),
+        productId: item.odoo_variant_id ? Number(item.odoo_variant_id) : undefined,
         name: item.nombre_producto,
         quantity: Number(item.cantidad),
         priceUnit: Number(item.precio_unitario_cop),

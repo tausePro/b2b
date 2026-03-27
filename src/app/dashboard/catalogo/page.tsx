@@ -3,10 +3,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useCart } from '@/contexts/CartContext';
+import type { VariantCartInput } from '@/contexts/CartContext';
 import { Search, Filter, ShoppingCart, Plus, Minus, Check, Package } from 'lucide-react';
 import { cn, formatCOP } from '@/lib/utils';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
+import VariantSelectorModal from '@/components/catalogo/VariantSelectorModal';
 
 interface ProductoOdooRaw {
   id: number;
@@ -20,6 +22,8 @@ interface ProductoOdooRaw {
   sale_ok: boolean;
   image_128: string | false;
   default_code: string | false;
+  product_variant_count?: number;
+  attribute_line_ids?: number[];
 }
 
 interface CategoriaFiltro {
@@ -29,7 +33,7 @@ interface CategoriaFiltro {
 
 export default function CatalogoPage() {
   const { user, showPrices } = useAuth();
-  const { addItem, getItemQuantity, updateQuantity } = useCart();
+  const { addItem, addVariantItem, getItemQuantity, updateQuantity } = useCart();
   const [productos, setProductos] = useState<ProductoOdooRaw[]>([]);
   const [categorias, setCategorias] = useState<CategoriaFiltro[]>([{ id: 'todos', label: 'Todos' }]);
   const [loading, setLoading] = useState(true);
@@ -38,6 +42,7 @@ export default function CatalogoPage() {
   const [busqueda, setBusqueda] = useState('');
   const [categoriaActiva, setCategoriaActiva] = useState<number | 'todos'>('todos');
   const [addedIds, setAddedIds] = useState<Set<number>>(new Set());
+  const [variantModalProduct, setVariantModalProduct] = useState<ProductoOdooRaw | null>(null);
 
   const fetchProductos = useCallback(async () => {
     if (!user) return;
@@ -123,6 +128,13 @@ export default function CatalogoPage() {
   }, [fetchProductos]);
 
   const handleAddToCart = (producto: ProductoOdooRaw) => {
+    const variantCount = producto.product_variant_count ?? 1;
+
+    if (variantCount > 1) {
+      setVariantModalProduct(producto);
+      return;
+    }
+
     addItem(
       {
         odoo_product_id: producto.id,
@@ -136,11 +148,39 @@ export default function CatalogoPage() {
       },
       1
     );
-    setAddedIds((prev) => new Set(prev).add(producto.id));
+    markAdded(producto.id);
+  };
+
+  const handleAddVariant = (variant: {
+    variantId: number;
+    variantName: string;
+    price: number;
+    image: string | null;
+    defaultCode: string | null;
+    selectedAttributes: string;
+  }) => {
+    if (!variantModalProduct) return;
+    const input: VariantCartInput = {
+      templateId: variantModalProduct.id,
+      variantId: variant.variantId,
+      variantName: variant.variantName,
+      price: variant.price,
+      image: variant.image,
+      defaultCode: variant.defaultCode,
+      selectedAttributes: variant.selectedAttributes,
+      unidad: variantModalProduct.uom_name || 'und',
+      categoria: Array.isArray(variantModalProduct.categ_id) ? variantModalProduct.categ_id[1] : '',
+    };
+    addVariantItem(input, 1);
+    markAdded(variantModalProduct.id);
+  };
+
+  const markAdded = (productId: number) => {
+    setAddedIds((prev) => new Set(prev).add(productId));
     setTimeout(() => {
       setAddedIds((prev) => {
         const next = new Set(prev);
-        next.delete(producto.id);
+        next.delete(productId);
         return next;
       });
     }, 1500);
@@ -318,6 +358,8 @@ export default function CatalogoPage() {
                       >
                         {justAdded ? (
                           <><Check className="w-4 h-4" /> Agregado</>
+                        ) : (producto.product_variant_count ?? 1) > 1 ? (
+                          <><Plus className="w-4 h-4" /> Elegir variante</>
                         ) : (
                           <><Plus className="w-4 h-4" /> Agregar</>
                         )}
@@ -337,6 +379,17 @@ export default function CatalogoPage() {
           </p>
         </div>
       ) : null}
+
+      {/* Modal de variantes */}
+      {variantModalProduct && (
+        <VariantSelectorModal
+          product={variantModalProduct}
+          open={Boolean(variantModalProduct)}
+          onClose={() => setVariantModalProduct(null)}
+          onAddToCart={handleAddVariant}
+          showPrices={showPrices}
+        />
+      )}
     </div>
   );
 }
