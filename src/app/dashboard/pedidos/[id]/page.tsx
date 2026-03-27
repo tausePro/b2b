@@ -150,6 +150,10 @@ export default function DetallePedidoPage() {
       const payload = await response.json();
 
       if (!response.ok) {
+        if (response.status === 403) {
+          setOdooSummary(null);
+          return;
+        }
         throw new Error(payload.details || payload.error || 'No se pudo cargar el resumen de Odoo.');
       }
 
