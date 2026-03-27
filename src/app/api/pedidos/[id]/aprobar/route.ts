@@ -273,7 +273,7 @@ export async function POST(
       shippingPartnerId: pedido.sede?.odoo_address_id ? Number(pedido.sede.odoo_address_id) : Number(pedido.empresa.odoo_partner_id),
       pricelistId: partnerPricelist,
       salespersonId: pedido.empresa.odoo_comercial_id ? Number(pedido.empresa.odoo_comercial_id) : null,
-      clientReference: pedido.numero,
+      clientReference: `${pedido.numero} (${pedido.id.slice(0, 8)})`,
       origin: pedido.numero,
       dateOrder: pedido.fecha_creacion,
       note: mergePedidoNoteWithSpecialItems(buildQuotationNote(pedido), specialItems),

@@ -296,7 +296,7 @@ export async function POST(request: NextRequest) {
             shippingPartnerId: sedeData?.odoo_address_id ? Number(sedeData.odoo_address_id) : Number(empresa.odoo_partner_id),
             pricelistId: partnerPricelist,
             salespersonId: empresa.odoo_comercial_id ? Number(empresa.odoo_comercial_id) : null,
-            clientReference: pedido.numero,
+            clientReference: `${pedido.numero} (${pedido.id.slice(0, 8)})`,
             origin: pedido.numero,
             dateOrder: new Date().toISOString(),
             note: mergePedidoNoteWithSpecialItems(noteLines || null, specialItems),
