@@ -39,6 +39,10 @@ const ROLE_PATH_PREFIXES: Record<UserRole, string[]> = {
     '/dashboard/reportes',
     '/dashboard/perfil',
   ],
+  editor_contenido: [
+    '/admin/cms',
+    '/admin/leads',
+  ],
 };
 
 function normalizePath(path: string): string {

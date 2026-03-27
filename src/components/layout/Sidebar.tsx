@@ -23,6 +23,7 @@ import {
   Activity,
   Building2,
   X,
+  UserPlus,
 } from 'lucide-react';
 
 interface SidebarItem {
@@ -71,6 +72,10 @@ const MENU_BY_ROLE: Record<UserRole, SidebarItem[]> = {
     { label: 'Presupuestos', href: '/dashboard/presupuestos', icon: <DollarSign className="w-5 h-5" />, activePattern: '/dashboard/presupuestos' },
     { label: 'Alertas', href: '/dashboard/alertas', icon: <AlertTriangle className="w-5 h-5" />, activePattern: '/dashboard/alertas' },
     { label: 'Configuración', href: '/dashboard/configuracion', icon: <Settings className="w-5 h-5" />, activePattern: '/dashboard/configuracion' },
+  ],
+  editor_contenido: [
+    { label: 'CMS Landing', href: '/admin/cms', icon: <FileText className="w-5 h-5" />, activePattern: '/admin/cms' },
+    { label: 'Leads', href: '/admin/leads', icon: <UserPlus className="w-5 h-5" />, activePattern: '/admin/leads' },
   ],
 };
 

@@ -1,5 +1,7 @@
 'use client';
 
+import { useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import DashboardComprador from '@/components/dashboards/DashboardComprador';
 import DashboardAprobador from '@/components/dashboards/DashboardAprobador';
@@ -9,6 +11,13 @@ import { Loader2 } from 'lucide-react';
 
 export default function DashboardPage() {
   const { user, loading } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!loading && user?.rol === 'editor_contenido') {
+      router.replace('/admin/cms');
+    }
+  }, [loading, user, router]);
 
   if (loading) {
     return (
@@ -44,6 +53,13 @@ export default function DashboardPage() {
       return <DashboardAsesor />;
     case 'direccion':
       return <DashboardDireccion />;
+    case 'editor_contenido':
+      return (
+        <div className="flex flex-col items-center justify-center h-full mt-20 gap-4">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+          <p className="text-muted">Redirigiendo al panel de contenido...</p>
+        </div>
+      );
     default:
       return (
         <div className="flex flex-col items-center justify-center h-full text-center space-y-4 mt-20">
