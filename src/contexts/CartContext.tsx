@@ -51,6 +51,7 @@ interface CartContextType {
   updateQuantity: (itemIdOrOdooProductId: string | number, cantidad: number) => void;
   clearCart: () => void;
   getItemQuantity: (odooProductId: number) => number;
+  replaceAllItems: (newItems: CartItem[]) => void;
 }
 
 const CartContext = createContext<CartContextType | undefined>(undefined);
@@ -182,6 +183,10 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     setItems([]);
   }, []);
 
+  const replaceAllItems = useCallback((newItems: CartItem[]) => {
+    setItems(newItems);
+  }, []);
+
   const getItemQuantity = useCallback(
     (odooProductId: number) => {
       return items.find((item) => item.tipo_item === 'catalogo' && item.odoo_product_id === odooProductId)?.cantidad ?? 0;
@@ -203,6 +208,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         updateQuantity,
         clearCart,
         getItemQuantity,
+        replaceAllItems,
       }}
     >
       {children}
