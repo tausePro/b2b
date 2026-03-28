@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useCart } from '@/contexts/CartContext';
+import type { CartItem } from '@/contexts/CartContext';
 import { createClient } from '@/lib/supabase/client';
 import { formatCOP, formatDateTime } from '@/lib/utils';
 import StatusBadge from '@/components/ui/StatusBadge';
@@ -23,6 +25,7 @@ import {
   Undo2,
   Plus,
   Search,
+  RefreshCw,
 } from 'lucide-react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
@@ -52,6 +55,7 @@ interface ItemDetalle {
   id: string;
   tipo_item: 'catalogo' | 'especial';
   odoo_product_id: number | null;
+  odoo_variant_id?: number | null;
   nombre_producto: string;
   cantidad: number;
   precio_unitario_cop: number;
@@ -117,6 +121,7 @@ const INITIAL_SPECIAL_DRAFT: SpecialDraftState = {
 
 export default function DetallePedidoPage() {
   const { user, showPrices } = useAuth();
+  const { replaceAllItems, items: cartItems } = useCart();
   const params = useParams();
   const router = useRouter();
   const pedidoId = params.id as string;
@@ -184,7 +189,7 @@ export default function DetallePedidoPage() {
         .single(),
       supabase
         .from('pedido_items')
-        .select('id, tipo_item, odoo_product_id, nombre_producto, cantidad, precio_unitario_cop, subtotal_cop, unidad, referencia_cliente, comentarios_item')
+        .select('id, tipo_item, odoo_product_id, odoo_variant_id, nombre_producto, cantidad, precio_unitario_cop, subtotal_cop, unidad, referencia_cliente, comentarios_item')
         .eq('pedido_id', pedidoId)
         .order('created_at'),
       supabase
@@ -446,6 +451,59 @@ export default function DetallePedidoPage() {
     }
   };
 
+  const handleReorder = () => {
+    if (!pedido || items.length === 0) return;
+
+    if (cartItems.length > 0) {
+      const confirmed = window.confirm(
+        'Ya tienes productos en el carrito. ¿Deseas reemplazarlos con los de este pedido?'
+      );
+      if (!confirmed) return;
+    }
+
+    const newCartItems: CartItem[] = items.map((item) => {
+      if (item.tipo_item === 'especial') {
+        return {
+          id: globalThis.crypto?.randomUUID?.() ?? `especial-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          tipo_item: 'especial' as const,
+          odoo_product_id: null,
+          nombre_producto: item.nombre_producto,
+          precio_unitario_cop: 0,
+          unidad: item.unidad || null,
+          referencia_cliente: item.referencia_cliente || null,
+          comentarios_item: item.comentarios_item || null,
+          cantidad: item.cantidad,
+        };
+      }
+
+      if (item.odoo_variant_id) {
+        return {
+          id: `variante:${item.odoo_variant_id}`,
+          tipo_item: 'catalogo' as const,
+          odoo_product_id: item.odoo_product_id,
+          odoo_variant_id: item.odoo_variant_id,
+          nombre_producto: item.nombre_producto,
+          precio_unitario_cop: item.precio_unitario_cop,
+          unidad: item.unidad || null,
+          cantidad: item.cantidad,
+        };
+      }
+
+      return {
+        id: `catalogo:${item.odoo_product_id}`,
+        tipo_item: 'catalogo' as const,
+        odoo_product_id: item.odoo_product_id,
+        nombre_producto: item.nombre_producto,
+        precio_unitario_cop: item.precio_unitario_cop,
+        unidad: item.unidad || null,
+        cantidad: item.cantidad,
+      };
+    });
+
+    replaceAllItems(newCartItems);
+    router.push('/dashboard/carrito');
+  };
+
   const getAccionIcon = (accion: string) => {
     switch (accion) {
       case 'creacion': return <Package className="w-4 h-4 text-info" />;
@@ -527,6 +585,15 @@ export default function DetallePedidoPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {!editMode && items.length > 0 && (
+            <button
+              onClick={handleReorder}
+              className="inline-flex items-center gap-2 px-4 py-2 border border-primary text-primary rounded-lg text-sm font-medium hover:bg-primary/5 transition-colors"
+            >
+              <RefreshCw className="w-4 h-4" />
+              Volver a pedir
+            </button>
+          )}
           <button className="inline-flex items-center gap-2 px-4 py-2 border border-border rounded-lg text-sm font-medium hover:bg-white transition-colors">
             <Printer className="w-4 h-4" />
             Imprimir
