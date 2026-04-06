@@ -22,6 +22,7 @@ import {
   ArrowLeft,
   Save,
   X,
+  Percent,
 } from 'lucide-react';
 
 interface Empresa {
@@ -243,6 +244,7 @@ const sectionNav = [
   { id: 'estructura', label: 'Empresas y Sucursales', icon: Building2 },
   { id: 'asesores', label: 'Asesores y Clientes', icon: Users },
   { id: 'users', label: 'Gestión de Usuarios', icon: Users },
+  { id: 'margenes', label: 'Márgenes de Venta', icon: Percent },
 ];
 
 export default function EmpresaConfigPage() {
@@ -276,6 +278,13 @@ export default function EmpresaConfigPage() {
   const [etiquetaProductoFiltro, setEtiquetaProductoFiltro] = useState<number | 'todos'>('todos');
   const [activeSection, setActiveSection] = useState('branding');
   const [toast, setToast] = useState<string | null>(null);
+
+  // Márgenes de venta
+  const [margenes, setMargenes] = useState<{ id: string; odoo_categ_id: number | null; margen_porcentaje: number }[]>([]);
+  const [loadingMargenes, setLoadingMargenes] = useState(false);
+  const [savingMargen, setSavingMargen] = useState(false);
+  const [nuevoMargenCategId, setNuevoMargenCategId] = useState<string>('');
+  const [nuevoMargenPorcentaje, setNuevoMargenPorcentaje] = useState<string>('20');
   const [showCreateUserModal, setShowCreateUserModal] = useState(false);
   const [creatingUser, setCreatingUser] = useState(false);
   const [createUserError, setCreateUserError] = useState<string | null>(null);
@@ -380,6 +389,24 @@ export default function EmpresaConfigPage() {
   useEffect(() => {
     void fetchData();
   }, [fetchData]);
+
+  useEffect(() => {
+    const fetchMargenes = async () => {
+      setLoadingMargenes(true);
+      try {
+        const res = await fetch(`/api/admin/empresas/${empresaId}/margenes`);
+        const data = await res.json();
+        if (res.ok && Array.isArray(data.margenes)) {
+          setMargenes(data.margenes);
+        }
+      } catch {
+        // silencioso
+      } finally {
+        setLoadingMargenes(false);
+      }
+    };
+    void fetchMargenes();
+  }, [empresaId]);
 
   useEffect(() => {
     const fetchPricelists = async () => {
@@ -1884,6 +1911,153 @@ export default function EmpresaConfigPage() {
                 </table>
               </div>
             )}
+          </section>
+
+          {/* Section 7: Márgenes de Venta */}
+          <section id="margenes" className="scroll-mt-24 bg-white rounded-xl shadow-sm border border-border overflow-hidden">
+            <div className="px-6 py-5 border-b border-border bg-slate-50/50 flex justify-between items-center">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">Márgenes de Venta</h2>
+                <p className="text-sm text-slate-500 mt-1">Porcentaje de ganancia sobre el costo de compra (Odoo) para calcular el precio de venta al cliente.</p>
+              </div>
+              <Percent className="w-5 h-5 text-slate-400" />
+            </div>
+            <div className="p-6 space-y-6">
+              <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+                <strong>Margen por defecto:</strong> aplica a <strong>todos los productos</strong> de la lista de precios del cliente.
+                Si necesita un margen distinto para una categoría específica, agréguela por separado.
+                <br />
+                <span className="text-xs text-blue-600 mt-1 block">Fórmula: precio de venta = costo de compra × (1 + margen% / 100)</span>
+              </div>
+
+              {/* Formulario agregar margen */}
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="min-w-[200px]">
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Categoría</label>
+                  <select
+                    value={nuevoMargenCategId}
+                    onChange={(e) => setNuevoMargenCategId(e.target.value)}
+                    className="w-full px-3 py-2 border border-border rounded-lg text-sm bg-white focus:outline-none focus:ring-1 focus:ring-primary/30"
+                  >
+                    <option value="">Todas las categorías (por defecto)</option>
+                    {categoriasProductoDisponibles.map(([id, name]) => (
+                      <option key={id} value={String(id)}>{name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Margen %</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    max="999"
+                    value={nuevoMargenPorcentaje}
+                    onChange={(e) => setNuevoMargenPorcentaje(e.target.value)}
+                    className="w-24 px-3 py-2 border border-border rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-primary/30"
+                  />
+                </div>
+                <button
+                  disabled={savingMargen}
+                  onClick={async () => {
+                    setSavingMargen(true);
+                    try {
+                      const catId = nuevoMargenCategId.trim();
+                      const res = await fetch(`/api/admin/empresas/${empresaId}/margenes`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          odoo_categ_id: catId === '' ? null : Number(catId),
+                          margen_porcentaje: Number(nuevoMargenPorcentaje),
+                        }),
+                      });
+                      if (!res.ok) {
+                        const d = await res.json();
+                        throw new Error(d.error || 'Error guardando margen');
+                      }
+                      setNuevoMargenCategId('');
+                      setNuevoMargenPorcentaje('20');
+                      const r2 = await fetch(`/api/admin/empresas/${empresaId}/margenes`);
+                      const d2 = await r2.json();
+                      setMargenes(d2.margenes || []);
+                      setToast('Margen guardado correctamente.');
+                    } catch (err) {
+                      alert(err instanceof Error ? err.message : 'Error');
+                    } finally {
+                      setSavingMargen(false);
+                    }
+                  }}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-primary text-white text-sm font-medium rounded-lg hover:bg-primary-dark transition-colors disabled:opacity-50"
+                >
+                  {savingMargen ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                  Guardar
+                </button>
+              </div>
+
+              {categoriasProductoDisponibles.length === 0 && productosOdoo.length === 0 && (
+                <p className="text-xs text-amber-600">Las categorías se cargan desde los productos Odoo del cliente. Vaya a la sección &quot;Productos Odoo&quot; para cargarlos primero.</p>
+              )}
+
+              {/* Tabla de márgenes */}
+              {loadingMargenes ? (
+                <div className="text-center py-6">
+                  <Loader2 className="w-6 h-6 animate-spin text-primary mx-auto" />
+                </div>
+              ) : margenes.length === 0 ? (
+                <div className="text-center py-6">
+                  <Percent className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                  <p className="text-sm text-slate-500">No hay márgenes configurados. Se usará <strong>20%</strong> por defecto para todos los productos.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-border">
+                    <thead className="bg-slate-50">
+                      <tr>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Categoría</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Margen %</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Aplica a</th>
+                        <th className="px-4 py-3"><span className="sr-only">Acciones</span></th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {margenes.map((m) => {
+                        const categName = m.odoo_categ_id !== null ? categoriasMap.get(m.odoo_categ_id) : null;
+                        return (
+                          <tr key={m.id} className="hover:bg-slate-50">
+                            <td className="px-4 py-3 text-sm text-slate-900">
+                              {m.odoo_categ_id === null ? (
+                                <span className="text-primary font-medium">Por defecto</span>
+                              ) : (
+                                <span>{categName || `Categoría #${m.odoo_categ_id}`}</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 text-sm font-semibold text-slate-900">{m.margen_porcentaje}%</td>
+                            <td className="px-4 py-3 text-xs text-slate-500">
+                              {m.odoo_categ_id === null
+                                ? 'Todos los productos de la lista'
+                                : `Solo productos de esta categoría`}
+                            </td>
+                            <td className="px-4 py-3 text-right">
+                              <button
+                                onClick={async () => {
+                                  if (!confirm('¿Eliminar este margen?')) return;
+                                  await fetch(`/api/admin/empresas/${empresaId}/margenes?margen_id=${m.id}`, { method: 'DELETE' });
+                                  setMargenes((prev) => prev.filter((x) => x.id !== m.id));
+                                  setToast('Margen eliminado.');
+                                }}
+                                className="text-slate-400 hover:text-red-600 transition-colors"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
           </section>
 
           <div className="h-12" />

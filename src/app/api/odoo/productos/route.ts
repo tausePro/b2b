@@ -1,4 +1,5 @@
 import { NextResponse, NextRequest } from 'next/server';
+import { createClient as createSupabaseAdmin } from '@supabase/supabase-js';
 import {
   authenticate,
   getEtiquetasCliente,
@@ -7,8 +8,10 @@ import {
   getEtiquetasProducto,
   read,
 } from '@/lib/odoo/client';
+import type { OdooProduct } from '@/lib/odoo/client';
 import { getServerOdooConfig } from '@/lib/odoo/serverConfig';
 import { authorizeApiRoles, getAccessibleOdooPartnerIds } from '@/lib/auth/apiRouteGuards';
+import { loadMarginsForEmpresa, getEffectiveMargin, calculateSellingPrice, type MarginMap } from '@/lib/pricing/margins';
 
 const AUTHENTICATED_PRODUCT_ROLES = ['super_admin', 'direccion', 'asesor', 'comprador', 'aprobador'] as const;
 const AUTHENTICATED_MAX_LIMIT = 500;
@@ -206,6 +209,24 @@ export async function GET(request: NextRequest) {
       productos = await getProductos(session, { categIds: parsedCategIds, limit, offset, search });
     }
 
+    // Aplicar márgenes de venta si hay partner_id (contexto de empresa)
+    if (parsedPartnerId && productos.length > 0) {
+      const supaAdmin = createSupabaseAdmin(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!
+      );
+      const { data: empresaRow } = await supaAdmin
+        .from('empresas')
+        .select('id')
+        .eq('odoo_partner_id', parsedPartnerId)
+        .maybeSingle();
+
+      if (empresaRow?.id) {
+        const margins = await loadMarginsForEmpresa(empresaRow.id);
+        productos = applyMargins(productos, margins);
+      }
+    }
+
     if (includeTagNames) {
       const etiquetas = await getEtiquetasProducto(session);
       const etiquetasMap = new Map(etiquetas.map((tag) => [tag.id, tag.name]));
@@ -230,4 +251,16 @@ export async function GET(request: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+function applyMargins(productos: OdooProduct[], margins: MarginMap): OdooProduct[] {
+  return productos.map((producto) => {
+    const categId = Array.isArray(producto.categ_id) ? producto.categ_id[0] : null;
+    const margin = getEffectiveMargin(margins, categId);
+    const sellingPrice = calculateSellingPrice(producto.standard_price, margin);
+    return {
+      ...producto,
+      list_price: sellingPrice > 0 ? sellingPrice : producto.list_price,
+    };
+  });
 }
