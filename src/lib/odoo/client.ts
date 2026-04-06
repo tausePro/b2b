@@ -453,6 +453,7 @@ export interface OdooProduct {
   name: string;
   description_sale: string | false;
   list_price: number;
+  standard_price: number;
   uom_name: string;
   categ_id: [number, string];
   product_tag_ids: number[];
@@ -471,6 +472,7 @@ export interface OdooProductVariant {
   default_code: string | false;
   image_128: string | false;
   lst_price: number;
+  standard_price: number;
   product_template_attribute_value_ids: number[];
   active: boolean;
 }
@@ -737,7 +739,7 @@ export async function getClientes(
 }
 
 const PRODUCT_TEMPLATE_FIELDS = [
-  'id', 'name', 'description_sale', 'list_price', 'uom_name', 'categ_id',
+  'id', 'name', 'description_sale', 'list_price', 'standard_price', 'uom_name', 'categ_id',
   'product_tag_ids', 'active', 'sale_ok', 'image_128', 'default_code',
   'product_variant_count', 'attribute_line_ids',
 ];
@@ -807,7 +809,7 @@ export async function getProductVariants(
   const variants = await searchRead(
     'product.product',
     [['product_tmpl_id', '=', templateId], ['active', '=', true]],
-    ['id', 'name', 'product_tmpl_id', 'default_code', 'image_128', 'lst_price', 'product_template_attribute_value_ids', 'active'],
+    ['id', 'name', 'product_tmpl_id', 'default_code', 'image_128', 'lst_price', 'standard_price', 'product_template_attribute_value_ids', 'active'],
     { order: 'name asc', session }
   ) as unknown as OdooProductVariant[];
 

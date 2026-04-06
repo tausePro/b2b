@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
-import { authenticate, createSaleOrderQuotation, read } from '@/lib/odoo/client';
+import { authenticate, createSaleOrderQuotation, read, searchRead } from '@/lib/odoo/client';
 import { mergePedidoNoteWithSpecialItems, normalizeTipoPedidoItem, partitionPedidoItems } from '@/lib/pedidoItems';
 import { getServerOdooConfig } from '@/lib/odoo/serverConfig';
 import { safeEnqueuePedidoNotifications } from '@/lib/notifications/pedidos';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { loadMarginsForEmpresa, getEffectiveMargin, calculateSellingPrice } from '@/lib/pricing/margins';
 import type { TipoPedidoItem } from '@/types';
 
 type PerfilActual = {
@@ -185,6 +186,66 @@ export async function POST(request: NextRequest) {
 
       sedeId = perfil.sede_id;
       sedeData = sede;
+    }
+
+    // Recalcular precios de catálogo server-side usando standard_price + margen
+    const catalogItemsToReprice = items.filter((i) => i.tipo_item === 'catalogo' && i.odoo_product_id);
+    if (catalogItemsToReprice.length > 0 && perfil.empresa_id) {
+      try {
+        const odooConfig = await getServerOdooConfig();
+        if (odooConfig) {
+          const odooSession = await authenticate(odooConfig);
+          const margins = await loadMarginsForEmpresa(perfil.empresa_id);
+
+          // Obtener standard_price y categ_id de los templates
+          const templateIds = [...new Set(catalogItemsToReprice.map((i) => i.odoo_product_id!))];
+          const templates = await read(
+            'product.template',
+            templateIds,
+            ['id', 'standard_price', 'categ_id'],
+            odooSession
+          );
+          const templateMap = new Map(templates.map((t) => [Number(t.id), t]));
+
+          // Para variantes, obtener su standard_price individual
+          const variantIds = catalogItemsToReprice
+            .filter((i) => i.odoo_variant_id)
+            .map((i) => i.odoo_variant_id!);
+          const variantMap = new Map<number, number>();
+          if (variantIds.length > 0) {
+            const variants = await read(
+              'product.product',
+              [...new Set(variantIds)],
+              ['id', 'standard_price'],
+              odooSession
+            );
+            for (const v of variants) {
+              variantMap.set(Number(v.id), Number(v.standard_price ?? 0));
+            }
+          }
+
+          for (const item of items) {
+            if (item.tipo_item !== 'catalogo' || !item.odoo_product_id) continue;
+            const tmpl = templateMap.get(item.odoo_product_id);
+            if (!tmpl) continue;
+
+            const categId = Array.isArray(tmpl.categ_id) ? (tmpl.categ_id as [number, string])[0] : null;
+            const margin = getEffectiveMargin(margins, categId);
+
+            // Usar standard_price de la variante si existe, sino del template
+            const cost = item.odoo_variant_id && variantMap.has(item.odoo_variant_id)
+              ? variantMap.get(item.odoo_variant_id)!
+              : Number(tmpl.standard_price ?? 0);
+
+            const sellingPrice = calculateSellingPrice(cost, margin);
+            if (sellingPrice > 0) {
+              item.precio_unitario_cop = sellingPrice;
+            }
+          }
+        }
+      } catch (repriceError) {
+        console.warn('[Pedido] Error recalculando precios server-side, usando precios del frontend:', repriceError);
+      }
     }
 
     const totalItems = items.reduce((sum, item) => sum + item.cantidad, 0);
