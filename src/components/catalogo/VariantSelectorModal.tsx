@@ -138,6 +138,15 @@ export default function VariantSelectorModal({
     return labels.join(' / ');
   };
 
+  const getVariantPrice = (variant: VariantData): number => {
+    if (!data) return product.list_price;
+    const extra = data.attributes.reduce((total, attr) => {
+      const matchVal = attr.values.find((v) => variant.attribute_value_ids.includes(v.ptavId));
+      return total + (matchVal?.priceExtra ?? 0);
+    }, 0);
+    return product.list_price + extra;
+  };
+
   const totalSelected = Array.from(selected.values()).reduce((s, q) => s + q, 0);
 
   const handleAdd = () => {
@@ -149,7 +158,7 @@ export default function VariantSelectorModal({
       selections.push({
         variantId: variant.id,
         variantName: variant.name,
-        price: variant.lst_price,
+        price: getVariantPrice(variant),
         image: variant.image_128 || (typeof product.image_128 === 'string' ? product.image_128 : null),
         defaultCode: variant.default_code,
         selectedAttributes: getVariantLabel(variant),
@@ -305,7 +314,7 @@ export default function VariantSelectorModal({
                         {/* Precio */}
                         {showPrices && (
                           <span className="text-sm font-semibold text-foreground shrink-0">
-                            ${variant.lst_price.toLocaleString('es-CO', { minimumFractionDigits: 0 })}
+                            ${getVariantPrice(variant).toLocaleString('es-CO', { minimumFractionDigits: 0 })}
                           </span>
                         )}
 
