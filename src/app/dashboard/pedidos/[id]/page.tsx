@@ -451,8 +451,10 @@ export default function DetallePedidoPage() {
     }
   };
 
-  const handleReorder = () => {
-    if (!pedido || items.length === 0) return;
+  const [reordering, setReordering] = useState(false);
+
+  const handleReorder = async () => {
+    if (!pedido || items.length === 0 || !user?.empresa_id) return;
 
     if (cartItems.length > 0) {
       const confirmed = window.confirm(
@@ -461,47 +463,99 @@ export default function DetallePedidoPage() {
       if (!confirmed) return;
     }
 
-    const newCartItems: CartItem[] = items.map((item) => {
-      if (item.tipo_item === 'especial') {
-        return {
-          id: globalThis.crypto?.randomUUID?.() ?? `especial-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          tipo_item: 'especial' as const,
-          odoo_product_id: null,
-          nombre_producto: item.nombre_producto,
-          precio_unitario_cop: 0,
-          unidad: item.unidad || null,
-          referencia_cliente: item.referencia_cliente || null,
-          comentarios_item: item.comentarios_item || null,
-          cantidad: item.cantidad,
-        };
+    setReordering(true);
+
+    try {
+      // 1. Obtener partner_id de la empresa para traer precios actualizados
+      const { data: empresa } = await supabase
+        .from('empresas')
+        .select('odoo_partner_id')
+        .eq('id', user.empresa_id)
+        .single();
+
+      // 2. Traer precios actuales del catálogo (con margen aplicado)
+      const priceMap = new Map<number, number>(); // odoo_product_id → list_price
+      if (empresa?.odoo_partner_id) {
+        const res = await fetch(`/api/odoo/productos?partner_id=${empresa.odoo_partner_id}&limit=500`);
+        if (res.ok) {
+          const data = await res.json();
+          for (const p of (data.productos || []) as { id: number; list_price: number }[]) {
+            priceMap.set(p.id, p.list_price);
+          }
+        }
       }
 
-      if (item.odoo_variant_id) {
+      // 3. Para variantes, traer precios actualizados por template
+      const variantPriceMap = new Map<number, number>(); // odoo_variant_id → lst_price
+      const variantItems = items.filter((i) => i.tipo_item === 'catalogo' && i.odoo_variant_id);
+      const uniqueTemplateIds = [...new Set(variantItems.map((i) => i.odoo_product_id!))];
+
+      for (const templateId of uniqueTemplateIds) {
+        try {
+          const vRes = await fetch(`/api/odoo/productos/${templateId}/variantes`);
+          if (vRes.ok) {
+            const vData = await vRes.json();
+            for (const v of (vData.variants || []) as { id: number; lst_price: number }[]) {
+              variantPriceMap.set(v.id, v.lst_price);
+            }
+          }
+        } catch {
+          // si falla un fetch de variantes, seguimos con el resto
+        }
+      }
+
+      // 4. Construir carrito con precios frescos
+      const newCartItems: CartItem[] = items.map((item) => {
+        if (item.tipo_item === 'especial') {
+          return {
+            id: globalThis.crypto?.randomUUID?.() ?? `especial-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            tipo_item: 'especial' as const,
+            odoo_product_id: null,
+            nombre_producto: item.nombre_producto,
+            precio_unitario_cop: 0,
+            unidad: item.unidad || null,
+            referencia_cliente: item.referencia_cliente || null,
+            comentarios_item: item.comentarios_item || null,
+            cantidad: item.cantidad,
+          };
+        }
+
+        if (item.odoo_variant_id) {
+          const freshPrice = variantPriceMap.get(item.odoo_variant_id)
+            ?? priceMap.get(item.odoo_product_id!)
+            ?? item.precio_unitario_cop;
+          return {
+            id: `variante:${item.odoo_variant_id}`,
+            tipo_item: 'catalogo' as const,
+            odoo_product_id: item.odoo_product_id,
+            odoo_variant_id: item.odoo_variant_id,
+            nombre_producto: item.nombre_producto,
+            precio_unitario_cop: freshPrice,
+            unidad: item.unidad || null,
+            cantidad: item.cantidad,
+          };
+        }
+
+        const freshPrice = priceMap.get(item.odoo_product_id!) ?? item.precio_unitario_cop;
         return {
-          id: `variante:${item.odoo_variant_id}`,
+          id: `catalogo:${item.odoo_product_id}`,
           tipo_item: 'catalogo' as const,
           odoo_product_id: item.odoo_product_id,
-          odoo_variant_id: item.odoo_variant_id,
           nombre_producto: item.nombre_producto,
-          precio_unitario_cop: item.precio_unitario_cop,
+          precio_unitario_cop: freshPrice,
           unidad: item.unidad || null,
           cantidad: item.cantidad,
         };
-      }
+      });
 
-      return {
-        id: `catalogo:${item.odoo_product_id}`,
-        tipo_item: 'catalogo' as const,
-        odoo_product_id: item.odoo_product_id,
-        nombre_producto: item.nombre_producto,
-        precio_unitario_cop: item.precio_unitario_cop,
-        unidad: item.unidad || null,
-        cantidad: item.cantidad,
-      };
-    });
-
-    replaceAllItems(newCartItems);
-    router.push('/dashboard/carrito');
+      replaceAllItems(newCartItems);
+      router.push('/dashboard/carrito');
+    } catch (err) {
+      console.error('[Reorder] Error:', err);
+      alert('Error al preparar el pedido. Intenta de nuevo.');
+    } finally {
+      setReordering(false);
+    }
   };
 
   const getAccionIcon = (accion: string) => {
@@ -588,10 +642,11 @@ export default function DetallePedidoPage() {
           {!editMode && items.length > 0 && (
             <button
               onClick={handleReorder}
-              className="inline-flex items-center gap-2 px-4 py-2 border border-primary text-primary rounded-lg text-sm font-medium hover:bg-primary/5 transition-colors"
+              disabled={reordering}
+              className="inline-flex items-center gap-2 px-4 py-2 border border-primary text-primary rounded-lg text-sm font-medium hover:bg-primary/5 transition-colors disabled:opacity-50 disabled:cursor-wait"
             >
-              <RefreshCw className="w-4 h-4" />
-              Volver a pedir
+              {reordering ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+              {reordering ? 'Cargando precios...' : 'Volver a pedir'}
             </button>
           )}
           <button className="inline-flex items-center gap-2 px-4 py-2 border border-border rounded-lg text-sm font-medium hover:bg-white transition-colors">
