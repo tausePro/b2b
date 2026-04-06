@@ -473,20 +473,25 @@ export default function DetallePedidoPage() {
         .eq('id', user.empresa_id)
         .single();
 
-      // 2. Traer precios actuales del catálogo (con margen aplicado)
+      // 2. Traer precios e imágenes actuales del catálogo (con margen aplicado)
       const priceMap = new Map<number, number>(); // odoo_product_id → list_price
+      const imageMap = new Map<number, string>(); // odoo_product_id → imagen base64
       if (empresa?.odoo_partner_id) {
         const res = await fetch(`/api/odoo/productos?partner_id=${empresa.odoo_partner_id}&limit=500`);
         if (res.ok) {
           const data = await res.json();
-          for (const p of (data.productos || []) as { id: number; list_price: number }[]) {
+          for (const p of (data.productos || []) as { id: number; list_price: number; image_128: string | false }[]) {
             priceMap.set(p.id, p.list_price);
+            if (typeof p.image_128 === 'string' && p.image_128) {
+              imageMap.set(p.id, `data:image/png;base64,${p.image_128}`);
+            }
           }
         }
       }
 
-      // 3. Para variantes, traer precios actualizados por template
+      // 3. Para variantes, traer precios e imágenes actualizados por template
       const variantPriceMap = new Map<number, number>(); // odoo_variant_id → lst_price
+      const variantImageMap = new Map<number, string>(); // odoo_variant_id → imagen base64
       const variantItems = items.filter((i) => i.tipo_item === 'catalogo' && i.odoo_variant_id);
       const uniqueTemplateIds = [...new Set(variantItems.map((i) => i.odoo_product_id!))];
 
@@ -495,8 +500,11 @@ export default function DetallePedidoPage() {
           const vRes = await fetch(`/api/odoo/productos/${templateId}/variantes`);
           if (vRes.ok) {
             const vData = await vRes.json();
-            for (const v of (vData.variants || []) as { id: number; lst_price: number }[]) {
+            for (const v of (vData.variants || []) as { id: number; lst_price: number; image_128: string | null }[]) {
               variantPriceMap.set(v.id, v.lst_price);
+              if (v.image_128) {
+                variantImageMap.set(v.id, `data:image/png;base64,${v.image_128}`);
+              }
             }
           }
         } catch {
@@ -524,6 +532,8 @@ export default function DetallePedidoPage() {
           const freshPrice = variantPriceMap.get(item.odoo_variant_id)
             ?? priceMap.get(item.odoo_product_id!)
             ?? item.precio_unitario_cop;
+          const varImg = variantImageMap.get(item.odoo_variant_id)
+            ?? (item.odoo_product_id ? imageMap.get(item.odoo_product_id) : undefined);
           return {
             id: `variante:${item.odoo_variant_id}`,
             tipo_item: 'catalogo' as const,
@@ -531,6 +541,7 @@ export default function DetallePedidoPage() {
             odoo_variant_id: item.odoo_variant_id,
             nombre_producto: item.nombre_producto,
             precio_unitario_cop: freshPrice,
+            imagen_url: varImg,
             unidad: item.unidad || null,
             cantidad: item.cantidad,
           };
@@ -543,6 +554,7 @@ export default function DetallePedidoPage() {
           odoo_product_id: item.odoo_product_id,
           nombre_producto: item.nombre_producto,
           precio_unitario_cop: freshPrice,
+          imagen_url: item.odoo_product_id ? imageMap.get(item.odoo_product_id) : undefined,
           unidad: item.unidad || null,
           cantidad: item.cantidad,
         };
