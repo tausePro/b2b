@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { authenticate, getProductVariants, read } from '@/lib/odoo/client';
 import { getServerOdooConfig } from '@/lib/odoo/serverConfig';
 import { authorizeApiRoles } from '@/lib/auth/apiRouteGuards';
-import { loadMarginsForEmpresa, getEffectiveMargin, calculateSellingPrice } from '@/lib/pricing/margins';
+import { loadPricingContext, resolveProductPrice } from '@/lib/pricing/margins';
 
 const ALLOWED_ROLES = ['super_admin', 'direccion', 'asesor', 'comprador', 'aprobador'] as const;
 
@@ -36,25 +36,23 @@ export async function GET(
     const session = await authenticate(config);
     const result = await getProductVariants(session, templateId);
 
-    // Resolver márgenes desde la empresa del usuario autenticado
+    // Resolver pricing desde la empresa del usuario autenticado
     const empresaId = authorized.actor.empresa_id;
-    let margin = 20; // default
+    let pricingCtx = null;
+    let templateCategId: number | null = null;
 
     if (empresaId) {
-      const margins = await loadMarginsForEmpresa(empresaId);
+      pricingCtx = await loadPricingContext(empresaId);
 
-      // Obtener categ_id del template para resolver el margen por categoría
       const templateRows = await read(
         'product.template',
         [templateId],
         ['categ_id'],
         session
       );
-      const categId = templateRows[0] && Array.isArray(templateRows[0].categ_id)
+      templateCategId = templateRows[0] && Array.isArray(templateRows[0].categ_id)
         ? (templateRows[0].categ_id as [number, string])[0]
         : null;
-
-      margin = getEffectiveMargin(margins, categId);
     }
 
     return NextResponse.json({
@@ -62,13 +60,21 @@ export async function GET(
       variant_count: result.variants.length,
       attributes: result.attributes,
       variants: result.variants.map((v) => {
-        const sellingPrice = calculateSellingPrice(v.standard_price, margin);
+        let finalPrice = v.lst_price;
+        if (pricingCtx) {
+          finalPrice = resolveProductPrice(pricingCtx, {
+            id: templateId,
+            list_price: v.lst_price,
+            standard_price: v.standard_price,
+            categ_id: templateCategId !== null ? [templateCategId, ''] : false,
+          });
+        }
         return {
           id: v.id,
           name: v.name,
           default_code: v.default_code || null,
           image_128: v.image_128 || null,
-          lst_price: sellingPrice > 0 ? sellingPrice : v.lst_price,
+          lst_price: finalPrice,
           standard_price: v.standard_price,
           attribute_value_ids: v.product_template_attribute_value_ids,
         };

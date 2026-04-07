@@ -11,7 +11,7 @@ import {
 import type { OdooProduct } from '@/lib/odoo/client';
 import { getServerOdooConfig } from '@/lib/odoo/serverConfig';
 import { authorizeApiRoles, getAccessibleOdooPartnerIds } from '@/lib/auth/apiRouteGuards';
-import { loadMarginsForEmpresa, getEffectiveMargin, calculateSellingPrice, type MarginMap } from '@/lib/pricing/margins';
+import { loadPricingContext, resolveProductPrice, type PricingContext } from '@/lib/pricing/margins';
 
 const AUTHENTICATED_PRODUCT_ROLES = ['super_admin', 'direccion', 'asesor', 'comprador', 'aprobador'] as const;
 const AUTHENTICATED_MAX_LIMIT = 500;
@@ -209,7 +209,7 @@ export async function GET(request: NextRequest) {
       productos = await getProductos(session, { categIds: parsedCategIds, limit, offset, search });
     }
 
-    // Aplicar márgenes de venta si hay partner_id (contexto de empresa)
+    // Aplicar pricing (override > costo+margen > pricelist) si hay partner_id
     if (parsedPartnerId && productos.length > 0) {
       const supaAdmin = createSupabaseAdmin(
         process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -222,8 +222,8 @@ export async function GET(request: NextRequest) {
         .maybeSingle();
 
       if (empresaRow?.id) {
-        const margins = await loadMarginsForEmpresa(empresaRow.id);
-        productos = applyMargins(productos, margins);
+        const pricingCtx = await loadPricingContext(empresaRow.id);
+        productos = applyPricing(productos, pricingCtx);
       }
     }
 
@@ -253,14 +253,9 @@ export async function GET(request: NextRequest) {
   }
 }
 
-function applyMargins(productos: OdooProduct[], margins: MarginMap): OdooProduct[] {
-  return productos.map((producto) => {
-    const categId = Array.isArray(producto.categ_id) ? producto.categ_id[0] : null;
-    const margin = getEffectiveMargin(margins, categId);
-    const sellingPrice = calculateSellingPrice(producto.standard_price, margin);
-    return {
-      ...producto,
-      list_price: sellingPrice > 0 ? sellingPrice : producto.list_price,
-    };
-  });
+function applyPricing(productos: OdooProduct[], ctx: PricingContext): OdooProduct[] {
+  return productos.map((producto) => ({
+    ...producto,
+    list_price: resolveProductPrice(ctx, producto),
+  }));
 }

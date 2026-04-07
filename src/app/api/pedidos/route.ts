@@ -5,7 +5,7 @@ import { mergePedidoNoteWithSpecialItems, normalizeTipoPedidoItem, partitionPedi
 import { getServerOdooConfig } from '@/lib/odoo/serverConfig';
 import { safeEnqueuePedidoNotifications } from '@/lib/notifications/pedidos';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
-import { loadMarginsForEmpresa, getEffectiveMargin, calculateSellingPrice } from '@/lib/pricing/margins';
+import { loadPricingContext, resolveProductPrice } from '@/lib/pricing/margins';
 import type { TipoPedidoItem } from '@/types';
 
 type PerfilActual = {
@@ -188,39 +188,41 @@ export async function POST(request: NextRequest) {
       sedeData = sede;
     }
 
-    // Recalcular precios de catálogo server-side usando standard_price + margen
+    // Recalcular precios de catálogo server-side con jerarquía: override > costo+margen > pricelist
     const catalogItemsToReprice = items.filter((i) => i.tipo_item === 'catalogo' && i.odoo_product_id);
     if (catalogItemsToReprice.length > 0 && perfil.empresa_id) {
       try {
         const odooConfig = await getServerOdooConfig();
         if (odooConfig) {
           const odooSession = await authenticate(odooConfig);
-          const margins = await loadMarginsForEmpresa(perfil.empresa_id);
+          const pricingCtx = await loadPricingContext(perfil.empresa_id);
 
-          // Obtener standard_price y categ_id de los templates
           const templateIds = [...new Set(catalogItemsToReprice.map((i) => i.odoo_product_id!))];
           const templates = await read(
             'product.template',
             templateIds,
-            ['id', 'standard_price', 'categ_id'],
+            ['id', 'list_price', 'standard_price', 'categ_id'],
             odooSession
           );
           const templateMap = new Map(templates.map((t) => [Number(t.id), t]));
 
-          // Para variantes, obtener su standard_price individual
+          // Para variantes, obtener su standard_price y lst_price individual
           const variantIds = catalogItemsToReprice
             .filter((i) => i.odoo_variant_id)
             .map((i) => i.odoo_variant_id!);
-          const variantMap = new Map<number, number>();
+          const variantMap = new Map<number, { standard_price: number; lst_price: number }>();
           if (variantIds.length > 0) {
             const variants = await read(
               'product.product',
               [...new Set(variantIds)],
-              ['id', 'standard_price'],
+              ['id', 'standard_price', 'lst_price'],
               odooSession
             );
             for (const v of variants) {
-              variantMap.set(Number(v.id), Number(v.standard_price ?? 0));
+              variantMap.set(Number(v.id), {
+                standard_price: Number(v.standard_price ?? 0),
+                lst_price: Number(v.lst_price ?? 0),
+              });
             }
           }
 
@@ -229,17 +231,16 @@ export async function POST(request: NextRequest) {
             const tmpl = templateMap.get(item.odoo_product_id);
             if (!tmpl) continue;
 
-            const categId = Array.isArray(tmpl.categ_id) ? (tmpl.categ_id as [number, string])[0] : null;
-            const margin = getEffectiveMargin(margins, categId);
+            const variantData = item.odoo_variant_id ? variantMap.get(item.odoo_variant_id) : null;
+            const resolvedPrice = resolveProductPrice(pricingCtx, {
+              id: item.odoo_product_id,
+              list_price: variantData?.lst_price ?? Number(tmpl.list_price ?? 0),
+              standard_price: variantData?.standard_price ?? Number(tmpl.standard_price ?? 0),
+              categ_id: Array.isArray(tmpl.categ_id) ? tmpl.categ_id as [number, string] : false,
+            });
 
-            // Usar standard_price de la variante si existe, sino del template
-            const cost = item.odoo_variant_id && variantMap.has(item.odoo_variant_id)
-              ? variantMap.get(item.odoo_variant_id)!
-              : Number(tmpl.standard_price ?? 0);
-
-            const sellingPrice = calculateSellingPrice(cost, margin);
-            if (sellingPrice > 0) {
-              item.precio_unitario_cop = sellingPrice;
+            if (resolvedPrice > 0) {
+              item.precio_unitario_cop = resolvedPrice;
             }
           }
         }
