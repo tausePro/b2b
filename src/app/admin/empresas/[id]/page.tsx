@@ -48,6 +48,7 @@ interface EmpresaConfig {
   control_presupuesto: boolean;
   odoo_partner_id: string | null;
   odoo_pricelist_id: string | null;
+  modo_pricing: string;
   modulos_activos: string[];
   configuracion_extra?: Record<string, unknown>;
 }
@@ -285,6 +286,11 @@ export default function EmpresaConfigPage() {
   const [savingMargen, setSavingMargen] = useState(false);
   const [nuevoMargenCategId, setNuevoMargenCategId] = useState<string>('');
   const [nuevoMargenPorcentaje, setNuevoMargenPorcentaje] = useState<string>('20');
+
+  // Overrides de precio por producto
+  const [precioOverrides, setPrecioOverrides] = useState<Map<number, { id: string; precio: number }>>(new Map());
+  const [precioEditando, setPrecioEditando] = useState<Map<number, string>>(new Map());
+  const [savingPrecio, setSavingPrecio] = useState<number | null>(null);
   const [showCreateUserModal, setShowCreateUserModal] = useState(false);
   const [creatingUser, setCreatingUser] = useState(false);
   const [createUserError, setCreateUserError] = useState<string | null>(null);
@@ -389,6 +395,25 @@ export default function EmpresaConfigPage() {
   useEffect(() => {
     void fetchData();
   }, [fetchData]);
+
+  useEffect(() => {
+    const fetchOverrides = async () => {
+      try {
+        const res = await fetch(`/api/admin/empresas/${empresaId}/precios`);
+        const data = await res.json();
+        if (res.ok && Array.isArray(data.precios)) {
+          const map = new Map<number, { id: string; precio: number }>();
+          for (const p of data.precios as { id: string; odoo_product_id: number; precio_override: number }[]) {
+            map.set(p.odoo_product_id, { id: p.id, precio: p.precio_override });
+          }
+          setPrecioOverrides(map);
+        }
+      } catch {
+        // silencioso
+      }
+    };
+    void fetchOverrides();
+  }, [empresaId]);
 
   useEffect(() => {
     const fetchMargenes = async () => {
@@ -771,6 +796,7 @@ export default function EmpresaConfigPage() {
         control_presupuesto: config.control_presupuesto,
         odoo_partner_id: config.odoo_partner_id,
         odoo_pricelist_id: config.odoo_pricelist_id,
+        modo_pricing: config.modo_pricing || 'costo_margen',
         modulos_activos: config.modulos_activos,
         configuracion_extra: configuracionExtraPortal,
       })
@@ -1258,6 +1284,43 @@ export default function EmpresaConfigPage() {
                   <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary/50 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary" />
                 </label>
               </div>
+
+              {/* Modo de Pricing */}
+              <div className="p-6">
+                <h3 className="text-base font-semibold text-slate-900">Modo de Precios</h3>
+                <p className="text-sm text-slate-500 mt-1">Define cómo se calculan los precios de venta para este cliente.</p>
+                <div className="mt-4 flex flex-col gap-3 max-w-md">
+                  <label className={`flex items-start gap-3 p-3 rounded-lg border-2 cursor-pointer transition-colors ${config?.modo_pricing !== 'pricelist' ? 'border-primary bg-primary/5' : 'border-border hover:border-slate-300'}`}>
+                    <input
+                      type="radio"
+                      name="modo_pricing"
+                      value="costo_margen"
+                      checked={config?.modo_pricing !== 'pricelist'}
+                      onChange={() => config && setConfig({ ...config, modo_pricing: 'costo_margen' })}
+                      className="mt-0.5"
+                    />
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900">Costo + Margen</p>
+                      <p className="text-xs text-slate-500">Calcula el precio usando el costo de compra de Odoo más el porcentaje de margen configurado por categoría.</p>
+                    </div>
+                  </label>
+                  <label className={`flex items-start gap-3 p-3 rounded-lg border-2 cursor-pointer transition-colors ${config?.modo_pricing === 'pricelist' ? 'border-primary bg-primary/5' : 'border-border hover:border-slate-300'}`}>
+                    <input
+                      type="radio"
+                      name="modo_pricing"
+                      value="pricelist"
+                      checked={config?.modo_pricing === 'pricelist'}
+                      onChange={() => config && setConfig({ ...config, modo_pricing: 'pricelist' })}
+                      className="mt-0.5"
+                    />
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900">Lista de Precios Fija (Odoo)</p>
+                      <p className="text-xs text-slate-500">Usa los precios tal cual están definidos en la lista de precios de Odoo. Ideal para clientes con precios negociados.</p>
+                    </div>
+                  </label>
+                </div>
+                <p className="text-xs text-slate-400 mt-3">En ambos modos, si un producto tiene un precio manual configurado abajo, ese precio tiene prioridad.</p>
+              </div>
             </div>
           </section>
 
@@ -1599,13 +1662,71 @@ export default function EmpresaConfigPage() {
                           <div className="p-4 space-y-2">
                             <div className="flex items-start justify-between gap-3">
                               <h3 className="text-sm font-semibold text-slate-900 leading-5">{producto.name}</h3>
-                              <span className="text-xs font-medium text-primary whitespace-nowrap">
+                              <span className="text-xs font-medium text-slate-400 whitespace-nowrap">
                                 {new Intl.NumberFormat('es-CO', {
                                   style: 'currency',
                                   currency: 'COP',
                                   maximumFractionDigits: 0,
                                 }).format(producto.list_price || 0)}
                               </span>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[10px] text-slate-400">Precio:</span>
+                              <div className="relative flex-1">
+                                <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400">$</span>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="1"
+                                  placeholder={String(producto.list_price || 0)}
+                                  value={precioEditando.get(producto.id) ?? (precioOverrides.has(producto.id) ? String(precioOverrides.get(producto.id)!.precio) : '')}
+                                  onChange={(e) => setPrecioEditando((prev) => new Map(prev).set(producto.id, e.target.value))}
+                                  className={`w-full pl-5 pr-2 py-1 text-xs rounded border focus:outline-none focus:ring-1 focus:ring-primary/30 ${
+                                    precioOverrides.has(producto.id) ? 'border-primary bg-primary/5 font-semibold text-primary' : 'border-border text-slate-600'
+                                  }`}
+                                />
+                              </div>
+                              <button
+                                disabled={savingPrecio === producto.id}
+                                onClick={async () => {
+                                  const val = precioEditando.get(producto.id);
+                                  if (val === undefined || val.trim() === '') {
+                                    // Borrar override
+                                    const existing = precioOverrides.get(producto.id);
+                                    if (existing) {
+                                      setSavingPrecio(producto.id);
+                                      await fetch(`/api/admin/empresas/${empresaId}/precios?precio_id=${existing.id}`, { method: 'DELETE' });
+                                      setPrecioOverrides((prev) => { const n = new Map(prev); n.delete(producto.id); return n; });
+                                      setPrecioEditando((prev) => { const n = new Map(prev); n.delete(producto.id); return n; });
+                                      setSavingPrecio(null);
+                                      setToast('Precio manual eliminado.');
+                                    }
+                                    return;
+                                  }
+                                  const num = Number(val);
+                                  if (!Number.isFinite(num) || num < 0) return;
+                                  setSavingPrecio(producto.id);
+                                  try {
+                                    const res = await fetch(`/api/admin/empresas/${empresaId}/precios`, {
+                                      method: 'POST',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ odoo_product_id: producto.id, precio_override: num }),
+                                    });
+                                    if (res.ok) {
+                                      const d = await res.json();
+                                      setPrecioOverrides((prev) => new Map(prev).set(producto.id, { id: d.precio.id, precio: num }));
+                                      setPrecioEditando((prev) => { const n = new Map(prev); n.delete(producto.id); return n; });
+                                      setToast(`Precio de ${producto.name} actualizado a $${num.toLocaleString('es-CO')}`);
+                                    }
+                                  } catch { /* silencioso */ } finally {
+                                    setSavingPrecio(null);
+                                  }
+                                }}
+                                className="p-1 rounded text-slate-400 hover:text-primary hover:bg-primary/10 transition-colors disabled:opacity-50"
+                                title="Guardar precio"
+                              >
+                                {savingPrecio === producto.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                              </button>
                             </div>
 
                             <p className="text-xs text-slate-500">

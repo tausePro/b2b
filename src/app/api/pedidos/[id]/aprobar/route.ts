@@ -5,7 +5,7 @@ import { mergePedidoNoteWithSpecialItems, partitionPedidoItems } from '@/lib/ped
 import { getServerOdooConfig } from '@/lib/odoo/serverConfig';
 import { safeEnqueuePedidoNotifications } from '@/lib/notifications/pedidos';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
-import { loadMarginsForEmpresa, getEffectiveMargin, calculateSellingPrice } from '@/lib/pricing/margins';
+import { loadPricingContext, resolveProductPrice } from '@/lib/pricing/margins';
 import type { TipoPedidoItem } from '@/types';
 
 function getSupabaseAdmin() {
@@ -244,20 +244,20 @@ export async function POST(
       );
     }
 
-    // Recalcular precios server-side usando standard_price + margen antes de enviar a Odoo
+    // Recalcular precios server-side con jerarquía: override > costo+margen > pricelist
     const empresaId = pedido.empresa_id ?? pedido.empresa?.id;
     if (empresaId && catalogItems.length > 0) {
       try {
         const odooConfigReprice = await getServerOdooConfig();
         if (odooConfigReprice) {
           const repriceSession = await authenticate(odooConfigReprice);
-          const margins = await loadMarginsForEmpresa(empresaId);
+          const pricingCtx = await loadPricingContext(empresaId);
 
           const templateIds = [...new Set(catalogItems.map((i) => Number(i.odoo_product_id)))];
           const templates = await read(
             'product.template',
             templateIds,
-            ['id', 'standard_price', 'categ_id'],
+            ['id', 'list_price', 'standard_price', 'categ_id'],
             repriceSession
           );
           const templateMap = new Map(templates.map((t) => [Number(t.id), t]));
@@ -265,30 +265,34 @@ export async function POST(
           const variantIds = catalogItems
             .filter((i) => i.odoo_variant_id)
             .map((i) => Number(i.odoo_variant_id));
-          const variantMap = new Map<number, number>();
+          const variantMap = new Map<number, { standard_price: number; lst_price: number }>();
           if (variantIds.length > 0) {
             const variants = await read(
               'product.product',
               [...new Set(variantIds)],
-              ['id', 'standard_price'],
+              ['id', 'standard_price', 'lst_price'],
               repriceSession
             );
             for (const v of variants) {
-              variantMap.set(Number(v.id), Number(v.standard_price ?? 0));
+              variantMap.set(Number(v.id), {
+                standard_price: Number(v.standard_price ?? 0),
+                lst_price: Number(v.lst_price ?? 0),
+              });
             }
           }
 
           for (const item of catalogItems) {
             const tmpl = templateMap.get(Number(item.odoo_product_id));
             if (!tmpl) continue;
-            const categId = Array.isArray(tmpl.categ_id) ? (tmpl.categ_id as [number, string])[0] : null;
-            const margin = getEffectiveMargin(margins, categId);
-            const cost = item.odoo_variant_id && variantMap.has(Number(item.odoo_variant_id))
-              ? variantMap.get(Number(item.odoo_variant_id))!
-              : Number(tmpl.standard_price ?? 0);
-            const sellingPrice = calculateSellingPrice(cost, margin);
-            if (sellingPrice > 0) {
-              (item as Record<string, unknown>).precio_unitario_cop = sellingPrice;
+            const variantData = item.odoo_variant_id ? variantMap.get(Number(item.odoo_variant_id)) : null;
+            const resolvedPrice = resolveProductPrice(pricingCtx, {
+              id: Number(item.odoo_product_id),
+              list_price: variantData?.lst_price ?? Number(tmpl.list_price ?? 0),
+              standard_price: variantData?.standard_price ?? Number(tmpl.standard_price ?? 0),
+              categ_id: Array.isArray(tmpl.categ_id) ? tmpl.categ_id as [number, string] : false,
+            });
+            if (resolvedPrice > 0) {
+              (item as Record<string, unknown>).precio_unitario_cop = resolvedPrice;
             }
           }
 
