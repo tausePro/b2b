@@ -11,6 +11,9 @@ import {
   TrendingUp,
   Loader2,
   Bell,
+  Pencil,
+  Save,
+  Check,
 } from 'lucide-react';
 
 interface PresupuestoItem {
@@ -28,7 +31,31 @@ export default function PresupuestosPage() {
   const { user } = useAuth();
   const [presupuestos, setPresupuestos] = useState<PresupuestoItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState('');
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
   const supabase = createClient();
+
+  const canEditBudget = user?.rol === 'aprobador' || user?.rol === 'super_admin' || user?.rol === 'direccion';
+
+  const handleSavePresupuesto = async (presupuestoId: string) => {
+    const num = Number(editValue);
+    if (!Number.isFinite(num) || num < 0) return;
+    setSavingId(presupuestoId);
+    const { error } = await supabase
+      .from('presupuestos_mensuales')
+      .update({ monto_inicial: num, monto_disponible: num - (presupuestos.find((p) => p.id === presupuestoId)?.monto_consumido ?? 0) })
+      .eq('id', presupuestoId);
+    if (!error) {
+      setPresupuestos((prev) => prev.map((p) => p.id === presupuestoId ? { ...p, monto_inicial: num, monto_disponible: num - p.monto_consumido } : p));
+      setSaveSuccess(presupuestoId);
+      setTimeout(() => setSaveSuccess(null), 2000);
+    }
+    setEditingId(null);
+    setEditValue('');
+    setSavingId(null);
+  };
 
   useEffect(() => {
     const fetchPresupuestos = async () => {
@@ -184,7 +211,43 @@ export default function PresupuestosPage() {
                   return (
                     <tr key={p.id} className="border-b border-border/50 hover:bg-background-light/30">
                       <td className="py-3 px-4 font-medium text-foreground">{p.sede?.nombre_sede || 'General'}</td>
-                      <td className="py-3 px-4 text-right text-muted">{formatCOP(p.monto_inicial)}</td>
+                      <td className="py-3 px-4 text-right">
+                        {editingId === p.id ? (
+                          <div className="flex items-center justify-end gap-1">
+                            <span className="text-xs text-muted">$</span>
+                            <input
+                              type="number"
+                              min="0"
+                              value={editValue}
+                              onChange={(e) => setEditValue(e.target.value)}
+                              onKeyDown={(e) => { if (e.key === 'Enter') handleSavePresupuesto(p.id); if (e.key === 'Escape') { setEditingId(null); setEditValue(''); } }}
+                              autoFocus
+                              className="w-28 px-2 py-1 text-sm text-right border border-primary rounded focus:outline-none focus:ring-1 focus:ring-primary/30"
+                            />
+                            <button
+                              onClick={() => handleSavePresupuesto(p.id)}
+                              disabled={savingId === p.id}
+                              className="p-1 text-primary hover:bg-primary/10 rounded transition-colors"
+                            >
+                              {savingId === p.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-end gap-1">
+                            {saveSuccess === p.id && <Check className="w-3.5 h-3.5 text-success" />}
+                            <span className="text-muted">{formatCOP(p.monto_inicial)}</span>
+                            {canEditBudget && (
+                              <button
+                                onClick={() => { setEditingId(p.id); setEditValue(String(p.monto_inicial)); }}
+                                className="p-1 text-slate-300 hover:text-primary hover:bg-primary/10 rounded transition-colors"
+                                title="Editar presupuesto"
+                              >
+                                <Pencil className="w-3 h-3" />
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </td>
                       <td className="py-3 px-4 text-right font-medium">{formatCOP(p.monto_consumido)}</td>
                       <td className="py-3 px-4 text-right font-medium">{formatCOP(p.monto_disponible)}</td>
                       <td className="py-3 px-4">
