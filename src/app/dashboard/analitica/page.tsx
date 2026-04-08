@@ -27,9 +27,8 @@ interface MesData {
   valor: number;
 }
 
-const supabase = createClient();
-
 export default function AnaliticaPage() {
+  const [supabase] = useState(() => createClient());
   const [loading, setLoading] = useState(true);
   const [ventasMes, setVentasMes] = useState(0);
   const [pedidosMes, setPedidosMes] = useState(0);
