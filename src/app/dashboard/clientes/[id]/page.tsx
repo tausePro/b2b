@@ -24,6 +24,10 @@ import {
   BadgeCheck,
   Package,
   Search,
+  Percent,
+  Save,
+  Plus,
+  Trash2,
 } from 'lucide-react';
 
 interface ClienteDetalle {
@@ -107,6 +111,20 @@ export default function ClienteDetallePage() {
   const [productosOdoo, setProductosOdoo] = useState<ProductoOdooCliente[]>([]);
   const [loadingProductos, setLoadingProductos] = useState(false);
   const [busquedaProducto, setBusquedaProducto] = useState('');
+
+  // Pricing (solo dirección y super_admin)
+  const canManagePricing = user?.rol === 'direccion' || user?.rol === 'super_admin';
+  const [modoPricing, setModoPricing] = useState<string>('costo_margen');
+  const [savingModo, setSavingModo] = useState(false);
+  const [margenes, setMargenes] = useState<{ id: string; odoo_categ_id: number | null; margen_porcentaje: number }[]>([]);
+  const [loadingMargenes, setLoadingMargenes] = useState(false);
+  const [savingMargen, setSavingMargen] = useState(false);
+  const [nuevoMargenCategId, setNuevoMargenCategId] = useState<string>('');
+  const [nuevoMargenPorcentaje, setNuevoMargenPorcentaje] = useState<string>('20');
+  const [precioOverrides, setPrecioOverrides] = useState<Map<number, { id: string; precio: number }>>(new Map());
+  const [precioEditando, setPrecioEditando] = useState<Map<number, string>>(new Map());
+  const [savingPrecio, setSavingPrecio] = useState<number | null>(null);
+  const [pricingToast, setPricingToast] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchClienteDetalle = async () => {
@@ -250,6 +268,44 @@ export default function ClienteDetallePage() {
     fetchClienteDetalle();
   }, [clienteId, user]);
 
+  // Cargar datos de pricing
+  useEffect(() => {
+    if (!canManagePricing || !clienteId) return;
+
+    const loadPricing = async () => {
+      // Modo pricing desde empresa_configs
+      const { data: cfgData } = await supabase
+        .from('empresa_configs')
+        .select('modo_pricing')
+        .eq('empresa_id', clienteId)
+        .maybeSingle();
+      if (cfgData?.modo_pricing) setModoPricing(cfgData.modo_pricing);
+
+      // Márgenes
+      setLoadingMargenes(true);
+      try {
+        const res = await fetch(`/api/admin/empresas/${clienteId}/margenes`);
+        const data = await res.json();
+        if (res.ok && Array.isArray(data.margenes)) setMargenes(data.margenes);
+      } catch { /* silencioso */ } finally { setLoadingMargenes(false); }
+
+      // Overrides
+      try {
+        const res = await fetch(`/api/admin/empresas/${clienteId}/precios`);
+        const data = await res.json();
+        if (res.ok && Array.isArray(data.precios)) {
+          const map = new Map<number, { id: string; precio: number }>();
+          for (const p of data.precios as { id: string; odoo_product_id: number; precio_override: number }[]) {
+            map.set(p.odoo_product_id, { id: p.id, precio: p.precio_override });
+          }
+          setPrecioOverrides(map);
+        }
+      } catch { /* silencioso */ }
+    };
+
+    void loadPricing();
+  }, [canManagePricing, clienteId]);
+
   useEffect(() => {
     const partnerDesdeConfig = config?.odoo_partner_id;
     const partnerId = (partnerDesdeConfig && partnerDesdeConfig > 0) ? partnerDesdeConfig : cliente?.odoo_partner_id;
@@ -289,6 +345,14 @@ export default function ClienteDetallePage() {
   }, [productosOdoo, busquedaProducto]);
 
   const usuariosActivos = useMemo(() => usuarios.filter((usuario) => usuario.activo).length, [usuarios]);
+
+  const categoriasDisponibles = useMemo(() => {
+    const map = new Map<number, string>();
+    productosOdoo.forEach((p) => {
+      if (Array.isArray(p.categ_id)) map.set(p.categ_id[0], p.categ_id[1]);
+    });
+    return Array.from(map.entries());
+  }, [productosOdoo]);
 
   if (loading) {
     return (
@@ -576,6 +640,58 @@ export default function ClienteDetallePage() {
                               {new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(producto.list_price || 0)}
                             </p>
                           )}
+                          {canManagePricing && (
+                            <div className="flex items-center gap-1 mt-1.5">
+                              <span className="text-[10px] text-muted">$</span>
+                              <input
+                                type="number"
+                                min="0"
+                                step="1"
+                                placeholder={String(producto.list_price || 0)}
+                                value={precioEditando.get(producto.id) ?? (precioOverrides.has(producto.id) ? String(precioOverrides.get(producto.id)!.precio) : '')}
+                                onChange={(e) => setPrecioEditando((prev) => new Map(prev).set(producto.id, e.target.value))}
+                                className={`w-20 pl-1 pr-1 py-0.5 text-[11px] rounded border focus:outline-none focus:ring-1 focus:ring-primary/30 ${
+                                  precioOverrides.has(producto.id) ? 'border-primary bg-primary/5 font-semibold text-primary' : 'border-border text-muted'
+                                }`}
+                              />
+                              <button
+                                type="button"
+                                disabled={savingPrecio === producto.id}
+                                onClick={async () => {
+                                  const val = precioEditando.get(producto.id);
+                                  if (val === undefined || val.trim() === '') {
+                                    const existing = precioOverrides.get(producto.id);
+                                    if (existing) {
+                                      setSavingPrecio(producto.id);
+                                      await fetch(`/api/admin/empresas/${clienteId}/precios?precio_id=${existing.id}`, { method: 'DELETE' });
+                                      setPrecioOverrides((prev) => { const n = new Map(prev); n.delete(producto.id); return n; });
+                                      setPrecioEditando((prev) => { const n = new Map(prev); n.delete(producto.id); return n; });
+                                      setSavingPrecio(null);
+                                    }
+                                    return;
+                                  }
+                                  const num = Number(val);
+                                  if (!Number.isFinite(num) || num < 0) return;
+                                  setSavingPrecio(producto.id);
+                                  try {
+                                    const res = await fetch(`/api/admin/empresas/${clienteId}/precios`, {
+                                      method: 'POST',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ odoo_product_id: producto.id, precio_override: num }),
+                                    });
+                                    if (res.ok) {
+                                      const d = await res.json();
+                                      setPrecioOverrides((prev) => new Map(prev).set(producto.id, { id: d.precio.id, precio: num }));
+                                      setPrecioEditando((prev) => { const n = new Map(prev); n.delete(producto.id); return n; });
+                                    }
+                                  } catch { /* silencioso */ } finally { setSavingPrecio(null); }
+                                }}
+                                className="p-0.5 text-muted hover:text-primary transition-colors disabled:opacity-50"
+                              >
+                                {savingPrecio === producto.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                              </button>
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -613,6 +729,154 @@ export default function ClienteDetallePage() {
               </div>
             </div>
           </div>
+
+          {/* Pricing - solo dirección y super_admin */}
+          {canManagePricing && (
+            <div className="bg-white rounded-xl border border-border p-5 space-y-5">
+              <div className="flex items-center gap-2">
+                <Percent className="w-4 h-4 text-muted" />
+                <h2 className="font-semibold text-foreground">Precios y Márgenes</h2>
+              </div>
+
+              {/* Modo pricing */}
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-muted">Modo de precios</p>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setSavingModo(true);
+                      try {
+                        const res = await fetch(`/api/admin/empresas/${clienteId}/margenes`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ _set_modo_pricing: 'costo_margen' }),
+                        });
+                        if (res.ok) {
+                          setModoPricing('costo_margen');
+                          setPricingToast('Modo: Costo + Margen');
+                        }
+                      } catch { /* silencioso */ } finally { setSavingModo(false); }
+                    }}
+                    disabled={savingModo}
+                    className={`flex-1 px-3 py-2 rounded-lg text-xs font-medium border-2 transition-colors ${modoPricing !== 'pricelist' ? 'border-primary bg-primary/5 text-primary' : 'border-border text-muted hover:border-slate-300'}`}
+                  >
+                    Costo + Margen
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setSavingModo(true);
+                      try {
+                        const res = await fetch(`/api/admin/empresas/${clienteId}/margenes`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ _set_modo_pricing: 'pricelist' }),
+                        });
+                        if (res.ok) {
+                          setModoPricing('pricelist');
+                          setPricingToast('Modo: Lista de Precios Fija');
+                        }
+                      } catch { /* silencioso */ } finally { setSavingModo(false); }
+                    }}
+                    disabled={savingModo}
+                    className={`flex-1 px-3 py-2 rounded-lg text-xs font-medium border-2 transition-colors ${modoPricing === 'pricelist' ? 'border-primary bg-primary/5 text-primary' : 'border-border text-muted hover:border-slate-300'}`}
+                  >
+                    Lista Fija (Odoo)
+                  </button>
+                </div>
+              </div>
+
+              {/* Márgenes */}
+              {modoPricing !== 'pricelist' && (
+                <div className="space-y-3">
+                  <p className="text-xs font-medium text-muted">Márgenes por categoría</p>
+                  <div className="flex flex-wrap items-end gap-2">
+                    <select
+                      value={nuevoMargenCategId}
+                      onChange={(e) => setNuevoMargenCategId(e.target.value)}
+                      className="flex-1 min-w-[120px] px-2 py-1.5 border border-border rounded text-xs bg-white"
+                    >
+                      <option value="">Default (todas)</option>
+                      {categoriasDisponibles.map(([id, name]) => (
+                        <option key={id} value={String(id)}>{name}</option>
+                      ))}
+                    </select>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      max="999"
+                      value={nuevoMargenPorcentaje}
+                      onChange={(e) => setNuevoMargenPorcentaje(e.target.value)}
+                      className="w-16 px-2 py-1.5 border border-border rounded text-xs text-center"
+                      placeholder="%"
+                    />
+                    <button
+                      type="button"
+                      disabled={savingMargen}
+                      onClick={async () => {
+                        setSavingMargen(true);
+                        try {
+                          const catId = nuevoMargenCategId.trim();
+                          const res = await fetch(`/api/admin/empresas/${clienteId}/margenes`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ odoo_categ_id: catId === '' ? null : Number(catId), margen_porcentaje: Number(nuevoMargenPorcentaje) }),
+                          });
+                          if (!res.ok) throw new Error('Error');
+                          setNuevoMargenCategId('');
+                          setNuevoMargenPorcentaje('20');
+                          const r2 = await fetch(`/api/admin/empresas/${clienteId}/margenes`);
+                          const d2 = await r2.json();
+                          setMargenes(d2.margenes || []);
+                          setPricingToast('Margen guardado');
+                        } catch { /* silencioso */ } finally { setSavingMargen(false); }
+                      }}
+                      className="p-1.5 bg-primary text-white rounded hover:bg-primary-dark transition-colors disabled:opacity-50"
+                    >
+                      {savingMargen ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+
+                  {loadingMargenes ? (
+                    <Loader2 className="w-4 h-4 animate-spin text-primary mx-auto" />
+                  ) : margenes.length === 0 ? (
+                    <p className="text-xs text-muted">Sin márgenes configurados. Default: 20%</p>
+                  ) : (
+                    <div className="space-y-1">
+                      {margenes.map((m) => (
+                        <div key={m.id} className="flex items-center justify-between px-2 py-1.5 rounded bg-background-light text-xs">
+                          <span className={m.odoo_categ_id === null ? 'text-primary font-medium' : 'text-foreground'}>
+                            {m.odoo_categ_id === null ? 'Default' : (categoriasDisponibles.find(([id]) => id === m.odoo_categ_id)?.[1] || `#${m.odoo_categ_id}`)}
+                          </span>
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold">{m.margen_porcentaje}%</span>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                await fetch(`/api/admin/empresas/${clienteId}/margenes?margen_id=${m.id}`, { method: 'DELETE' });
+                                setMargenes((prev) => prev.filter((x) => x.id !== m.id));
+                              }}
+                              className="text-muted hover:text-danger transition-colors"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <p className="text-[10px] text-muted">Los precios manuales por producto tienen prioridad sobre el modo seleccionado.</p>
+
+              {pricingToast && (
+                <p className="text-xs text-primary font-medium">{pricingToast}</p>
+              )}
+            </div>
+          )}
 
           <div className="bg-white rounded-xl border border-border p-5">
             <h2 className="font-semibold text-foreground mb-4">Usuarios del cliente</h2>
