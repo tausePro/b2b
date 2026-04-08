@@ -26,6 +26,7 @@ import {
   Plus,
   Search,
   RefreshCw,
+  Send,
 } from 'lucide-react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
@@ -452,6 +453,28 @@ export default function DetallePedidoPage() {
   };
 
   const [reordering, setReordering] = useState(false);
+  const [sendingDraft, setSendingDraft] = useState(false);
+
+  const handleEnviarBorrador = async () => {
+    if (!pedido) return;
+    setSendingDraft(true);
+    try {
+      const res = await fetch(`/api/pedidos/${pedido.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ estado: 'en_aprobacion' }),
+      });
+      if (!res.ok) {
+        const d = await res.json();
+        throw new Error(d.details || d.error || 'Error al enviar el borrador.');
+      }
+      await fetchPedido();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Error al enviar el borrador.');
+    } finally {
+      setSendingDraft(false);
+    }
+  };
 
   const handleReorder = async () => {
     if (!pedido || items.length === 0 || !user?.empresa_id) return;
@@ -611,7 +634,9 @@ export default function DetallePedidoPage() {
 
   const canApprove = user?.rol === 'aprobador' && pedido.estado === 'en_aprobacion';
   const canEdit = (user?.rol === 'aprobador' || user?.rol === 'super_admin') && pedido.estado === 'en_aprobacion';
-  const canDelete = user?.rol === 'super_admin';
+  const canEditDraft = (user?.rol === 'comprador' || user?.rol === 'super_admin') && pedido.estado === 'borrador';
+  const canSendDraft = (user?.rol === 'comprador' || user?.rol === 'super_admin') && pedido.estado === 'borrador';
+  const canDelete = user?.rol === 'super_admin' || ((user?.rol === 'comprador') && pedido.estado === 'borrador');
   const canValidate = user?.rol === 'asesor' && pedido.estado === 'aprobado' && !pedido.odoo_sale_order_id;
   const estadoVisual = pedido.estado;
   const subtotalVisual = odooSummary?.amountUntaxed ?? pedido.valor_total_cop;
@@ -684,13 +709,23 @@ export default function DetallePedidoPage() {
               Eliminar
             </button>
           )}
-          {canEdit && !editMode && (
+          {(canEdit || canEditDraft) && !editMode && (
             <button
               onClick={enterEditMode}
               className="inline-flex items-center gap-2 px-4 py-2 border border-primary text-primary rounded-lg text-sm font-medium hover:bg-primary/5 transition-colors"
             >
               <Pencil className="w-4 h-4" />
               Editar
+            </button>
+          )}
+          {canSendDraft && !editMode && (
+            <button
+              onClick={handleEnviarBorrador}
+              disabled={sendingDraft}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-dark transition-colors disabled:opacity-50"
+            >
+              {sendingDraft ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+              Enviar Pedido
             </button>
           )}
           {editMode && (
