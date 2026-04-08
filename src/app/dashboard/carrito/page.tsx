@@ -5,7 +5,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useCart } from '@/contexts/CartContext';
 import { createClient } from '@/lib/supabase/client';
 import { formatCOP } from '@/lib/utils';
-import { Trash2, Plus, Minus, ShoppingBag, ArrowLeft, Send, Loader2 } from 'lucide-react';
+import { Trash2, Plus, Minus, ShoppingBag, ArrowLeft, Send, Loader2, Save } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
@@ -93,6 +93,18 @@ export default function CarritoPage() {
     setShowSpecialForm(false);
   };
 
+  const buildItemsPayload = () => items.map((item) => ({
+    tipo_item: item.tipo_item,
+    odoo_product_id: item.odoo_product_id,
+    odoo_variant_id: item.odoo_variant_id || null,
+    nombre_producto: item.nombre_producto,
+    cantidad: item.cantidad,
+    precio_unitario_cop: item.precio_unitario_cop,
+    unidad: item.unidad || null,
+    referencia_cliente: item.referencia_cliente || null,
+    comentarios_item: item.comentarios_item || null,
+  }));
+
   const handleEnviarAprobacion = async () => {
     if (!user || items.length === 0) return;
 
@@ -110,17 +122,7 @@ export default function CarritoPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           comentarios_sede: observaciones || null,
-          items: items.map((item) => ({
-            tipo_item: item.tipo_item,
-            odoo_product_id: item.odoo_product_id,
-            odoo_variant_id: item.odoo_variant_id || null,
-            nombre_producto: item.nombre_producto,
-            cantidad: item.cantidad,
-            precio_unitario_cop: item.precio_unitario_cop,
-            unidad: item.unidad || null,
-            referencia_cliente: item.referencia_cliente || null,
-            comentarios_item: item.comentarios_item || null,
-          })),
+          items: buildItemsPayload(),
         }),
       });
       const payload = await response.json();
@@ -140,6 +142,35 @@ export default function CarritoPage() {
       alert('Error inesperado. Intenta de nuevo.');
     } finally {
       setEnviando(false);
+    }
+  };
+
+  const [guardandoBorrador, setGuardandoBorrador] = useState(false);
+
+  const handleGuardarBorrador = async () => {
+    if (!user || items.length === 0) return;
+    setGuardandoBorrador(true);
+    try {
+      const response = await fetch('/api/pedidos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          comentarios_sede: observaciones || null,
+          items: buildItemsPayload(),
+          guardar_como_borrador: true,
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.details || payload.error || 'Error al guardar borrador.');
+      }
+      clearCart();
+      router.push('/dashboard/pedidos');
+    } catch (err) {
+      console.error('Error:', err);
+      alert('Error al guardar borrador. Intenta de nuevo.');
+    } finally {
+      setGuardandoBorrador(false);
     }
   };
 
@@ -430,7 +461,7 @@ export default function CarritoPage() {
             {/* Botón enviar */}
             <button
               onClick={handleEnviarAprobacion}
-              disabled={enviando}
+              disabled={enviando || guardandoBorrador}
               className="w-full bg-primary hover:bg-primary-dark text-white font-semibold py-3 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               {enviando ? (
@@ -442,6 +473,24 @@ export default function CarritoPage() {
                 <>
                   <Send className="w-4 h-4" />
                   {ctaTexto}
+                </>
+              )}
+            </button>
+
+            <button
+              onClick={handleGuardarBorrador}
+              disabled={guardandoBorrador || enviando}
+              className="w-full border border-border text-muted hover:text-foreground hover:border-foreground/30 font-medium py-2.5 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-sm"
+            >
+              {guardandoBorrador ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Guardando...
+                </>
+              ) : (
+                <>
+                  <Save className="w-4 h-4" />
+                  Guardar como borrador
                 </>
               )}
             </button>

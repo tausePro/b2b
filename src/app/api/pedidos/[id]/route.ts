@@ -50,9 +50,9 @@ export async function DELETE(
     }
 
     const perfil = perfilData as PerfilActual;
-    if (perfil.rol !== 'super_admin') {
+    if (!['super_admin', 'comprador'].includes(perfil.rol)) {
       return NextResponse.json(
-        { error: 'FORBIDDEN', details: 'Solo el super administrador puede eliminar pedidos.' },
+        { error: 'FORBIDDEN', details: 'No tienes permisos para eliminar pedidos.' },
         { status: 403 }
       );
     }
@@ -61,7 +61,7 @@ export async function DELETE(
 
     const { data: pedido, error: pedidoError } = await admin
       .from('pedidos')
-      .select('id, numero, estado, empresa_id')
+      .select('id, numero, estado, empresa_id, usuario_creador_id')
       .eq('id', pedidoId)
       .single();
 
@@ -70,6 +70,22 @@ export async function DELETE(
         { error: 'PEDIDO_NOT_FOUND', details: pedidoError?.message ?? null },
         { status: 404 }
       );
+    }
+
+    // Comprador solo puede eliminar sus propios borradores
+    if (perfil.rol === 'comprador') {
+      if (pedido.estado !== 'borrador') {
+        return NextResponse.json(
+          { error: 'FORBIDDEN', details: 'Solo puedes eliminar pedidos en estado borrador.' },
+          { status: 403 }
+        );
+      }
+      if (pedido.usuario_creador_id !== perfil.id) {
+        return NextResponse.json(
+          { error: 'FORBIDDEN', details: 'Solo puedes eliminar tus propios borradores.' },
+          { status: 403 }
+        );
+      }
     }
 
     // pedido_items, logs_trazabilidad se eliminan por ON DELETE CASCADE
@@ -123,9 +139,10 @@ type NewItemInput = {
 };
 
 type PatchPedidoRequest = {
-  items: PatchItemInput[];
+  items?: PatchItemInput[];
   newItems?: NewItemInput[];
   comentarios_aprobador?: string | null;
+  estado?: string;
 };
 
 function normalizeNewItemInput(item: Partial<NewItemInput>): NewItemInput {
@@ -199,7 +216,7 @@ export async function PATCH(
     }
 
     const perfil = perfilData as PerfilActual;
-    if (!['aprobador', 'super_admin'].includes(perfil.rol)) {
+    if (!['aprobador', 'super_admin', 'comprador'].includes(perfil.rol)) {
       return NextResponse.json(
         { error: 'FORBIDDEN', details: 'Tu rol no puede editar pedidos.' },
         { status: 403 }
@@ -221,24 +238,59 @@ export async function PATCH(
       );
     }
 
-    if (perfil.rol === 'aprobador' && perfil.empresa_id !== pedido.empresa_id) {
+    if ((perfil.rol === 'aprobador' || perfil.rol === 'comprador') && perfil.empresa_id !== pedido.empresa_id) {
       return NextResponse.json(
         { error: 'FORBIDDEN', details: 'No tienes acceso a este pedido.' },
         { status: 403 }
       );
     }
 
-    if (pedido.estado !== 'en_aprobacion') {
+    // Comprador solo puede editar/enviar borradores
+    if (perfil.rol === 'comprador' && pedido.estado !== 'borrador') {
+      return NextResponse.json(
+        { error: 'FORBIDDEN', details: 'Solo puedes editar tus borradores.' },
+        { status: 403 }
+      );
+    }
+
+    if (!['en_aprobacion', 'borrador'].includes(pedido.estado)) {
       return NextResponse.json(
         {
           error: 'INVALID_STATE',
-          details: `El pedido ${pedido.numero} está en estado "${pedido.estado}". Solo se pueden editar pedidos pendientes de aprobación.`,
+          details: `El pedido ${pedido.numero} está en estado "${pedido.estado}". Solo se pueden editar pedidos en borrador o pendientes de aprobación.`,
         },
         { status: 409 }
       );
     }
 
     const body = (await request.json()) as PatchPedidoRequest;
+
+    // Cambio simple de estado: borrador → en_aprobacion
+    if (body.estado === 'en_aprobacion' && pedido.estado === 'borrador') {
+      const { error: updateError } = await admin
+        .from('pedidos')
+        .update({ estado: 'en_aprobacion' })
+        .eq('id', pedidoId);
+
+      if (updateError) {
+        return NextResponse.json(
+          { error: 'UPDATE_ERROR', details: updateError.message },
+          { status: 500 }
+        );
+      }
+
+      const nombreUsuario = [perfil.nombre, perfil.apellido].filter(Boolean).join(' ').trim() || user.email || 'Usuario';
+      await admin.from('logs_trazabilidad').insert({
+        pedido_id: pedidoId,
+        accion: 'creacion',
+        descripcion: `Borrador enviado a aprobación`,
+        usuario_id: perfil.id,
+        usuario_nombre: nombreUsuario,
+      });
+
+      return NextResponse.json({ ok: true, pedido: { ...pedido, estado: 'en_aprobacion' } });
+    }
+
     const itemChanges = Array.isArray(body.items) ? body.items : [];
     const normalizedNewItems = Array.isArray(body.newItems)
       ? body.newItems.map((item) => normalizeNewItemInput(item))

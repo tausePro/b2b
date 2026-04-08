@@ -32,6 +32,7 @@ type CreatePedidoItemInput = {
 type CreatePedidoRequest = {
   comentarios_sede?: string | null;
   items: CreatePedidoItemInput[];
+  guardar_como_borrador?: boolean;
 };
 
 function getSupabaseAdmin() {
@@ -188,9 +189,11 @@ export async function POST(request: NextRequest) {
       sedeData = sede;
     }
 
+    const esBorrador = Boolean(body.guardar_como_borrador);
+
     // Recalcular precios de catálogo server-side con jerarquía: override > costo+margen > pricelist
     const catalogItemsToReprice = items.filter((i) => i.tipo_item === 'catalogo' && i.odoo_product_id);
-    if (catalogItemsToReprice.length > 0 && perfil.empresa_id) {
+    if (!esBorrador && catalogItemsToReprice.length > 0 && perfil.empresa_id) {
       try {
         const odooConfig = await getServerOdooConfig();
         if (odooConfig) {
@@ -252,16 +255,21 @@ export async function POST(request: NextRequest) {
     const totalItems = items.reduce((sum, item) => sum + item.cantidad, 0);
     const valorTotal = items.reduce((sum, item) => sum + item.cantidad * item.precio_unitario_cop, 0);
 
+    const estadoInicial = esBorrador ? 'borrador' : undefined; // undefined = trigger de BD decide
+
+    const insertData: Record<string, unknown> = {
+      empresa_id: perfil.empresa_id,
+      sede_id: sedeId,
+      usuario_creador_id: perfil.id,
+      comentarios_sede: body.comentarios_sede?.trim() || null,
+      valor_total_cop: valorTotal,
+      total_items: totalItems,
+    };
+    if (estadoInicial) insertData.estado = estadoInicial;
+
     const { data: pedido, error: pedidoError } = await admin
       .from('pedidos')
-      .insert({
-        empresa_id: perfil.empresa_id,
-        sede_id: sedeId,
-        usuario_creador_id: perfil.id,
-        comentarios_sede: body.comentarios_sede?.trim() || null,
-        valor_total_cop: valorTotal,
-        total_items: totalItems,
-      })
+      .insert(insertData)
       .select('id, numero, estado, fecha_aprobacion')
       .single();
 
@@ -295,6 +303,31 @@ export async function POST(request: NextRequest) {
     }
 
     const nombreUsuario = [perfil.nombre, perfil.apellido].filter(Boolean).join(' ').trim() || user.email || 'Usuario';
+
+    // Borradores: solo log básico y retorno inmediato
+    if (esBorrador) {
+      await admin.from('logs_trazabilidad').insert({
+        pedido_id: pedido.id,
+        accion: 'creacion',
+        descripcion: `Pedido guardado como borrador con ${totalItems} items`,
+        usuario_id: perfil.id,
+        usuario_nombre: nombreUsuario,
+        metadata: { total_items: totalItems, valor_total_cop: valorTotal, borrador: true },
+      });
+
+      return NextResponse.json({
+        ok: true,
+        pedido: {
+          id: pedido.id,
+          numero: pedido.numero,
+          estado: 'borrador',
+          fecha_aprobacion: null,
+          odoo_sale_order_id: null,
+        },
+        warning: null,
+      });
+    }
+
     const flujoEsAprobacion = pedido.estado === 'en_aprobacion';
 
     const { error: logError } = await admin.from('logs_trazabilidad').insert({
