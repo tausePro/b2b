@@ -489,9 +489,10 @@ export default function DetallePedidoPage() {
         }
       }
 
-      // 3. Para variantes, traer precios e imágenes actualizados por template
-      const variantPriceMap = new Map<number, number>(); // odoo_variant_id → lst_price
-      const variantImageMap = new Map<number, string>(); // odoo_variant_id → imagen base64
+      // 3. Para variantes, traer precios, imágenes y labels actualizados por template
+      const variantPriceMap = new Map<number, number>();
+      const variantImageMap = new Map<number, string>();
+      const variantLabelMap = new Map<number, string>();
       const variantItems = items.filter((i) => i.tipo_item === 'catalogo' && i.odoo_variant_id);
       const uniqueTemplateIds = [...new Set(variantItems.map((i) => i.odoo_product_id!))];
 
@@ -500,11 +501,18 @@ export default function DetallePedidoPage() {
           const vRes = await fetch(`/api/odoo/productos/${templateId}/variantes`);
           if (vRes.ok) {
             const vData = await vRes.json();
-            for (const v of (vData.variants || []) as { id: number; lst_price: number; image_128: string | null }[]) {
+            const attrs = (vData.attributes || []) as { values: { ptavId: number; name: string }[] }[];
+            for (const v of (vData.variants || []) as { id: number; lst_price: number; image_128: string | null; attribute_value_ids: number[] }[]) {
               variantPriceMap.set(v.id, v.lst_price);
               if (v.image_128) {
                 variantImageMap.set(v.id, `data:image/png;base64,${v.image_128}`);
               }
+              const labels: string[] = [];
+              for (const attr of attrs) {
+                const match = attr.values.find((val) => v.attribute_value_ids.includes(val.ptavId));
+                if (match) labels.push(match.name);
+              }
+              if (labels.length > 0) variantLabelMap.set(v.id, labels.join(' / '));
             }
           }
         } catch {
@@ -542,6 +550,7 @@ export default function DetallePedidoPage() {
             nombre_producto: item.nombre_producto,
             precio_unitario_cop: freshPrice,
             imagen_url: varImg,
+            variante_label: variantLabelMap.get(item.odoo_variant_id) || null,
             unidad: item.unidad || null,
             cantidad: item.cantidad,
           };
