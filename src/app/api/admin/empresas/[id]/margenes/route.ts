@@ -72,6 +72,21 @@ export async function POST(
   const { id: empresaId } = await context.params;
   const body = await request.json();
 
+  // Cambio de modo_pricing
+  if (typeof body._set_modo_pricing === 'string') {
+    const modo = body._set_modo_pricing === 'pricelist' ? 'pricelist' : 'costo_margen';
+    const { error: upsertError } = await admin
+      .from('empresa_configs')
+      .upsert(
+        { empresa_id: empresaId, modo_pricing: modo },
+        { onConflict: 'empresa_id' }
+      );
+    if (upsertError) {
+      return NextResponse.json({ error: upsertError.message }, { status: 500 });
+    }
+    return NextResponse.json({ ok: true, modo_pricing: modo });
+  }
+
   const odoo_categ_id = body.odoo_categ_id === null || body.odoo_categ_id === undefined
     ? null
     : Number(body.odoo_categ_id);
