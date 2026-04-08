@@ -43,3 +43,58 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #a0a0a0;
 }
+
+/* ============================================
+   Estilos de impresión
+   ============================================ */
+@media print {
+  body {
+    background: white !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Ocultar navegación, sidebar, header, botones de acción */
+  nav,
+  aside,
+  header,
+  .no-print,
+  [data-no-print],
+  button,
+  a[href="/dashboard/carrito"],
+  a[href="/dashboard/catalogo"] {
+    display: none !important;
+  }
+
+  /* Mostrar solo el contenido principal */
+  main {
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  /* Ajustar contenedores */
+  .print-container {
+    padding: 0 !important;
+    margin: 0 !important;
+    box-shadow: none !important;
+    border: none !important;
+  }
+
+  /* Forzar visibilidad de elementos print-only */
+  .print-only {
+    display: block !important;
+  }
+
+  /* Tablas legibles */
+  table {
+    font-size: 11px !important;
+    width: 100% !important;
+  }
+
+  /* Evitar cortes en filas */
+  tr {
+    page-break-inside: avoid;
+  }
+}

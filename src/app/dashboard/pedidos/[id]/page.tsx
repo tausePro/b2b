@@ -695,7 +695,11 @@ export default function DetallePedidoPage() {
               {reordering ? 'Cargando precios...' : 'Volver a pedir'}
             </button>
           )}
-          <button className="inline-flex items-center gap-2 px-4 py-2 border border-border rounded-lg text-sm font-medium hover:bg-white transition-colors">
+          <button
+            type="button"
+            onClick={() => { try { window.print(); } catch (e) { console.error('Error al imprimir:', e); } }}
+            className="inline-flex items-center gap-2 px-4 py-2 border border-border rounded-lg text-sm font-medium hover:bg-white transition-colors no-print"
+          >
             <Printer className="w-4 h-4" />
             Imprimir
           </button>
