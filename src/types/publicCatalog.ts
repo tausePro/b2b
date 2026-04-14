@@ -18,6 +18,19 @@ export interface PublicCatalogCategoryNode {
   children: PublicCatalogCategoryNode[];
 }
 
+export interface PublicProductDetail {
+  id: number;
+  name: string;
+  description_sale: string | false;
+  categ_id: [number, string] | false;
+  image_128: string | false;
+  image_1920: string | false;
+  default_code: string | false;
+  uom_name: string;
+  product_variant_count: number;
+  attribute_line_ids: number[];
+}
+
 export interface PublicCatalogQueryState {
   search: string;
   categoryId: number | null;

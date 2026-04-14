@@ -485,8 +485,9 @@ export default function PublicCatalogClient({ initialData }: PublicCatalogClient
                       const description = typeof producto.description_sale === 'string' ? producto.description_sale : '';
 
                       return (
-                        <article
+                        <Link
                           key={producto.id}
+                          href={`/catalogo/${producto.id}`}
                           className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-lg hover:shadow-primary/5"
                         >
                           <div className="relative flex h-44 items-center justify-center bg-slate-50 p-4">
@@ -496,8 +497,11 @@ export default function PublicCatalogClient({ initialData }: PublicCatalogClient
                                 alt={producto.name}
                                 fill
                                 unoptimized
+                                loading="lazy"
                                 sizes="(max-width: 768px) 100vw, (max-width: 1280px) 50vw, 33vw"
                                 className="object-contain p-4"
+                                placeholder="blur"
+                                blurDataURL="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZjFmNWY5Ii8+PC9zdmc+"
                               />
                             ) : (
                               <Package className="h-12 w-12 text-slate-200" />
@@ -518,7 +522,7 @@ export default function PublicCatalogClient({ initialData }: PublicCatalogClient
                             )}
                             <p className="mt-4 text-sm font-medium text-slate-400">Unidad: {producto.uom_name || 'und'}</p>
                           </div>
-                        </article>
+                        </Link>
                       );
                     })}
                   </div>

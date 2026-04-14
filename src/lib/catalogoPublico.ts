@@ -14,6 +14,7 @@ import type {
   PublicCatalogListingResult,
   PublicCatalogPageData,
   PublicCatalogProduct,
+  PublicProductDetail,
 } from '@/types/publicCatalog';
 
 export const PUBLIC_CATALOG_DEFAULT_LIMIT = 24;
@@ -21,18 +22,34 @@ export const PUBLIC_CATALOG_MAX_LIMIT = 48;
 export const PUBLIC_CATALOG_MIN_SEARCH_LENGTH = 3;
 
 const EXCLUDED_PUBLIC_ROOT_CATEGORY_NAMES: ReadonlySet<string> = new Set(
-  ['empaques', 'gastos'].map((n) =>
+  ['empaques', 'gastos', 'saleable', 'movimientos contables', 'transporte'].map((n) =>
     n.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim()
   )
 );
 
-function isExcludedRootCategory(category: OdooCategory): boolean {
-  if (Array.isArray(category.parent_id)) return false;
-  const normalized = category.name
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .trim();
+const PUBLIC_CATALOG_VIRTUAL_ROOT_NAME = 'suministros de oficina';
+
+function normalizeForComparison(value: string) {
+  return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+}
+
+function findVirtualRootId(categories: OdooCategory[]): number | null {
+  for (const cat of categories) {
+    if (Array.isArray(cat.parent_id)) continue;
+    if (normalizeForComparison(cat.name) === PUBLIC_CATALOG_VIRTUAL_ROOT_NAME) {
+      return cat.id;
+    }
+  }
+  return null;
+}
+
+function isExcludedCategory(category: OdooCategory, virtualRootId: number | null): boolean {
+  const isRoot = !Array.isArray(category.parent_id);
+  const isVirtualRootChild = virtualRootId && Array.isArray(category.parent_id) && category.parent_id[0] === virtualRootId;
+
+  if (!isRoot && !isVirtualRootChild) return false;
+
+  const normalized = normalizeForComparison(category.name);
   return EXCLUDED_PUBLIC_ROOT_CATEGORY_NAMES.has(normalized);
 }
 
@@ -47,6 +64,7 @@ interface PublicCatalogCategoryData {
   categoryIndex: Record<string, PublicCatalogCategoryNode>;
   categories: PublicCatalogCategoryNode[];
   excludedRootIds: number[];
+  virtualRootId: number | null;
 }
 
 interface PublicCatalogListingData {
@@ -117,8 +135,11 @@ function buildCategoryTree(categories: OdooCategory[]): PublicCatalogCategoryDat
   const excludedRootIdSet = new Set<number>();
   const byParentId = new Map<number | null, OdooCategory[]>();
 
+  // Encontrar la categoría virtual raíz (ej: "Suministros de Oficina")
+  const virtualRootId = findVirtualRootId(categories);
+
   for (const category of categories) {
-    if (isExcludedRootCategory(category)) {
+    if (isExcludedCategory(category, virtualRootId)) {
       excludedRootIdSet.add(category.id);
     }
   }
@@ -155,11 +176,19 @@ function buildCategoryTree(categories: OdooCategory[]): PublicCatalogCategoryDat
   const categoryIndex: Record<string, PublicCatalogCategoryNode> = {};
 
   const buildNode = (category: OdooCategory, level: number): PublicCatalogCategoryNode => {
+    // Para hijos directos de la virtual root, limpiar el prefijo del complete_name
+    const displayName = virtualRootId && Array.isArray(category.parent_id) && category.parent_id[0] === virtualRootId
+      ? category.name
+      : category.name;
+    const displayCompleteName = virtualRootId
+      ? category.complete_name.replace(/^Suministros de Oficina\s*\/\s*/i, '')
+      : category.complete_name;
+
     const node: PublicCatalogCategoryNode = {
       id: category.id,
-      name: category.name,
-      complete_name: category.complete_name,
-      slug: slugifyCategory(category.complete_name),
+      name: displayName,
+      complete_name: displayCompleteName,
+      slug: slugifyCategory(displayCompleteName),
       parentId: Array.isArray(category.parent_id) ? category.parent_id[0] : null,
       level,
       children: [],
@@ -176,7 +205,9 @@ function buildCategoryTree(categories: OdooCategory[]): PublicCatalogCategoryDat
     return node;
   };
 
-  const categoriesTree = (byParentId.get(null) ?? [])
+  // Si hay virtual root, usar sus hijos como categorías raíz
+  const rootParentId = virtualRootId ?? null;
+  const categoriesTree = (byParentId.get(rootParentId) ?? [])
     .slice()
     .sort(sortCategories)
     .map((category) => buildNode(category, 0));
@@ -187,14 +218,20 @@ function buildCategoryTree(categories: OdooCategory[]): PublicCatalogCategoryDat
     categoryIndex,
     categories: categoriesTree,
     excludedRootIds,
+    virtualRootId,
   };
 }
 
-function buildProductDomain(search: string, categoryId: number | null, excludedRootIds: number[]) {
+function buildProductDomain(search: string, categoryId: number | null, excludedRootIds: number[], virtualRootId: number | null) {
   const domain: unknown[] = [
     ['sale_ok', '=', true],
     ['active', '=', true],
   ];
+
+  // Si hay virtual root, solo mostrar productos bajo ella
+  if (virtualRootId) {
+    domain.push(['categ_id', 'child_of', virtualRootId]);
+  }
 
   for (const excludedId of excludedRootIds) {
     domain.push('!', ['categ_id', 'child_of', excludedId]);
@@ -232,7 +269,8 @@ const getCachedListingData = unstable_cache(
     categoryId: number | null,
     page: number,
     limit: number,
-    excludedRootIds: number[]
+    excludedRootIds: number[],
+    virtualRootId: number | null
   ): Promise<PublicCatalogListingData> => {
     const config = await getServerOdooConfig();
     if (!config) {
@@ -241,7 +279,7 @@ const getCachedListingData = unstable_cache(
 
     const session = await authenticate(config);
     const offset = (page - 1) * limit;
-    const domain = buildProductDomain(search, categoryId, excludedRootIds);
+    const domain = buildProductDomain(search, categoryId, excludedRootIds, virtualRootId);
 
     const [productos, total] = await Promise.all([
       searchRead(
@@ -305,7 +343,8 @@ export async function getPublicCatalogPageData(
     normalizedCategoryId,
     normalizedPage,
     normalizedLimit,
-    categoriesData.excludedRootIds
+    categoriesData.excludedRootIds,
+    categoriesData.virtualRootId
   );
 
   return {
@@ -315,4 +354,84 @@ export async function getPublicCatalogPageData(
     totalPages: listingData.totalPages,
     categories: categoriesData.categories,
   };
+}
+
+const PRODUCT_DETAIL_FIELDS = [
+  'id', 'name', 'description_sale', 'categ_id', 'image_128', 'image_1920',
+  'default_code', 'uom_name', 'product_variant_count', 'attribute_line_ids',
+];
+
+function mapProductDetail(row: Record<string, unknown>): PublicProductDetail {
+  const rawCategory = row.categ_id;
+  const categ_id = Array.isArray(rawCategory) && rawCategory.length >= 2
+    ? [Number(rawCategory[0]), String(rawCategory[1])] as [number, string]
+    : false;
+
+  return {
+    id: Number(row.id),
+    name: typeof row.name === 'string' ? row.name : `Producto ${String(row.id ?? '')}`,
+    description_sale: typeof row.description_sale === 'string' ? row.description_sale : false,
+    categ_id,
+    image_128: typeof row.image_128 === 'string' ? row.image_128 : false,
+    image_1920: typeof row.image_1920 === 'string' ? row.image_1920 : false,
+    default_code: typeof row.default_code === 'string' ? row.default_code : false,
+    uom_name: typeof row.uom_name === 'string' ? row.uom_name : 'und',
+    product_variant_count: Number(row.product_variant_count ?? 1),
+    attribute_line_ids: Array.isArray(row.attribute_line_ids) ? row.attribute_line_ids as number[] : [],
+  };
+}
+
+const getCachedProductDetail = unstable_cache(
+  async (productId: number): Promise<PublicProductDetail | null> => {
+    const config = await getServerOdooConfig();
+    if (!config) return null;
+
+    const session = await authenticate(config);
+    const rows = await searchRead(
+      'product.template',
+      [['id', '=', productId], ['sale_ok', '=', true], ['active', '=', true]],
+      PRODUCT_DETAIL_FIELDS,
+      { limit: 1, session }
+    );
+
+    return rows.length > 0 ? mapProductDetail(rows[0]) : null;
+  },
+  ['public-product-detail'],
+  { revalidate: 900 }
+);
+
+const getCachedRelatedProducts = unstable_cache(
+  async (categoryId: number, excludeProductId: number): Promise<PublicCatalogProduct[]> => {
+    const config = await getServerOdooConfig();
+    if (!config) return [];
+
+    const session = await authenticate(config);
+    const rows = await searchRead(
+      'product.template',
+      [
+        ['categ_id', 'child_of', categoryId],
+        ['id', '!=', excludeProductId],
+        ['sale_ok', '=', true],
+        ['active', '=', true],
+      ],
+      ['id', 'name', 'description_sale', 'categ_id', 'image_128', 'default_code', 'uom_name'],
+      { limit: 6, order: 'name asc', session }
+    );
+
+    return rows.map(mapPublicCatalogProduct);
+  },
+  ['public-related-products'],
+  { revalidate: 900 }
+);
+
+export async function getPublicProductDetail(productId: number) {
+  const product = await getCachedProductDetail(productId);
+  if (!product) return null;
+
+  const categId = Array.isArray(product.categ_id) ? product.categ_id[0] : null;
+  const related = categId ? await getCachedRelatedProducts(categId, product.id) : [];
+  const categoriesData = await getCachedCategoryData();
+  const categoryNode = categId ? categoriesData.categoryIndex[String(categId)] ?? null : null;
+
+  return { product, related, category: categoryNode };
 }
