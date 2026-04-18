@@ -1,8 +1,8 @@
 import type { Metadata } from 'next';
 import PublicLayout from '@/components/public/PublicLayout';
-import { getSeccion } from '@/lib/landing/getContenido';
+import { getSeccion, LANDING_CACHE_REVALIDATE } from '@/lib/landing/getContenido';
 
-export const dynamic = 'force-dynamic';
+export const revalidate = LANDING_CACHE_REVALIDATE;
 
 export async function generateMetadata(): Promise<Metadata> {
   const s = await getSeccion('pagina_nosotros');

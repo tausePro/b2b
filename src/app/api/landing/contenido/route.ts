@@ -1,6 +1,8 @@
 import { createClient } from '@supabase/supabase-js';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { NextRequest, NextResponse } from 'next/server';
+import { revalidateTag } from 'next/cache';
+import { LANDING_CACHE_TAG } from '@/lib/landing/getContenido';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -83,6 +85,9 @@ export async function PUT(request: NextRequest) {
       .single();
 
     if (error) throw error;
+
+    // Invalidar cache de landing para reflejar cambios en el sitio público de inmediato
+    revalidateTag(LANDING_CACHE_TAG, 'max');
 
     return NextResponse.json({ seccion: data });
   } catch (err: unknown) {
