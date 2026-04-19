@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { Building2 } from 'lucide-react';
 import WhatsAppBubble from './WhatsAppBubble';
+import WebMCPProvider from './WebMCPProvider';
 
 interface PublicLayoutProps {
   children: React.ReactNode;
@@ -9,6 +10,8 @@ interface PublicLayoutProps {
 export default function PublicLayout({ children }: PublicLayoutProps) {
   return (
     <div className="min-h-screen flex flex-col bg-[#f8f8f5] text-slate-900 antialiased font-display">
+      {/* Registra tools en navigator.modelContext para agentes IA (WebMCP) */}
+      <WebMCPProvider />
       {/* ───── Header ───── */}
       <header className="sticky top-0 z-50 bg-[#f8f8f5]/80 backdrop-blur-md border-b border-primary/10">
         <nav className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
