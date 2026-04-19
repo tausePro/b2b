@@ -24,6 +24,11 @@ const nextConfig: NextConfig = {
           // Content Signals policy (https://blog.cloudflare.com/content-signals/)
           // Permitimos entrenamiento, search indexing y uso como input de agente.
           { key: 'Content-Signal', value: 'ai-train=yes, search=yes, ai-input=yes' },
+          // CRÍTICO para Markdown for Agents: indica al CDN de Vercel que el
+          // Accept header varía la respuesta (rewrite interno a /api/md/*).
+          // Sin esto, Vercel cachea solo la primera variante (HTML o MD) y
+          // sirve la misma para ambos tipos de request.
+          { key: 'Vary', value: 'Accept' },
         ],
       },
     ];

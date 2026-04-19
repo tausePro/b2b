@@ -25,7 +25,12 @@ export async function updateSession(request: NextRequest) {
       // El catch-all /api/md/[...path] requiere al menos un segmento;
       // para el home usamos 'home' como sentinel reconocido por el handler.
       url.pathname = canonico === '/' ? '/api/md/home' : '/api/md' + canonico;
-      return NextResponse.rewrite(url);
+      const response = NextResponse.rewrite(url);
+      // Refuerzo de cache keying: decirle al CDN que la respuesta depende
+      // del Accept header. next.config.ts ya setea Vary globalmente, pero
+      // lo repetimos aquí para respuestas generadas vía rewrite.
+      response.headers.set('Vary', 'Accept');
+      return response;
     }
   }
 
