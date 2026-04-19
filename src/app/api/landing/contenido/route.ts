@@ -1,8 +1,8 @@
 import { createClient } from '@supabase/supabase-js';
-import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { NextRequest, NextResponse } from 'next/server';
 import { revalidateTag } from 'next/cache';
 import { LANDING_CACHE_TAG } from '@/lib/landing/getContenido';
+import { obtenerContextoCms } from '@/lib/landing/authCms';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -37,28 +37,10 @@ export async function GET(request: NextRequest) {
   }
 }
 
-async function verificarAdmin(): Promise<boolean> {
-  try {
-    const supabase = await createServerSupabaseClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return false;
-
-    const { data: perfil } = await supabase
-      .from('usuarios')
-      .select('rol')
-      .eq('auth_id', user.id)
-      .single();
-
-    return perfil?.rol === 'super_admin' || perfil?.rol === 'direccion' || perfil?.rol === 'editor_contenido';
-  } catch {
-    return false;
-  }
-}
-
 export async function PUT(request: NextRequest) {
   try {
-    const isAdmin = await verificarAdmin();
-    if (!isAdmin) {
+    const ctx = await obtenerContextoCms();
+    if (!ctx) {
       return NextResponse.json({ error: 'No autorizado' }, { status: 403 });
     }
 
@@ -69,7 +51,10 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'ID de sección requerido' }, { status: 400 });
     }
 
-    const updateData: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    const updateData: Record<string, unknown> = {
+      updated_at: new Date().toISOString(),
+      actualizado_por: ctx.authId,
+    };
     if (titulo !== undefined) updateData.titulo = titulo;
     if (subtitulo !== undefined) updateData.subtitulo = subtitulo;
     if (contenido !== undefined) updateData.contenido = contenido;
