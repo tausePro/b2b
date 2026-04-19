@@ -10,39 +10,50 @@ export const PRODUCTION_SITE_URL = 'https://imprima.com.co';
 
 /**
  * URL base pública del sitio para construir URLs absolutas en robots.txt,
- * sitemap.xml, llms.txt, canonical SEO, etc.
+ * sitemap.xml, llms.txt, canonical SEO, agent-ready discovery, etc.
  *
- * Orden de resolución:
- *   1. SITE_CANONICAL_URL (env explícita, mayor prioridad)
- *   2. APP_URL / NEXT_PUBLIC_APP_URL / NEXT_PUBLIC_SITE_URL (server-side)
- *   3. PRODUCTION_SITE_URL si VERCEL_ENV=production (evita que Vercel use
- *      el subdominio del deploy en las URLs canónicas)
- *   4. https://<VERCEL_URL> en preview deploys
- *   5. http://localhost:3000 en desarrollo
+ * Orden de resolución (de mayor a menor prioridad):
+ *   1. SITE_CANONICAL_URL — override explícito DEDICADO al canonical público
+ *      (usalo si alguna vez querés forzar un dominio distinto en prod).
+ *   2. VERCEL_ENV === 'production'  →  PRODUCTION_SITE_URL
+ *      CRÍTICO: este nivel gana sobre APP_URL / NEXT_PUBLIC_APP_URL porque
+ *      esas envs pueden estar apuntando al subdominio del portal B2B
+ *      (b2b.imprima.com.co), no al canónico público.
+ *   3. APP_URL / NEXT_PUBLIC_APP_URL / NEXT_PUBLIC_SITE_URL — solo fuera
+ *      de producción (útil para preview deploys customizados).
+ *   4. https://<VERCEL_URL> — preview deploys de Vercel por defecto.
+ *   5. http://localhost:3000 — desarrollo local.
  *
  * Sin barra final.
  */
 export function getSiteUrl(): string {
-  const explicit =
-    process.env.SITE_CANONICAL_URL?.trim() ||
-    process.env.APP_URL?.trim() ||
-    process.env.NEXT_PUBLIC_APP_URL?.trim() ||
-    process.env.NEXT_PUBLIC_SITE_URL?.trim();
-
-  if (explicit) {
-    return explicit.replace(/\/+$/, '');
+  // 1. Override canonical explícito
+  const canonicalOverride = process.env.SITE_CANONICAL_URL?.trim();
+  if (canonicalOverride) {
+    return canonicalOverride.replace(/\/+$/, '');
   }
 
-  // En producción Vercel: SIEMPRE usar el dominio público canónico.
-  // Evita que VERCEL_URL devuelva el subdominio del deploy o b2b.*
+  // 2. Producción Vercel: siempre el dominio público canónico.
   if (process.env.VERCEL_ENV === 'production') {
     return PRODUCTION_SITE_URL;
   }
 
+  // 3. Env vars de app (preview / dev)
+  const appUrl =
+    process.env.APP_URL?.trim() ||
+    process.env.NEXT_PUBLIC_APP_URL?.trim() ||
+    process.env.NEXT_PUBLIC_SITE_URL?.trim();
+
+  if (appUrl) {
+    return appUrl.replace(/\/+$/, '');
+  }
+
+  // 4. VERCEL_URL en preview
   const vercelUrl = process.env.VERCEL_URL?.trim();
   if (vercelUrl) {
     return 'https://' + vercelUrl.replace(/\/+$/, '');
   }
 
+  // 5. Dev local
   return 'http://localhost:3000';
 }

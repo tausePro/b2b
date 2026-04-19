@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Manrope } from "next/font/google";
 import Providers from "@/components/Providers";
+import { buildWebMCPInlineScript } from "@/lib/webmcp/inlineScript";
+import { getSiteUrl } from "@/lib/siteUrl";
 import "./globals.css";
 
 const manrope = Manrope({
@@ -23,8 +25,18 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // Script WebMCP server-rendered en el <head> con el origin canónico.
+  // Se ejecuta antes de React hydration para que agentes IA detecten tools.
+  const webmcpScript = buildWebMCPInlineScript({ origin: getSiteUrl() });
+
   return (
     <html lang="es">
+      <head>
+        <script
+          id="webmcp-tools"
+          dangerouslySetInnerHTML={{ __html: webmcpScript }}
+        />
+      </head>
       <body className={`${manrope.variable} font-display antialiased`} suppressHydrationWarning>
         <Providers>{children}</Providers>
       </body>
