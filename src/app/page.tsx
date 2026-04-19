@@ -1,4 +1,3 @@
-import { createClient } from '@supabase/supabase-js';
 import Link from 'next/link';
 import type { Metadata } from 'next';
 import {
@@ -8,19 +7,16 @@ import {
 } from 'lucide-react';
 import LeadButton from '@/components/public/LeadButton';
 import WhatsAppBubble from '@/components/public/WhatsAppBubble';
+import {
+  getSeccion,
+  getSeccionesActivas,
+  LANDING_CACHE_REVALIDATE,
+  type LandingSeccion,
+} from '@/lib/landing/getContenido';
 
 export async function generateMetadata(): Promise<Metadata> {
   try {
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
-    const { data: seo } = await supabase
-      .from('landing_contenido')
-      .select('*')
-      .eq('id', 'seo')
-      .single();
-
+    const seo = await getSeccion('seo');
     if (seo) {
       const c = seo.contenido || {};
       return {
@@ -42,17 +38,7 @@ export async function generateMetadata(): Promise<Metadata> {
   };
 }
 
-export const dynamic = 'force-dynamic';
-
-interface LandingSeccion {
-  id: string;
-  titulo: string | null;
-  subtitulo: string | null;
-  contenido: Record<string, unknown>;
-  imagen_url: string | null;
-  orden: number;
-  activo: boolean;
-}
+export const revalidate = LANDING_CACHE_REVALIDATE;
 
 const iconMap: Record<string, React.ReactNode> = {
   edit_note: <PenLine className="w-6 h-6" />,
@@ -73,18 +59,7 @@ const categoryColors = [
 
 async function getContenido(): Promise<Record<string, LandingSeccion>> {
   try {
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
-    const { data } = await supabase
-      .from('landing_contenido')
-      .select('*')
-      .eq('activo', true)
-      .order('orden');
-    const mapa: Record<string, LandingSeccion> = {};
-    for (const item of data || []) mapa[item.id] = item;
-    return mapa;
+    return await getSeccionesActivas();
   } catch {
     return {};
   }
