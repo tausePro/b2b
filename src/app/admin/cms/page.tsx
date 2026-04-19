@@ -3,8 +3,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   Save, Loader2, Upload, Trash2, Plus, ChevronDown, ChevronRight,
-  Globe, FileText, Layout, Image as ImageIcon, AlertCircle, Check, MessageCircle,
+  Globe, FileText, Layout, Image as ImageIcon, AlertCircle, Check, MessageCircle, History,
 } from 'lucide-react';
+import HistorialVersionesModal from '@/components/cms/HistorialVersionesModal';
 
 // ─── Types ───────────────────────────────────────────────────
 interface Seccion {
@@ -49,6 +50,7 @@ export default function CMSPage() {
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>('landing');
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
+  const [historialSeccion, setHistorialSeccion] = useState<string | null>(null);
 
   const fetchSecciones = useCallback(async () => {
     setLoading(true);
@@ -246,7 +248,18 @@ export default function CMSPage() {
         {expanded && (
           <div className="px-5 pb-5 border-t border-border space-y-4 pt-4">
             {children}
-            <div className="flex justify-end pt-2">{renderSaveButton(id)}</div>
+            <div className="flex justify-end items-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setHistorialSeccion(id)}
+                className="inline-flex items-center gap-2 text-xs font-semibold text-slate-600 hover:text-primary hover:bg-slate-100 px-3 py-2.5 rounded-lg transition-colors"
+                title="Ver historial de cambios"
+              >
+                <History className="w-4 h-4" />
+                Historial
+              </button>
+              {renderSaveButton(id)}
+            </div>
           </div>
         )}
       </div>
@@ -648,6 +661,15 @@ export default function CMSPage() {
 
       {activeTab === 'seo' && renderSEO()}
       {activeTab === 'paginas' && renderPaginas()}
+
+      {historialSeccion && (
+        <HistorialVersionesModal
+          seccionId={historialSeccion}
+          seccionLabel={SECTION_LABELS[historialSeccion] ?? historialSeccion}
+          onClose={() => setHistorialSeccion(null)}
+          onRestored={() => { void fetchSecciones(); }}
+        />
+      )}
     </div>
   );
 }
