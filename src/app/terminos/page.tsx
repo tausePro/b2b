@@ -1,8 +1,9 @@
 import type { Metadata } from 'next';
 import PublicLayout from '@/components/public/PublicLayout';
-import { getSeccion, LANDING_CACHE_REVALIDATE } from '@/lib/landing/getContenido';
+import { getSeccion } from '@/lib/landing/getContenido';
 
-export const revalidate = LANDING_CACHE_REVALIDATE;
+// Literal numérico requerido por Next 16 segment configs.
+export const revalidate = 300;
 
 export async function generateMetadata(): Promise<Metadata> {
   const s = await getSeccion('pagina_terminos');

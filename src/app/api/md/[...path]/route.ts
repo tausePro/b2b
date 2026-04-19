@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { estimateMarkdownTokens, getMarkdownForPath } from '@/lib/landing/getMarkdown';
-import { LANDING_CACHE_REVALIDATE } from '@/lib/landing/getContenido';
 
-export const revalidate = LANDING_CACHE_REVALIDATE;
+// Literal numérico requerido por Next 16 segment configs.
+export const revalidate = 300;
 
 /**
  * /api/md/[...path] — sirve la versión Markdown de una ruta pública.
@@ -43,7 +43,7 @@ export async function GET(
       'Vary': 'Accept',
       'X-Markdown-Tokens': String(tokens),
       'Content-Signal': 'ai-train=yes, search=yes, ai-input=yes',
-      'Cache-Control': 'public, max-age=0, s-maxage=' + LANDING_CACHE_REVALIDATE + ', stale-while-revalidate=86400',
+      'Cache-Control': 'public, max-age=0, s-maxage=300, stale-while-revalidate=86400',
     },
   });
 }
