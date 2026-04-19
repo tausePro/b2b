@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
 import { getSiteUrl } from '@/lib/siteUrl';
-import { getSeccionesActivas, LANDING_CACHE_TAG, LANDING_CACHE_REVALIDATE } from '@/lib/landing/getContenido';
+import { getSeccionesActivas, LANDING_CACHE_TAG } from '@/lib/landing/getContenido';
 
-export const revalidate = LANDING_CACHE_REVALIDATE;
+// Debe ser un literal numérico: Next 16 exige segment configs estáticos.
+export const revalidate = 300;
 
 interface ContactoContenido {
   telefono?: string;
@@ -123,7 +124,7 @@ export async function GET() {
     status: 200,
     headers: {
       'Content-Type': 'text/plain; charset=utf-8',
-      'Cache-Control': 'public, max-age=0, s-maxage=' + LANDING_CACHE_REVALIDATE + ', stale-while-revalidate=86400',
+      'Cache-Control': 'public, max-age=0, s-maxage=300, stale-while-revalidate=86400',
       // Tag para revalidar junto con el resto del CMS
       'X-Cache-Tag': LANDING_CACHE_TAG,
     },

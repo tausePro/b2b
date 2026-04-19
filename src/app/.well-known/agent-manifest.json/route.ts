@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
 import { getSiteUrl } from '@/lib/siteUrl';
-import { getSeccionesActivas, LANDING_CACHE_REVALIDATE } from '@/lib/landing/getContenido';
+import { getSeccionesActivas } from '@/lib/landing/getContenido';
 
-export const revalidate = LANDING_CACHE_REVALIDATE;
+// Literal numérico requerido por Next 16 segment configs.
+export const revalidate = 300;
 
 interface ContactoContenido {
   telefono?: string;
@@ -106,7 +107,7 @@ export async function GET() {
   return NextResponse.json(manifest, {
     status: 200,
     headers: {
-      'Cache-Control': 'public, max-age=0, s-maxage=' + LANDING_CACHE_REVALIDATE + ', stale-while-revalidate=86400',
+      'Cache-Control': 'public, max-age=0, s-maxage=300, stale-while-revalidate=86400',
       'Access-Control-Allow-Origin': '*',
     },
   });

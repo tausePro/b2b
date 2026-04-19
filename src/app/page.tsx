@@ -10,7 +10,6 @@ import WhatsAppBubble from '@/components/public/WhatsAppBubble';
 import {
   getSeccion,
   getSeccionesActivas,
-  LANDING_CACHE_REVALIDATE,
   type LandingSeccion,
 } from '@/lib/landing/getContenido';
 
@@ -38,7 +37,8 @@ export async function generateMetadata(): Promise<Metadata> {
   };
 }
 
-export const revalidate = LANDING_CACHE_REVALIDATE;
+// Literal numérico requerido por Next 16 segment configs.
+export const revalidate = 300;
 
 const iconMap: Record<string, React.ReactNode> = {
   edit_note: <PenLine className="w-6 h-6" />,
