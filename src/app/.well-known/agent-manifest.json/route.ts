@@ -75,6 +75,8 @@ export async function GET() {
       api_catalog: baseUrl + '/.well-known/api-catalog',
       openapi: baseUrl + '/.well-known/openapi.json',
       agent_skills_index: baseUrl + '/.well-known/agent-skills/index.json',
+      mcp_server_card: baseUrl + '/.well-known/mcp/server-card.json',
+      mcp_endpoint: baseUrl + '/api/mcp',
       oauth_protected_resource: baseUrl + '/.well-known/oauth-protected-resource',
       oauth_discovery: baseUrl + '/.well-known/openid-configuration',
       health: baseUrl + '/api/health',
