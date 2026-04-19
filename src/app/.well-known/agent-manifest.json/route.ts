@@ -72,9 +72,19 @@ export async function GET() {
       llms_txt: baseUrl + '/llms.txt',
       sitemap: baseUrl + '/sitemap.xml',
       robots: baseUrl + '/robots.txt',
+      api_catalog: baseUrl + '/.well-known/api-catalog',
+      openapi: baseUrl + '/.well-known/openapi.json',
+      agent_skills_index: baseUrl + '/.well-known/agent-skills/index.json',
+      oauth_protected_resource: baseUrl + '/.well-known/oauth-protected-resource',
+      oauth_discovery: baseUrl + '/.well-known/openid-configuration',
+      health: baseUrl + '/api/health',
       markdown_content_negotiation: {
         description: 'Las rutas públicas responden en Markdown cuando el request incluye `Accept: text/markdown`.',
         supported_paths: ['/', '/nosotros', '/contacto', '/faq', '/terminos', '/privacidad', '/catalogo'],
+      },
+      webmcp: {
+        description: 'Las páginas públicas registran tools en navigator.modelContext al cargar: submit_lead, browse_catalog, get_contact_info.',
+        tools: ['submit_lead', 'browse_catalog', 'get_contact_info'],
       },
     },
     capabilities: [
