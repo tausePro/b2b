@@ -1,7 +1,10 @@
 import 'server-only';
 import { getSeccionesActivas, type LandingSeccion } from '@/lib/landing/getContenido';
 import { getSiteUrl } from '@/lib/siteUrl';
-import { getPublicCatalogPageData } from '@/lib/catalogoPublico';
+import {
+  getPublicCatalogPageData,
+  getPublicCatalogRootCategories,
+} from '@/lib/catalogoPublico';
 import type { PublicCatalogCategoryNode } from '@/types/publicCatalog';
 
 interface ContactoContenido {
@@ -18,6 +21,7 @@ interface FaqItem {
 }
 
 interface CategoriaItem {
+  categoria_id?: number;
   titulo?: string;
   descripcion?: string;
 }
@@ -82,11 +86,25 @@ function construirFrontmatter(title: string, canonical: string, descripcion?: st
 
 // ────────────────── Renderers por ruta ──────────────────
 
-function renderHome(secciones: Record<string, LandingSeccion>, baseUrl: string): MarkdownResult {
+async function renderHome(
+  secciones: Record<string, LandingSeccion>,
+  baseUrl: string,
+): Promise<MarkdownResult> {
   const hero = secciones.hero ?? null;
   const categorias = secciones.categorias ?? null;
   const eficiencia = secciones.eficiencia ?? null;
   const testimonios = secciones.testimonios ?? null;
+
+  // Mapa de categorías reales (Odoo) para resolver nombre cuando el admin
+  // vinculó el item por categoria_id en vez de escribirlo a mano. Si Odoo
+  // falla, el map queda vacío y caemos en los campos legacy.
+  let categoriasMap = new Map<number, { id: number; name: string }>();
+  try {
+    const roots = await getPublicCatalogRootCategories();
+    categoriasMap = new Map(roots.map((c) => [c.id, { id: c.id, name: c.name }]));
+  } catch {
+    // silencioso: markdown sigue funcionando con títulos legacy
+  }
 
   const title = hero?.titulo?.trim() || 'Imprima — Suministros Corporativos B2B';
   const descripcion = hero?.subtitulo?.trim() || null;
@@ -109,10 +127,14 @@ function renderHome(secciones: Record<string, LandingSeccion>, baseUrl: string):
     if (Array.isArray(items) && items.length > 0) {
       lineas.push('');
       for (const item of items) {
-        if (item.titulo) {
-          const desc = item.descripcion ? ' — ' + item.descripcion.trim() : '';
-          lineas.push('- **' + item.titulo.trim() + '**' + desc);
-        }
+        // Título: real desde Odoo (si hay categoria_id) o legacy, en ese orden.
+        const tituloResuelto =
+          (typeof item.categoria_id === 'number'
+            ? categoriasMap.get(item.categoria_id)?.name
+            : undefined) ?? item.titulo?.trim();
+        if (!tituloResuelto) continue;
+        const desc = item.descripcion ? ' — ' + item.descripcion.trim() : '';
+        lineas.push('- **' + tituloResuelto + '**' + desc);
       }
     }
     lineas.push('');
@@ -325,7 +347,7 @@ export async function getMarkdownForPath(path: string): Promise<MarkdownResult |
   const secciones = await getSeccionesActivas();
 
   switch (normalizado) {
-    case '/':            return renderHome(secciones, baseUrl);
+    case '/':            return await renderHome(secciones, baseUrl);
     case '/nosotros':    return renderNosotros(secciones, baseUrl);
     case '/contacto':    return renderContacto(secciones, baseUrl);
     case '/faq':         return renderFaq(secciones, baseUrl);
