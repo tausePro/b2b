@@ -3,6 +3,48 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Seccion } from '../_types';
 
+// Fila tal como la devuelve /api/landing/contenido?all=true: incluye
+// tanto los campos publicados como los del borrador.
+interface SeccionRow extends Seccion {
+  titulo_borrador?: string | null;
+  subtitulo_borrador?: string | null;
+  contenido_borrador?: Record<string, unknown> | null;
+  imagen_url_borrador?: string | null;
+}
+
+// Aplana la fila para el estado local del editor:
+// - Si hay borrador, los campos editables reflejan el borrador.
+// - Si no hay borrador, reflejan lo publicado.
+// De esta forma los sub-editores no necesitan conocer el modelo dual.
+function normalizarFila(row: SeccionRow): Seccion {
+  if (row.tiene_borrador) {
+    return {
+      id: row.id,
+      titulo: row.titulo_borrador ?? row.titulo,
+      subtitulo: row.subtitulo_borrador ?? row.subtitulo,
+      contenido: (row.contenido_borrador ?? row.contenido) as Record<string, unknown>,
+      imagen_url: row.imagen_url_borrador ?? row.imagen_url,
+      orden: row.orden,
+      activo: row.activo,
+      updated_at: row.updated_at,
+      tiene_borrador: true,
+      borrador_actualizado_en: row.borrador_actualizado_en ?? null,
+    };
+  }
+  return {
+    id: row.id,
+    titulo: row.titulo,
+    subtitulo: row.subtitulo,
+    contenido: row.contenido,
+    imagen_url: row.imagen_url,
+    orden: row.orden,
+    activo: row.activo,
+    updated_at: row.updated_at,
+    tiene_borrador: false,
+    borrador_actualizado_en: null,
+  };
+}
+
 // Hook central del editor CMS. Encapsula:
 // - estado de secciones + flags de UI (loading, saving, saved, error, expanded, historial)
 // - fetch inicial y recarga
@@ -23,7 +65,12 @@ export function useCmsSecciones() {
       const res = await fetch('/api/landing/contenido?all=true');
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      setSecciones(data.contenido || {});
+      const rows = (data.contenido || {}) as Record<string, SeccionRow>;
+      const normalizadas: Record<string, Seccion> = {};
+      for (const [key, row] of Object.entries(rows)) {
+        normalizadas[key] = normalizarFila(row);
+      }
+      setSecciones(normalizadas);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error cargando contenido');
     } finally {
@@ -85,6 +132,24 @@ export function useCmsSecciones() {
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error);
+        // El backend escribió en *_borrador y devolvió la fila. Actualizamos las
+        // flags de borrador en el estado local para que la UI refleje el nuevo
+        // estado sin un refetch completo.
+        const row = data.seccion as SeccionRow | undefined;
+        if (row) {
+          setSecciones((prev) => ({
+            ...prev,
+            [id]: {
+              ...prev[id],
+              tiene_borrador: row.tiene_borrador ?? prev[id].tiene_borrador,
+              borrador_actualizado_en:
+                row.borrador_actualizado_en ?? prev[id].borrador_actualizado_en ?? null,
+              updated_at: row.updated_at ?? prev[id].updated_at,
+              activo: row.activo ?? prev[id].activo,
+              orden: row.orden ?? prev[id].orden,
+            },
+          }));
+        }
         setSaved(id);
         setTimeout(() => setSaved(null), 2000);
       } catch (err) {
@@ -95,6 +160,53 @@ export function useCmsSecciones() {
     },
     [secciones],
   );
+
+  // Publica el borrador: el backend copia *_borrador → campos públicos,
+  // limpia las columnas de borrador y el trigger 030 snapshotea el estado previo.
+  const publicarSeccion = useCallback(async (id: string) => {
+    setSaving(id);
+    setError(null);
+    try {
+      const res = await fetch(`/api/landing/contenido/${encodeURIComponent(id)}/publicar`, {
+        method: 'POST',
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      const row = data.seccion as SeccionRow | undefined;
+      if (row) {
+        setSecciones((prev) => ({ ...prev, [id]: normalizarFila(row) }));
+      }
+      setSaved(id);
+      setTimeout(() => setSaved(null), 2000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error publicando');
+    } finally {
+      setSaving(null);
+    }
+  }, []);
+
+  // Descarta el borrador. Devuelve la fila con tiene_borrador=false y los campos
+  // publicados originales, que se aplanan al estado local vía normalizarFila.
+  const descartarBorrador = useCallback(async (id: string) => {
+    setSaving(id);
+    setError(null);
+    try {
+      const res = await fetch(
+        `/api/landing/contenido/${encodeURIComponent(id)}/descartar-borrador`,
+        { method: 'POST' },
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      const row = data.seccion as SeccionRow | undefined;
+      if (row) {
+        setSecciones((prev) => ({ ...prev, [id]: normalizarFila(row) }));
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error descartando borrador');
+    } finally {
+      setSaving(null);
+    }
+  }, []);
 
   const subirImagen = useCallback(async (file: File, folder: string): Promise<string | null> => {
     const formData = new FormData();
@@ -126,6 +238,8 @@ export function useCmsSecciones() {
     updateLocal,
     updateContenido,
     guardarSeccion,
+    publicarSeccion,
+    descartarBorrador,
     subirImagen,
   };
 }
