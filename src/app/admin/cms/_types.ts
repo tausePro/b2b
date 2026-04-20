@@ -10,6 +10,12 @@ export interface Seccion {
   orden: number;
   activo: boolean;
   updated_at: string;
+  // Draft / publish (migración 031).
+  // En el estado local, si tiene_borrador === true, los campos titulo / subtitulo /
+  // contenido / imagen_url reflejan el BORRADOR (los valores publicados quedan en el
+  // backend). Al publicar o descartar el backend devuelve el estado normalizado.
+  tiene_borrador?: boolean;
+  borrador_actualizado_en?: string | null;
 }
 
 export type TabId = 'landing' | 'seo' | 'paginas';

@@ -37,6 +37,10 @@ export async function GET(request: NextRequest) {
   }
 }
 
+// PUT: guarda cambios como BORRADOR (no afecta al sitio público hasta publicar).
+// Los campos editoriales (titulo/subtitulo/contenido/imagen_url) se escriben en
+// las columnas *_borrador; los metadatos de visibilidad (activo) y orden se
+// aplican directo al publicado porque son toggles, no edición de contenido.
 export async function PUT(request: NextRequest) {
   try {
     const ctx = await obtenerContextoCms();
@@ -51,16 +55,43 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'ID de sección requerido' }, { status: 400 });
     }
 
+    const nowIso = new Date().toISOString();
     const updateData: Record<string, unknown> = {
-      updated_at: new Date().toISOString(),
-      actualizado_por: ctx.authId,
+      updated_at: nowIso,
     };
-    if (titulo !== undefined) updateData.titulo = titulo;
-    if (subtitulo !== undefined) updateData.subtitulo = subtitulo;
-    if (contenido !== undefined) updateData.contenido = contenido;
-    if (imagen_url !== undefined) updateData.imagen_url = imagen_url;
-    if (orden !== undefined) updateData.orden = orden;
-    if (activo !== undefined) updateData.activo = activo;
+
+    // ¿Vino al menos un campo editorial? Entonces marcamos y escribimos borrador.
+    const hayCambiosEditoriales =
+      titulo !== undefined ||
+      subtitulo !== undefined ||
+      contenido !== undefined ||
+      imagen_url !== undefined;
+
+    if (hayCambiosEditoriales) {
+      updateData.tiene_borrador = true;
+      updateData.borrador_actualizado_en = nowIso;
+      updateData.borrador_actualizado_por = ctx.authId;
+      if (titulo !== undefined) updateData.titulo_borrador = titulo;
+      if (subtitulo !== undefined) updateData.subtitulo_borrador = subtitulo;
+      if (contenido !== undefined) updateData.contenido_borrador = contenido;
+      if (imagen_url !== undefined) updateData.imagen_url_borrador = imagen_url;
+    }
+
+    // activo y orden: aplicación inmediata, no pasan por draft
+    let afectaPublico = false;
+    if (orden !== undefined) {
+      updateData.orden = orden;
+      afectaPublico = true;
+    }
+    if (activo !== undefined) {
+      updateData.activo = activo;
+      afectaPublico = true;
+    }
+
+    // Si afecta al publicado, también marcamos quién lo hizo (trigger 030).
+    if (afectaPublico) {
+      updateData.actualizado_por = ctx.authId;
+    }
 
     const { data, error } = await supabaseAdmin
       .from('landing_contenido')
@@ -71,8 +102,10 @@ export async function PUT(request: NextRequest) {
 
     if (error) throw error;
 
-    // Invalidar cache de landing para reflejar cambios en el sitio público de inmediato
-    revalidateTag(LANDING_CACHE_TAG, 'max');
+    // Solo invalidamos cache si el cambio afectó al sitio público.
+    if (afectaPublico) {
+      revalidateTag(LANDING_CACHE_TAG, 'max');
+    }
 
     return NextResponse.json({ seccion: data });
   } catch (err: unknown) {
