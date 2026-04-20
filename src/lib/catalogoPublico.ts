@@ -424,6 +424,24 @@ const getCachedRelatedProducts = unstable_cache(
   { revalidate: 900 }
 );
 
+// Categorías raíz del catálogo público (nivel 0 del árbol ya filtrado,
+// tras excluir roots no comerciales y colapsar el virtual root).
+// Pensada para selectores del CMS y cualquier superficie pública que
+// quiera mostrar solo las categorías "hero".
+export async function getPublicCatalogRootCategories(): Promise<
+  Array<{ id: number; name: string; complete_name: string; slug: string }>
+> {
+  const data = await getCachedCategoryData();
+  return data.categories
+    .filter((c) => c.level === 0)
+    .map((c) => ({
+      id: c.id,
+      name: c.name,
+      complete_name: c.complete_name,
+      slug: c.slug,
+    }));
+}
+
 export async function getPublicProductDetail(productId: number) {
   const product = await getCachedProductDetail(productId);
   if (!product) return null;

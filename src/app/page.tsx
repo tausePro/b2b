@@ -12,6 +12,7 @@ import {
   getSeccionesActivas,
   type LandingSeccion,
 } from '@/lib/landing/getContenido';
+import { getPublicCatalogRootCategories } from '@/lib/catalogoPublico';
 
 export async function generateMetadata(): Promise<Metadata> {
   try {
@@ -65,6 +66,20 @@ async function getContenido(): Promise<Record<string, LandingSeccion>> {
   }
 }
 
+// Mapea ids de product.category → { name, slug } usando la misma lista filtrada
+// que ve el cliente B2B en /catalogo. Si Odoo falla, retornamos un map vacío
+// para que las tarjetas caigan en el fallback legacy sin reventar la landing.
+async function getCategoriasMap(): Promise<
+  Map<number, { id: number; name: string; slug: string }>
+> {
+  try {
+    const roots = await getPublicCatalogRootCategories();
+    return new Map(roots.map((c) => [c.id, { id: c.id, name: c.name, slug: c.slug }]));
+  } catch {
+    return new Map();
+  }
+}
+
 function buildJsonLd(seo: LandingSeccion | undefined, faqs: Array<{ pregunta: string; respuesta: string }>) {
   const schemas: Record<string, unknown>[] = [];
   if (seo) {
@@ -105,7 +120,7 @@ function buildJsonLd(seo: LandingSeccion | undefined, faqs: Array<{ pregunta: st
 }
 
 export default async function LandingPage() {
-  const c = await getContenido();
+  const [c, categoriasMap] = await Promise.all([getContenido(), getCategoriasMap()]);
   const hero = c.hero;
   const cats = c.categorias;
   const efi = c.eficiencia;
@@ -118,7 +133,15 @@ export default async function LandingPage() {
   const faqs = (seo?.contenido?.faqs || []) as Array<{ pregunta: string; respuesta: string }>;
   const jsonLdSchemas = buildJsonLd(seo, faqs);
 
-  const catItems = (cats?.contenido?.items ?? []) as Array<{ titulo: string; descripcion: string; icono: string; imagen_url: string | null }>;
+  // Shape extendido: si `categoria_id` existe, título/slug se resuelven desde Odoo;
+  // si no, se usan los campos legacy (titulo/icono) como texto libre.
+  const catItems = (cats?.contenido?.items ?? []) as Array<{
+    categoria_id?: number;
+    titulo?: string;
+    descripcion?: string;
+    icono?: string;
+    imagen_url: string | null;
+  }>;
   const efiItems = (efi?.contenido?.items ?? []) as Array<{ titulo: string; descripcion: string; icono: string }>;
   const testiItems = (testi?.contenido?.items ?? []) as Array<{ nombre: string; cargo: string; empresa: string; texto: string; estrellas: number }>;
   const footColumnas = (foot?.contenido?.columnas ?? []) as Array<{ titulo: string; links: Array<{ texto: string; url: string }> }>;
@@ -233,27 +256,67 @@ export default async function LandingPage() {
                 )}
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                {catItems.map((cat, i) => (
-                  <div key={i} className="group cursor-pointer">
-                    <div className="relative h-64 rounded-2xl overflow-hidden mb-4">
-                      {cat.imagen_url ? (
-                        <img src={cat.imagen_url} alt={cat.titulo} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" />
-                      ) : (
-                        <div className={`w-full h-full bg-gradient-to-br ${categoryColors[i % categoryColors.length]} flex items-center justify-center transition-transform duration-500 group-hover:scale-110`}>
-                          <div className="text-primary/40 scale-[2]">
-                            {iconMap[cat.icono] ?? <PenLine className="w-6 h-6" />}
+                {catItems.map((cat, i) => {
+                  // Resolución unificada: si el item viene vinculado a una
+                  // categoría real (categoria_id), tomamos título/link de Odoo;
+                  // si no, nos quedamos con los campos legacy para no romper
+                  // contenido ya guardado en BD antes de la migración.
+                  const catReal =
+                    typeof cat.categoria_id === 'number'
+                      ? categoriasMap.get(cat.categoria_id) ?? null
+                      : null;
+                  const titulo = catReal?.name ?? cat.titulo ?? '';
+                  const descripcion = cat.descripcion ?? '';
+                  const icono = cat.icono;
+                  const href = catReal
+                    ? `/catalogo?categoria=${catReal.id}`
+                    : null;
+
+                  const iconNode = icono
+                    ? iconMap[icono] ?? <PenLine className="w-6 h-6" />
+                    : <PenLine className="w-6 h-6" />;
+
+                  const cardInner = (
+                    <>
+                      <div className="relative h-64 rounded-2xl overflow-hidden mb-4">
+                        {cat.imagen_url ? (
+                          <img
+                            src={cat.imagen_url}
+                            alt={titulo}
+                            className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+                          />
+                        ) : (
+                          <div
+                            className={`w-full h-full bg-gradient-to-br ${categoryColors[i % categoryColors.length]} flex items-center justify-center transition-transform duration-500 group-hover:scale-110`}
+                          >
+                            <div className="text-primary/40 scale-[2]">{iconNode}</div>
                           </div>
-                        </div>
-                      )}
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
-                      <div className="absolute bottom-4 left-4 text-white">
-                        {iconMap[cat.icono] ?? <PenLine className="w-6 h-6" />}
+                        )}
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
+                        <div className="absolute bottom-4 left-4 text-white">{iconNode}</div>
                       </div>
+                      <h3 className="text-xl font-bold">{titulo}</h3>
+                      {descripcion && (
+                        <p className="text-slate-500 text-sm">{descripcion}</p>
+                      )}
+                    </>
+                  );
+
+                  return href ? (
+                    <Link
+                      key={i}
+                      href={href}
+                      className="group cursor-pointer block"
+                      aria-label={`Ver catálogo de ${titulo}`}
+                    >
+                      {cardInner}
+                    </Link>
+                  ) : (
+                    <div key={i} className="group">
+                      {cardInner}
                     </div>
-                    <h3 className="text-xl font-bold">{cat.titulo}</h3>
-                    <p className="text-slate-500 text-sm">{cat.descripcion}</p>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           </section>
