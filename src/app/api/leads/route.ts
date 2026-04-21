@@ -12,6 +12,15 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { nombre, empresa, email, telefono, mensaje, fuente } = body;
+    // numero_whatsapp_override permite redirigir la conversacion a un
+    // numero distinto al global (ej: WhatsApp de la comercial especifica
+    // cuando el lead viene de una tarjeta del equipo). Se sanitiza a
+    // solo digitos; si queda vacio, se ignora.
+    const overrideRaw =
+      typeof body.numero_whatsapp_override === 'string'
+        ? body.numero_whatsapp_override
+        : '';
+    const numeroOverride = overrideRaw.replace(/\D/g, '');
 
     if (!nombre || typeof nombre !== 'string' || nombre.trim().length < 2) {
       return NextResponse.json({ error: 'Nombre es requerido' }, { status: 400 });
@@ -42,16 +51,20 @@ export async function POST(request: NextRequest) {
       .single();
 
     const whatsapp = config?.contenido || {};
-    const numero = (whatsapp.numero as string) || '';
+    const numeroGlobal = (whatsapp.numero as string) || '';
     const msgDefault = (whatsapp.mensaje_default as string) || '';
 
+    // Prioridad: numeroOverride > numero global configurado en config_whatsapp.
+    // Si ambos estan vacios no se arma wa.me y el front simplemente cierra
+    // el modal tras guardar el lead (queda registrado igualmente en BD).
+    const numeroFinal = numeroOverride || numeroGlobal.replace(/\D/g, '');
+
     let whatsappUrl = '';
-    if (numero) {
-      const cleanNum = numero.replace(/\D/g, '');
+    if (numeroFinal) {
       const textoMsg = mensaje?.trim()
         ? `Hola, soy ${nombre}${empresa ? ` de ${empresa}` : ''}. ${mensaje}`
         : `${msgDefault} Soy ${nombre}${empresa ? ` de ${empresa}` : ''}.`;
-      whatsappUrl = `https://wa.me/${cleanNum}?text=${encodeURIComponent(textoMsg)}`;
+      whatsappUrl = `https://wa.me/${numeroFinal}?text=${encodeURIComponent(textoMsg)}`;
     }
 
     return NextResponse.json({ lead: data, whatsapp_url: whatsappUrl });

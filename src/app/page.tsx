@@ -7,12 +7,14 @@ import {
 } from 'lucide-react';
 import LeadButton from '@/components/public/LeadButton';
 import WhatsAppBubble from '@/components/public/WhatsAppBubble';
+import HeroHome from '@/components/public/HeroHome';
 import {
   getSeccion,
   getSeccionesActivas,
   type LandingSeccion,
 } from '@/lib/landing/getContenido';
 import { getPublicCatalogRootCategories } from '@/lib/catalogoPublico';
+import { getHeroDynamicStats } from '@/lib/home/getHeroDynamicStats';
 
 export async function generateMetadata(): Promise<Metadata> {
   try {
@@ -120,7 +122,11 @@ function buildJsonLd(seo: LandingSeccion | undefined, faqs: Array<{ pregunta: st
 }
 
 export default async function LandingPage() {
-  const [c, categoriasMap] = await Promise.all([getContenido(), getCategoriasMap()]);
+  const [c, categoriasMap, heroDynamicStats] = await Promise.all([
+    getContenido(),
+    getCategoriasMap(),
+    getHeroDynamicStats(),
+  ]);
   const hero = c.hero;
   const cats = c.categorias;
   const efi = c.eficiencia;
@@ -191,58 +197,8 @@ export default async function LandingPage() {
       </header>
 
       <main className="flex-1">
-        {/* ───── Hero ───── */}
-        <section className="relative overflow-hidden pt-16 pb-24 lg:pt-32 lg:pb-40">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="grid lg:grid-cols-2 gap-12 items-center">
-              <div className="z-10">
-                {typeof hero?.contenido?.badge === 'string' && (
-                  <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 text-primary text-xs font-bold uppercase tracking-wider mb-6">
-                    <span className="relative flex h-2 w-2">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75" />
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-primary" />
-                    </span>
-                    {hero.contenido.badge as string}
-                  </span>
-                )}
-                <h1 className="text-5xl lg:text-7xl font-extrabold leading-[1.1] mb-6">
-                  {hero?.titulo ?? 'Simplificamos las compras de tu empresa'}
-                </h1>
-                <p className="text-lg text-slate-600 mb-10 max-w-xl leading-relaxed">
-                  {hero?.subtitulo ?? 'Soluciones integrales de suministros para su compañía con tecnología de vanguardia.'}
-                </p>
-                <div className="flex flex-col sm:flex-row gap-4">
-                  <Link
-                    href={(hero?.contenido?.cta_primario_url as string) ?? '/login'}
-                    className="bg-primary hover:bg-primary/90 text-slate-900 px-8 py-4 rounded-xl font-bold text-lg transition-all shadow-xl shadow-primary/20 text-center"
-                  >
-                    {(hero?.contenido?.cta_primario as string) ?? 'Ver Catálogo de Productos'}
-                  </Link>
-                  <LeadButton
-                    fuente="landing_hero"
-                    texto={(hero?.contenido?.cta_secundario as string) ?? 'Hablar con un Asesor'}
-                    variant="outline"
-                    className="px-8 py-4 text-lg"
-                  />
-                </div>
-              </div>
-              <div className="relative hidden lg:block">
-                <div className="absolute -top-20 -right-20 w-96 h-96 bg-primary/20 rounded-full blur-[100px]" />
-                <div className="relative rounded-2xl overflow-hidden shadow-2xl border-8 border-white">
-                  {hero?.imagen_url ? (
-                    <img src={hero.imagen_url} alt="Imprima" className="w-full h-auto" />
-                  ) : (
-                    <div className="w-full aspect-video bg-gradient-to-br from-primary/20 via-primary/5 to-slate-100 flex items-center justify-center">
-                      <svg className="w-24 h-24 text-primary/30" fill="currentColor" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M24 0.757355L47.2426 24L24 47.2426L0.757355 24L24 0.757355ZM21 35.7574V12.2426L9.24264 24L21 35.7574Z" />
-                      </svg>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
+        {/* ───── Hero (redisenado v1.24.0: half-bleed asimetrico + glass) ───── */}
+        <HeroHome hero={hero} dynamicStats={heroDynamicStats} />
 
         {/* ───── Categorías ───── */}
         {catItems.length > 0 && (
