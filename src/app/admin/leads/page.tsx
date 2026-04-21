@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   Loader2, UserPlus, Filter, MessageCircle, Mail, Phone,
-  Building2, Calendar, ChevronDown, Check, AlertCircle,
+  Building2, Calendar, ChevronDown, Check, AlertCircle, Target,
 } from 'lucide-react';
 
 interface Lead {
@@ -19,6 +19,17 @@ interface Lead {
   notas: string | null;
   created_at: string;
   updated_at: string;
+  // Atribución (migración 036). Opcionales porque leads anteriores
+  // a la migración no tienen estos campos.
+  gclid: string | null;
+  utm_source: string | null;
+  utm_medium: string | null;
+  utm_campaign: string | null;
+  utm_term: string | null;
+  utm_content: string | null;
+  referrer: string | null;
+  landing_url: string | null;
+  click_at: string | null;
 }
 
 const ESTADOS = [
@@ -57,6 +68,29 @@ const FUENTES: Array<{ value: string; label: string; mode?: 'prefix' }> = [
   },
 ];
 
+// Filtros de atribución publicitaria (derivados en cliente a partir de
+// gclid y utm_source). Complementan el filtro por `fuente` (que es el
+// CTA / sección del sitio que disparó el lead); aquí agrupamos por
+// origen del tráfico externo para medir ROI de pauta.
+const ATRIBUCION_OPCIONES = [
+  { value: 'todos', label: 'Toda la atribución' },
+  { value: 'google_ads', label: 'Google Ads (gclid)' },
+  { value: 'utm', label: 'Con UTM (campaña/email)' },
+  { value: 'organico_o_directo', label: 'Orgánico / directo' },
+];
+
+function matchesAtribucion(lead: Lead, filtro: string): boolean {
+  if (filtro === 'todos') return true;
+  const hasGclid = Boolean(lead.gclid);
+  const hasUtm = Boolean(
+    lead.utm_source || lead.utm_medium || lead.utm_campaign,
+  );
+  if (filtro === 'google_ads') return hasGclid;
+  if (filtro === 'utm') return hasUtm && !hasGclid;
+  if (filtro === 'organico_o_directo') return !hasGclid && !hasUtm;
+  return true;
+}
+
 function getEstadoStyle(estado: string) {
   return ESTADOS.find((e) => e.value === estado)?.color || 'bg-slate-100 text-slate-600';
 }
@@ -66,6 +100,16 @@ function formatFecha(iso: string) {
   return d.toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
+/** Formatea el dominio del referrer (o de una landing_url) en algo compacto. */
+function formatHost(url: string | null): string | null {
+  if (!url) return null;
+  try {
+    return new URL(url).host.replace(/^www\./, '');
+  } catch {
+    return url.slice(0, 40);
+  }
+}
+
 export default function LeadsPage() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [total, setTotal] = useState(0);
@@ -73,6 +117,11 @@ export default function LeadsPage() {
   const [error, setError] = useState<string | null>(null);
   const [filtroEstado, setFiltroEstado] = useState('todos');
   const [filtroFuente, setFiltroFuente] = useState('todos');
+  // Filtro por atribución externa (tráfico). Se aplica en cliente sobre
+  // la lista ya traída del backend porque es una dimensión derivada
+  // (gclid presente / utm presente / ninguno) y el volumen es bajo
+  // (el endpoint ya limita a 100 resultados por página).
+  const [filtroAtribucion, setFiltroAtribucion] = useState('todos');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState<string | null>(null);
 
@@ -144,12 +193,20 @@ export default function LeadsPage() {
     }
   };
 
-  // Stats
+  // Lista ya filtrada por atribución (derivada en cliente).
+  const leadsVisibles = leads.filter((l) => matchesAtribucion(l, filtroAtribucion));
+
+  // Stats. Incluimos el contador de leads con gclid (Google Ads) para
+  // que dirección vea de un vistazo qué porcentaje del pipeline viene
+  // de pauta. Se calcula sobre la lista completa traída del backend
+  // (no sobre la filtrada) para que el número sea comparable entre
+  // filtros.
   const stats = {
     total: leads.length,
     nuevos: leads.filter((l) => l.estado === 'nuevo').length,
     contactados: leads.filter((l) => l.estado === 'contactado').length,
     convertidos: leads.filter((l) => l.estado === 'convertido').length,
+    googleAds: leads.filter((l) => Boolean(l.gclid)).length,
   };
 
   return (
@@ -167,12 +224,13 @@ export default function LeadsPage() {
       )}
 
       {/* Stats */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
         {[
           { label: 'Total', value: stats.total, color: 'text-slate-800', bg: 'bg-white' },
           { label: 'Nuevos', value: stats.nuevos, color: 'text-blue-700', bg: 'bg-blue-50' },
           { label: 'Contactados', value: stats.contactados, color: 'text-amber-700', bg: 'bg-amber-50' },
           { label: 'Convertidos', value: stats.convertidos, color: 'text-green-700', bg: 'bg-green-50' },
+          { label: 'Google Ads', value: stats.googleAds, color: 'text-fuchsia-700', bg: 'bg-fuchsia-50' },
         ].map((s) => (
           <div key={s.label} className={`${s.bg} rounded-xl border border-border p-4`}>
             <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">{s.label}</p>
@@ -202,7 +260,19 @@ export default function LeadsPage() {
             <option key={f.value} value={f.value}>{f.label}</option>
           ))}
         </select>
-        <span className="text-xs text-slate-400 ml-auto">{total} resultados</span>
+        <select
+          value={filtroAtribucion}
+          onChange={(e) => setFiltroAtribucion(e.target.value)}
+          className="px-3 py-2 border border-border rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary/20"
+          title="Filtrar por origen del tráfico externo"
+        >
+          {ATRIBUCION_OPCIONES.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
+        <span className="text-xs text-slate-400 ml-auto">
+          {leadsVisibles.length} visibles · {total} totales
+        </span>
       </div>
 
       {/* Tabla */}
@@ -210,10 +280,17 @@ export default function LeadsPage() {
         <div className="flex items-center justify-center py-20">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
-      ) : leads.length === 0 ? (
+      ) : leadsVisibles.length === 0 ? (
         <div className="bg-white rounded-xl border border-border p-12 text-center">
           <UserPlus className="w-12 h-12 text-slate-200 mx-auto mb-3" />
-          <p className="text-slate-500 font-medium">No hay leads{filtroEstado !== 'todos' || filtroFuente !== 'todos' ? ' con estos filtros' : ' aún'}</p>
+          <p className="text-slate-500 font-medium">
+            No hay leads
+            {filtroEstado !== 'todos' ||
+            filtroFuente !== 'todos' ||
+            filtroAtribucion !== 'todos'
+              ? ' con estos filtros'
+              : ' aún'}
+          </p>
         </div>
       ) : (
         <div className="bg-white rounded-xl border border-border overflow-hidden">
@@ -223,13 +300,14 @@ export default function LeadsPage() {
                 <tr className="border-b border-border bg-slate-50">
                   <th className="text-left px-4 py-3 font-semibold text-slate-500 text-xs uppercase tracking-wider">Contacto</th>
                   <th className="text-left px-4 py-3 font-semibold text-slate-500 text-xs uppercase tracking-wider">Fuente</th>
+                  <th className="text-left px-4 py-3 font-semibold text-slate-500 text-xs uppercase tracking-wider">Atribución</th>
                   <th className="text-left px-4 py-3 font-semibold text-slate-500 text-xs uppercase tracking-wider">Estado</th>
                   <th className="text-left px-4 py-3 font-semibold text-slate-500 text-xs uppercase tracking-wider">Fecha</th>
                   <th className="text-left px-4 py-3 font-semibold text-slate-500 text-xs uppercase tracking-wider w-48">Notas</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {leads.map((lead) => (
+                {leadsVisibles.map((lead) => (
                   <tr key={lead.id} className="hover:bg-slate-50 transition-colors">
                     <td className="px-4 py-3">
                       <div className="font-semibold text-slate-800">{lead.nombre}</div>
@@ -260,6 +338,49 @@ export default function LeadsPage() {
                         <span className="flex items-center gap-1 text-xs text-green-600 mt-0.5">
                           <MessageCircle className="w-3 h-3" /> WhatsApp
                         </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 align-top">
+                      {lead.gclid ? (
+                        <span
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-fuchsia-100 text-fuchsia-700 text-[11px] font-semibold"
+                          title={`gclid: ${lead.gclid}`}
+                        >
+                          <Target className="w-3 h-3" /> Google Ads
+                        </span>
+                      ) : lead.utm_source || lead.utm_campaign ? (
+                        <span className="inline-block px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 text-[11px] font-semibold">
+                          UTM
+                        </span>
+                      ) : (
+                        <span className="text-[11px] text-slate-400">Directo / orgánico</span>
+                      )}
+                      {(lead.utm_source || lead.utm_campaign || lead.utm_medium) && (
+                        <div className="mt-1 text-[11px] text-slate-500 leading-tight space-y-0.5">
+                          {lead.utm_source && (
+                            <div>
+                              <span className="text-slate-400">src:</span> {lead.utm_source}
+                            </div>
+                          )}
+                          {lead.utm_medium && (
+                            <div>
+                              <span className="text-slate-400">med:</span> {lead.utm_medium}
+                            </div>
+                          )}
+                          {lead.utm_campaign && (
+                            <div>
+                              <span className="text-slate-400">cmp:</span> {lead.utm_campaign}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {!lead.gclid && !lead.utm_source && lead.referrer && (
+                        <div
+                          className="mt-1 text-[11px] text-slate-400 truncate max-w-[140px]"
+                          title={lead.referrer}
+                        >
+                          ref: {formatHost(lead.referrer)}
+                        </div>
                       )}
                     </td>
                     <td className="px-4 py-3">

@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { X, Loader2, MessageCircle } from 'lucide-react';
+import { readLeadAttributionCookie } from '@/lib/analytics/leadAttribution';
 
 interface LeadModalProps {
   isOpen: boolean;
@@ -53,6 +54,11 @@ export default function LeadModal({
     setError(null);
 
     try {
+      // Adjuntamos la atribución (gclid + utm_*) persistida en cookie
+      // first-party para que el backend pueda correlacionar el lead
+      // con la campaña de Google Ads que lo generó.
+      const attribution = readLeadAttributionCookie();
+
       const res = await fetch('/api/leads', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -63,6 +69,7 @@ export default function LeadModal({
           // este valor en vez del global. Campo vacio/undefined = flujo
           // por defecto (numero global).
           numero_whatsapp_override: numeroOverride,
+          attribution,
         }),
       });
       const data = await res.json();

@@ -2,6 +2,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { Building2 } from 'lucide-react';
 import WhatsAppBubble from './WhatsAppBubble';
+import LeadAttributionCapture from './LeadAttributionCapture';
 
 // Dimensiones reales del asset public/logo-imprima-horizontal.png (198x79).
 // next/image exige width/height para preservar aspect ratio y evitar CLS;
@@ -54,6 +55,11 @@ export default function PublicLayout({ children }: PublicLayoutProps) {
           </div>
         </nav>
       </header>
+
+      {/* Captura gclid + utm_* al cargar cualquier página pública y los
+          persiste 90 días en cookie first-party para atribución de leads.
+          Ver src/lib/analytics/leadAttribution.ts. */}
+      <LeadAttributionCapture />
 
       <main className="flex-1">{children}</main>
       <WhatsAppBubble />
