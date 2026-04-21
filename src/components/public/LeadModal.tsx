@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { X, Loader2, MessageCircle } from 'lucide-react';
 
 interface LeadModalProps {
@@ -8,12 +8,38 @@ interface LeadModalProps {
   onClose: () => void;
   fuente?: string;
   ctaTexto?: string;
+  // Texto que aparece prellenado en el textarea "mensaje". El usuario
+  // puede editarlo antes de enviar. El API /api/leads ya prioriza
+  // form.mensaje sobre el mensaje_default global, asi que esto se
+  // propaga automaticamente al WhatsApp final.
+  mensajePrefill?: string;
 }
 
-export default function LeadModal({ isOpen, onClose, fuente = 'landing', ctaTexto = 'Hablar con un asesor' }: LeadModalProps) {
-  const [form, setForm] = useState({ nombre: '', empresa: '', email: '', telefono: '', mensaje: '' });
+export default function LeadModal({
+  isOpen,
+  onClose,
+  fuente = 'landing',
+  ctaTexto = 'Hablar con un asesor',
+  mensajePrefill,
+}: LeadModalProps) {
+  const [form, setForm] = useState({
+    nombre: '',
+    empresa: '',
+    email: '',
+    telefono: '',
+    mensaje: mensajePrefill ?? '',
+  });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Cuando el modal se abre (o cambia el prefill), reiniciamos el
+  // textarea al prefill. Asi cada apertura empieza con el mensaje
+  // sugerido para esa fuente (cotizacion, contacto generico, etc.).
+  useEffect(() => {
+    if (isOpen) {
+      setForm((prev) => ({ ...prev, mensaje: mensajePrefill ?? '' }));
+    }
+  }, [isOpen, mensajePrefill]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -33,7 +59,7 @@ export default function LeadModal({ isOpen, onClose, fuente = 'landing', ctaText
         window.open(data.whatsapp_url, '_blank');
       }
 
-      setForm({ nombre: '', empresa: '', email: '', telefono: '', mensaje: '' });
+      setForm({ nombre: '', empresa: '', email: '', telefono: '', mensaje: mensajePrefill ?? '' });
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error al enviar');

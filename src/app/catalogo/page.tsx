@@ -20,12 +20,21 @@ async function getBanner(): Promise<CatalogoBannerConfig | null> {
     if (!seccion || !seccion.activo) return null;
     if (!seccion.imagen_url) return null;
     const c = (seccion.contenido || {}) as Record<string, unknown>;
+    // overlay_color/overlay_opacity son opcionales en BD. Defaults pensados
+    // para alto contraste con texto blanco: slate-900 al 60%.
+    const overlayColor = typeof c.overlay_color === 'string' ? c.overlay_color : '#0f172a';
+    const overlayOpacity = typeof c.overlay_opacity === 'number' ? c.overlay_opacity : 60;
     return {
       titulo: seccion.titulo || '',
       subtitulo: seccion.subtitulo || '',
       imagen_url: seccion.imagen_url,
       cta_texto: typeof c.cta_texto === 'string' ? c.cta_texto : '',
-      cta_url: typeof c.cta_url === 'string' ? c.cta_url : '',
+      // mensaje_prefill opcional: si esta vacio, PublicCatalogClient
+      // usa el fallback definido en CATALOGO_BANNER_PREFILL_DEFAULT.
+      mensaje_prefill:
+        typeof c.mensaje_prefill === 'string' ? c.mensaje_prefill : undefined,
+      overlay_color: overlayColor,
+      overlay_opacity: overlayOpacity,
     };
   } catch {
     return null;
