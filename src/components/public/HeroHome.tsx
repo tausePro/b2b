@@ -1,3 +1,4 @@
+import Image from 'next/image';
 import Link from 'next/link';
 import { Sparkles } from 'lucide-react';
 import LeadButton from '@/components/public/LeadButton';
@@ -152,14 +153,23 @@ export default function HeroHome({ hero, dynamicStats }: Props) {
         <div className="lg:col-span-7 relative">
           <div className="relative lg:ml-0 lg:mr-[calc((100vw-min(100vw,80rem))/-2)]">
             {hero?.imagen_url ? (
-              /* eslint-disable-next-line @next/next/no-img-element */
-              <img
-                src={hero.imagen_url}
-                alt={titulo}
-                className="w-full h-[380px] sm:h-[480px] lg:h-[560px] object-cover rounded-l-3xl lg:rounded-l-[2.5rem] shadow-2xl"
-                loading="eager"
-                decoding="async"
-              />
+              // Imagen del hero: elemento LCP del home. Usa <Image fill> con
+              // priority para que Next la precargue y sirva srcset webp/avif.
+              // El contenedor padre es `relative` (requerido por fill) y
+              // define la altura responsive con min-h via Tailwind.
+              <div className="relative w-full h-[380px] sm:h-[480px] lg:h-[560px] rounded-l-3xl lg:rounded-l-[2.5rem] overflow-hidden shadow-2xl">
+                <Image
+                  src={hero.imagen_url}
+                  alt={titulo}
+                  fill
+                  priority
+                  // Mobile: 100vw. Desktop (lg+): la columna derecha ocupa
+                  // aprox 7/12 del contenedor + el bleed. 66vw es un
+                  // ancho razonable para pedir el srcset correcto.
+                  sizes="(max-width: 1024px) 100vw, 66vw"
+                  className="object-cover"
+                />
+              </div>
             ) : (
               // Fallback cuando el admin aun no ha subido imagen: degradado
               // decorativo que preserva el layout sin dejar un hueco.

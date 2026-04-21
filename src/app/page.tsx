@@ -1,3 +1,4 @@
+import Image from 'next/image';
 import Link from 'next/link';
 import type { Metadata } from 'next';
 import {
@@ -175,7 +176,14 @@ export default async function LandingPage() {
           <div className="flex justify-between items-center h-20">
             <div className="flex items-center gap-8">
               <Link href="/" className="flex items-center">
-                <img src="/logo-imprima-horizontal.png" alt="Imprima" className="h-10 w-auto" />
+                <Image
+                  src="/logo-imprima-horizontal.png"
+                  alt="Imprima"
+                  width={198}
+                  height={79}
+                  priority
+                  className="h-10 w-auto"
+                />
               </Link>
               <div className="hidden md:flex items-center gap-6 text-sm font-semibold text-slate-600">
                 <a className="hover:text-primary transition-colors" href="#categorias">Categorías</a>
@@ -255,10 +263,15 @@ export default async function LandingPage() {
                     <>
                       <div className="relative h-64 rounded-2xl overflow-hidden mb-4 shadow-md shadow-slate-900/5 group-hover:shadow-xl group-hover:shadow-primary/15 transition-shadow duration-300">
                         {cat.imagen_url ? (
-                          <img
+                          <Image
                             src={cat.imagen_url}
                             alt={titulo}
-                            className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+                            fill
+                            // sizes: en mobile ocupan 100vw, en md dos columnas
+                            // (~50vw), en lg cuatro columnas (~25vw). Next usa
+                            // esto para pedir el srcset mas eficiente.
+                            sizes="(max-width: 768px) 100vw, (max-width: 1024px) 50vw, 25vw"
+                            className="object-cover transition-transform duration-500 group-hover:scale-110"
                           />
                         ) : (
                           <div
@@ -445,7 +458,13 @@ export default async function LandingPage() {
           <div className="grid md:grid-cols-4 gap-12 mb-16">
             <div className="col-span-2">
               <div className="mb-6">
-                <img src="/logo-imprima-horizontal.png" alt="Imprima" className="h-10 w-auto" />
+                <Image
+                  src="/logo-imprima-horizontal.png"
+                  alt="Imprima"
+                  width={198}
+                  height={79}
+                  className="h-10 w-auto"
+                />
               </div>
               <p className="text-slate-500 max-w-sm mb-6 leading-relaxed">
                 {foot?.subtitulo ?? 'Líderes en soluciones integrales de suministros para el sector corporativo en Colombia.'}
