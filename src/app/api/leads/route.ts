@@ -7,6 +7,41 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+// Campos de atribución aceptados por el POST. Todos opcionales;
+// provienen de la cookie `lead_attr` escrita por
+// `captureLeadAttributionFromUrl()` cuando el visitante llega con
+// gclid/utm_* en la URL. Se sanitizan antes de persistir.
+const ATTRIBUTION_KEYS = [
+  'gclid',
+  'utm_source',
+  'utm_medium',
+  'utm_campaign',
+  'utm_term',
+  'utm_content',
+  'referrer',
+  'landing_url',
+] as const;
+const MAX_ATTR_LEN = 500;
+
+function sanitizeAttributionString(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  return trimmed.slice(0, MAX_ATTR_LEN);
+}
+
+function sanitizeClickAt(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) return null;
+  // Evitamos aceptar timestamps futuros (más de 5 minutos por encima
+  // del reloj del servidor) para protegernos de cookies manipuladas.
+  if (parsed.getTime() > Date.now() + 5 * 60 * 1000) return null;
+  return parsed.toISOString();
+}
+
 // POST — público: crear lead
 export async function POST(request: NextRequest) {
   try {
@@ -26,6 +61,19 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Nombre es requerido' }, { status: 400 });
     }
 
+    // Extrae y sanitiza la atribución desde el payload (cookie lead_attr
+    // reenviada por el cliente). Cualquier valor vacío o mal formado se
+    // convierte en null para no poluir la tabla.
+    const attribution: Record<string, string | null> = {};
+    const attrSource =
+      body.attribution && typeof body.attribution === 'object'
+        ? (body.attribution as Record<string, unknown>)
+        : {};
+    for (const key of ATTRIBUTION_KEYS) {
+      attribution[key] = sanitizeAttributionString(attrSource[key]);
+    }
+    const clickAt = sanitizeClickAt(attrSource.click_at);
+
     const { data, error } = await supabaseAdmin
       .from('leads')
       .insert({
@@ -37,6 +85,8 @@ export async function POST(request: NextRequest) {
         fuente: fuente || 'landing',
         estado: 'nuevo',
         whatsapp_enviado: true,
+        ...attribution,
+        click_at: clickAt,
       })
       .select()
       .single();
