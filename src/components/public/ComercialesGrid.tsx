@@ -1,3 +1,4 @@
+import Image from 'next/image';
 import { Mail, MessageCircle, Phone, User } from 'lucide-react';
 import LeadButton from '@/components/public/LeadButton';
 
@@ -95,13 +96,15 @@ export default function ComercialesGrid({ titulo, subtitulo, comerciales }: Prop
                     icono para mantener el layout de la grilla. */}
                 <div className="relative w-36 h-36 rounded-full overflow-hidden bg-slate-100 ring-4 ring-white shadow-md">
                   {c.foto_url ? (
-                    /* eslint-disable-next-line @next/next/no-img-element */
-                    <img
+                    // Avatar circular 144x144. Uso fill + sizes fijos para que
+                    // Next optimice a webp/avif y sirva un tamaño acotado
+                    // (evita descargar la foto original 1MB por tarjeta).
+                    <Image
                       src={c.foto_url}
                       alt={c.nombre}
-                      className="w-full h-full object-cover"
-                      loading="lazy"
-                      decoding="async"
+                      fill
+                      sizes="144px"
+                      className="object-cover"
                     />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center text-slate-400">

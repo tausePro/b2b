@@ -1,6 +1,13 @@
+import Image from 'next/image';
 import Link from 'next/link';
 import { Building2 } from 'lucide-react';
 import WhatsAppBubble from './WhatsAppBubble';
+
+// Dimensiones reales del asset public/logo-imprima-horizontal.png (198x79).
+// next/image exige width/height para preservar aspect ratio y evitar CLS;
+// centralizamos aqui para reusar en header y footer.
+const LOGO_W = 198;
+const LOGO_H = 79;
 
 interface PublicLayoutProps {
   children: React.ReactNode;
@@ -17,7 +24,16 @@ export default function PublicLayout({ children }: PublicLayoutProps) {
           <div className="flex justify-between items-center h-20">
             <div className="flex items-center gap-8">
               <Link href="/" className="flex items-center">
-                <img src="/logo-imprima-horizontal.png" alt="Imprima" className="h-10 w-auto" />
+                <Image
+                  src="/logo-imprima-horizontal.png"
+                  alt="Imprima"
+                  width={LOGO_W}
+                  height={LOGO_H}
+                  // Logo del header: above-the-fold, priority para preload
+                  // y evitar retrasar LCP. Tamaño visual controlado por CSS.
+                  priority
+                  className="h-10 w-auto"
+                />
               </Link>
               <div className="hidden md:flex items-center gap-6 text-sm font-semibold text-slate-600">
                 <Link className="hover:text-primary transition-colors" href="/#categorias">Categorías</Link>
@@ -47,7 +63,14 @@ export default function PublicLayout({ children }: PublicLayoutProps) {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex flex-col md:flex-row justify-between items-center gap-6 mb-8">
             <div>
-              <img src="/logo-imprima-horizontal.png" alt="Imprima" className="h-8 w-auto" />
+              <Image
+                src="/logo-imprima-horizontal.png"
+                alt="Imprima"
+                width={LOGO_W}
+                height={LOGO_H}
+                // Logo del footer: debajo del fold, lazy por defecto.
+                className="h-8 w-auto"
+              />
             </div>
             <div className="flex flex-wrap justify-center gap-6 text-sm text-slate-500">
               <Link href="/" className="hover:text-primary transition-colors">Inicio</Link>
