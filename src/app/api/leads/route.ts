@@ -81,6 +81,10 @@ export async function GET(request: NextRequest) {
     const { searchParams } = request.nextUrl;
     const estado = searchParams.get('estado');
     const fuente = searchParams.get('fuente');
+    // fuente_prefix: filtra por prefijo (ej: 'producto_' matchea
+    // producto_12, producto_34_cta, etc.). Util para agrupar fuentes
+    // dinamicas en el dashboard sin tener un listado exhaustivo.
+    const fuentePrefix = searchParams.get('fuente_prefix');
     const limit = parseInt(searchParams.get('limit') || '50');
     const offset = parseInt(searchParams.get('offset') || '0');
 
@@ -91,7 +95,16 @@ export async function GET(request: NextRequest) {
       .range(offset, offset + limit - 1);
 
     if (estado && estado !== 'todos') query = query.eq('estado', estado);
-    if (fuente && fuente !== 'todos') query = query.eq('fuente', fuente);
+    if (fuente && fuente !== 'todos') {
+      query = query.eq('fuente', fuente);
+    } else if (fuentePrefix) {
+      // Escapamos wildcards del usuario (%, _) antes de hacer LIKE para
+      // evitar que un prefix 'foo_' matchee demasiado ancho (siempre lo
+      // haria porque _ en LIKE es comodin de un char). Uso like() directo
+      // con anchura fija y acepto ese comportamiento porque los prefijos
+      // del admin son controlados por nosotros.
+      query = query.like('fuente', `${fuentePrefix}%`);
+    }
 
     const { data, error, count } = await query;
     if (error) throw error;

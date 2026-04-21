@@ -9,6 +9,10 @@ interface LeadButtonProps {
   texto?: string;
   className?: string;
   variant?: 'primary' | 'whatsapp' | 'outline';
+  // Mensaje que aparece prellenado en el textarea del modal.
+  // El usuario puede editarlo antes de enviar. Se propaga al WhatsApp
+  // final via /api/leads (que usa form.mensaje si viene lleno).
+  mensajePrefill?: string;
 }
 
 export default function LeadButton({
@@ -16,6 +20,7 @@ export default function LeadButton({
   texto = 'Hablar con un asesor',
   className = '',
   variant = 'whatsapp',
+  mensajePrefill,
 }: LeadButtonProps) {
   const [open, setOpen] = useState(false);
 
@@ -32,7 +37,13 @@ export default function LeadButton({
         <MessageCircle className="w-4 h-4" />
         {texto}
       </button>
-      <LeadModal isOpen={open} onClose={() => setOpen(false)} fuente={fuente} ctaTexto={texto} />
+      <LeadModal
+        isOpen={open}
+        onClose={() => setOpen(false)}
+        fuente={fuente}
+        ctaTexto={texto}
+        mensajePrefill={mensajePrefill}
+      />
     </>
   );
 }
