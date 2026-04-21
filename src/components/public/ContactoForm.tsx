@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { CheckCircle2, Loader2, Send } from 'lucide-react';
+import { readLeadAttributionCookie } from '@/lib/analytics/leadAttribution';
 
 // Formulario de contacto publico en /contacto. Reusa la API de leads
 // (POST /api/leads) para registrar cada submission como lead con
@@ -27,10 +28,18 @@ export default function ContactoForm() {
     setError(null);
 
     try {
+      // Atribución de Google Ads / UTM persistida en cookie first-party.
+      // Ver src/lib/analytics/leadAttribution.ts.
+      const attribution = readLeadAttributionCookie();
+
       const res = await fetch('/api/leads', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, fuente: 'contacto_formulario' }),
+        body: JSON.stringify({
+          ...form,
+          fuente: 'contacto_formulario',
+          attribution,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'No se pudo enviar tu mensaje');
