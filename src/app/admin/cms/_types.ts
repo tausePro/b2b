@@ -18,7 +18,7 @@ export interface Seccion {
   borrador_actualizado_en?: string | null;
 }
 
-export type TabId = 'landing' | 'seo' | 'paginas';
+export type TabId = 'landing' | 'catalogo' | 'seo' | 'paginas';
 
 export const LANDING_IDS = [
   'hero',
@@ -46,6 +46,7 @@ export const SECTION_LABELS: Record<string, string> = {
   testimonios: 'Testimonios',
   cta: 'Call to Action Final',
   footer: 'Footer',
+  catalogo_banner: 'Banner /catalogo',
   seo: 'SEO / Schema / AEO',
   pagina_nosotros: 'Sobre Nosotros',
   pagina_contacto: 'Contacto',

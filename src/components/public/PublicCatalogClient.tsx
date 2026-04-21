@@ -12,6 +12,17 @@ import type {
   PublicCatalogPageData,
 } from '@/types/publicCatalog';
 
+// Config del banner CMS-editable que reemplaza el hero de texto cuando el
+// admin ha subido una imagen en la seccion 'catalogo_banner'. Si es null,
+// /catalogo renderiza el hero generico por defecto.
+export interface CatalogoBannerConfig {
+  titulo: string;
+  subtitulo: string;
+  imagen_url: string;
+  cta_texto: string;
+  cta_url: string;
+}
+
 function buildParentIndex(categories: PublicCatalogCategoryNode[]) {
   const parentIndex: Record<number, number | null> = {};
   const categoryIndex: Record<number, PublicCatalogCategoryNode> = {};
@@ -50,9 +61,10 @@ function countNestedCategories(category: PublicCatalogCategoryNode): number {
 
 interface PublicCatalogClientProps {
   initialData: PublicCatalogPageData;
+  banner?: CatalogoBannerConfig | null;
 }
 
-export default function PublicCatalogClient({ initialData }: PublicCatalogClientProps) {
+export default function PublicCatalogClient({ initialData, banner = null }: PublicCatalogClientProps) {
   const pathname = usePathname();
   const { categories, ...initialListing } = initialData;
   const [query, setQuery] = useState(initialListing.query.search);
@@ -282,16 +294,63 @@ export default function PublicCatalogClient({ initialData }: PublicCatalogClient
 
   return (
     <>
-      <section className="pt-16 pb-12 lg:pt-24 lg:pb-16">
+      {banner ? (
+        <section className="relative overflow-hidden">
+          {/* Banner de imagen administrado desde CMS. Reemplaza el hero por
+              defecto cuando el admin sube una imagen en 'catalogo_banner'. */}
+          <div className="relative w-full aspect-[3/1] min-h-[260px] max-h-[520px]">
+            <Image
+              src={banner.imagen_url}
+              alt={banner.titulo || 'Banner del catálogo'}
+              fill
+              priority
+              sizes="100vw"
+              className="object-cover"
+            />
+            <div className="absolute inset-0 bg-gradient-to-r from-slate-900/70 via-slate-900/40 to-transparent" />
+            <div className="absolute inset-0 flex items-center">
+              <div className="max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8">
+                <div className="max-w-2xl text-white">
+                  {banner.titulo && (
+                    <h1 className="text-3xl font-extrabold leading-tight sm:text-4xl lg:text-5xl">
+                      {banner.titulo}
+                    </h1>
+                  )}
+                  {banner.subtitulo && (
+                    <p className="mt-4 text-base sm:text-lg text-white/90 max-w-xl">
+                      {banner.subtitulo}
+                    </p>
+                  )}
+                  {banner.cta_texto && banner.cta_url && (
+                    <Link
+                      href={banner.cta_url}
+                      className="mt-6 inline-flex items-center gap-2 rounded-xl bg-primary px-6 py-3 font-bold text-slate-900 shadow-lg shadow-primary/20 transition hover:bg-primary/90"
+                    >
+                      {banner.cta_texto}
+                      <ArrowRight className="h-4 w-4" />
+                    </Link>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      <section className={banner ? 'pt-10 pb-8 lg:pt-12 lg:pb-10' : 'pt-16 pb-12 lg:pt-24 lg:pb-16'}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="max-w-4xl mx-auto text-center">
-            <span className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 text-xs font-bold uppercase tracking-wider text-primary">
-              Portafolio Imprima
-            </span>
-            <h1 className="mt-6 text-4xl font-extrabold leading-[1.05] text-slate-900 sm:text-5xl lg:text-6xl">
-              Explore todo el catálogo por categorías reales o búsquelo al instante
-            </h1>
-            <div className="mt-10 max-w-3xl mx-auto">
+            {!banner && (
+              <>
+                <span className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 text-xs font-bold uppercase tracking-wider text-primary">
+                  Portafolio Imprima
+                </span>
+                <h1 className="mt-6 text-4xl font-extrabold leading-[1.05] text-slate-900 sm:text-5xl lg:text-6xl">
+                  Explore todo el catálogo por categorías reales o búsquelo al instante
+                </h1>
+              </>
+            )}
+            <div className={banner ? 'max-w-3xl mx-auto' : 'mt-10 max-w-3xl mx-auto'}>
               <div className="relative">
                 <Search className="absolute left-5 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
                 <input
