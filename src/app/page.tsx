@@ -170,7 +170,11 @@ export default async function LandingPage() {
                 <a className="hover:text-primary transition-colors" href="#categorias">Categorías</a>
                 <Link className="hover:text-primary transition-colors" href="/catalogo">Catálogo</Link>
                 <a className="hover:text-primary transition-colors" href="#testimonios">Testimonios</a>
-                <a className="hover:text-primary transition-colors" href="#contacto">Contacto</a>
+                {/* Contacto ahora es una pagina propia (/contacto) con
+                    formulario + CTA WhatsApp; reemplaza al ancla interna
+                    al bloque CTA del home, que seguia existiendo por
+                    legado (#contacto). */}
+                <Link className="hover:text-primary transition-colors" href="/contacto">Contacto</Link>
               </div>
             </div>
             <div className="flex items-center gap-4">

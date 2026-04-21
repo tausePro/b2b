@@ -1,10 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import { AlertCircle, FileText, Globe, Layout, Loader2 } from 'lucide-react';
+import { AlertCircle, FileText, Globe, Layout, Loader2, ShoppingBag } from 'lucide-react';
 import HistorialVersionesModal from '@/components/cms/HistorialVersionesModal';
 import { CmsProvider } from './_context';
 import { useCmsSecciones } from './_hooks/useCmsSecciones';
+import { CatalogoEditor } from './_components/editors/CatalogoEditor';
 import { LandingEditor } from './_components/editors/LandingEditor';
 import { PaginasEditor } from './_components/editors/PaginasEditor';
 import { SeoEditor } from './_components/editors/SeoEditor';
@@ -29,6 +30,7 @@ export default function CMSPage() {
 
   const tabs: { id: TabId; label: string; icon: React.ReactNode }[] = [
     { id: 'landing', label: 'Landing', icon: <Layout className="w-4 h-4" /> },
+    { id: 'catalogo', label: 'Catálogo', icon: <ShoppingBag className="w-4 h-4" /> },
     { id: 'seo', label: 'SEO / Schema', icon: <Globe className="w-4 h-4" /> },
     { id: 'paginas', label: 'Páginas', icon: <FileText className="w-4 h-4" /> },
   ];
@@ -73,6 +75,7 @@ export default function CMSPage() {
 
         {/* Tab content */}
         {activeTab === 'landing' && <LandingEditor />}
+        {activeTab === 'catalogo' && <CatalogoEditor />}
         {activeTab === 'seo' && <SeoEditor />}
         {activeTab === 'paginas' && <PaginasEditor />}
 

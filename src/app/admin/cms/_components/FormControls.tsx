@@ -38,11 +38,13 @@ export function TextareaInput({
   value,
   onChange,
   rows = 3,
+  placeholder,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   rows?: number;
+  placeholder?: string;
 }) {
   return (
     <div>
@@ -51,6 +53,7 @@ export function TextareaInput({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         rows={rows}
+        placeholder={placeholder}
         className="w-full px-3 py-2 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 resize-y"
       />
     </div>

@@ -29,13 +29,24 @@ const ESTADOS = [
   { value: 'descartado', label: 'Descartado', color: 'bg-red-100 text-red-700' },
 ];
 
-const FUENTES = [
+// Catalogo completo de fuentes emitidas hoy por el codigo. Mantener
+// sincronizado con los `fuente` que usan los <LeadButton> y formularios
+// publicos. Si agregas un nuevo canal, registralo aca para que sea
+// filtrable en este dashboard.
+//
+// `mode: 'prefix'` indica que el filtro debe hacer LIKE en vez de eq,
+// util para fuentes dinamicas como `producto_{id}` y `producto_{id}_cta`.
+const FUENTES: Array<{ value: string; label: string; mode?: 'prefix' }> = [
   { value: 'todos', label: 'Todas las fuentes' },
-  { value: 'landing_hero', label: 'Landing — Hero' },
-  { value: 'landing_cta', label: 'Landing — CTA' },
-  { value: 'catalogo_hero', label: 'Catálogo — Hero' },
-  { value: 'catalogo_cta', label: 'Catálogo — CTA' },
-  { value: 'catalogo_sin_resultados', label: 'Catálogo — Sin resultados' },
+  { value: 'landing_hero', label: 'Home — Hero' },
+  { value: 'landing_cta', label: 'Home — CTA final' },
+  { value: 'whatsapp_bubble', label: 'Burbuja WhatsApp (global)' },
+  { value: 'catalogo_banner', label: 'Catálogo — Banner' },
+  { value: 'catalogo_publico_sin_resultados', label: 'Catálogo — Sin resultados' },
+  { value: 'catalogo_publico_cta', label: 'Catálogo — CTA final' },
+  { value: 'producto_', label: 'Producto (detalle)', mode: 'prefix' },
+  { value: 'contacto_formulario', label: 'Contacto — Formulario' },
+  { value: 'contacto_whatsapp', label: 'Contacto — WhatsApp' },
 ];
 
 function getEstadoStyle(estado: string) {
@@ -62,7 +73,16 @@ export default function LeadsPage() {
     try {
       const params = new URLSearchParams();
       if (filtroEstado !== 'todos') params.set('estado', filtroEstado);
-      if (filtroFuente !== 'todos') params.set('fuente', filtroFuente);
+      if (filtroFuente !== 'todos') {
+        // Si la fuente seleccionada fue registrada como prefix (ej:
+        // 'producto_'), el backend espera fuente_prefix en lugar de fuente.
+        const fuenteDef = FUENTES.find((f) => f.value === filtroFuente);
+        if (fuenteDef?.mode === 'prefix') {
+          params.set('fuente_prefix', filtroFuente);
+        } else {
+          params.set('fuente', filtroFuente);
+        }
+      }
       params.set('limit', '100');
 
       const res = await fetch(`/api/leads?${params}`);

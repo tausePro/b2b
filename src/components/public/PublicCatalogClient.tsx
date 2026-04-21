@@ -12,6 +12,42 @@ import type {
   PublicCatalogPageData,
 } from '@/types/publicCatalog';
 
+// Config del banner CMS-editable que reemplaza el hero de texto cuando el
+// admin ha subido una imagen en la seccion 'catalogo_banner'. Si es null,
+// /catalogo renderiza el hero generico por defecto.
+export interface CatalogoBannerConfig {
+  titulo: string;
+  subtitulo: string;
+  imagen_url: string;
+  cta_texto: string;
+  // Mensaje que se prellena en el textarea del formulario de leads al
+  // abrir el CTA del banner. Se propaga al WhatsApp final. Editable
+  // desde el CMS (seccion 'catalogo_banner', campo mensaje_prefill).
+  mensaje_prefill?: string;
+  // Overlay: el admin elige color base y opacidad de la capa que oscurece
+  // la imagen para garantizar contraste del texto blanco encima.
+  overlay_color: string;   // hex, ej '#0f172a'
+  overlay_opacity: number; // 0-100
+}
+
+// Fallback usado cuando el admin no ha configurado mensaje_prefill para
+// el banner. Alineado con la convencion propuesta por negocio para
+// cotizaciones entrantes desde /catalogo.
+const CATALOGO_BANNER_PREFILL_DEFAULT = 'Quiero solicitar una cotización para mi empresa';
+
+// Convierte hex (#rrggbb) + opacidad 0-100 a rgba. Si el hex es invalido
+// cae a slate-900 para evitar mostrar un overlay vacio/transparente por
+// datos corruptos en BD.
+function hexAOverlay(hex: string, opacidad: number): string {
+  const match = /^#?([0-9a-fA-F]{6})$/.exec(hex ?? '');
+  const base = match ? match[1] : '0f172a';
+  const r = parseInt(base.slice(0, 2), 16);
+  const g = parseInt(base.slice(2, 4), 16);
+  const b = parseInt(base.slice(4, 6), 16);
+  const o = Math.max(0, Math.min(100, Math.round(opacidad ?? 60))) / 100;
+  return `rgba(${r}, ${g}, ${b}, ${o})`;
+}
+
 function buildParentIndex(categories: PublicCatalogCategoryNode[]) {
   const parentIndex: Record<number, number | null> = {};
   const categoryIndex: Record<number, PublicCatalogCategoryNode> = {};
@@ -50,9 +86,10 @@ function countNestedCategories(category: PublicCatalogCategoryNode): number {
 
 interface PublicCatalogClientProps {
   initialData: PublicCatalogPageData;
+  banner?: CatalogoBannerConfig | null;
 }
 
-export default function PublicCatalogClient({ initialData }: PublicCatalogClientProps) {
+export default function PublicCatalogClient({ initialData, banner = null }: PublicCatalogClientProps) {
   const pathname = usePathname();
   const { categories, ...initialListing } = initialData;
   const [query, setQuery] = useState(initialListing.query.search);
@@ -280,61 +317,146 @@ export default function PublicCatalogClient({ initialData }: PublicCatalogClient
     });
   };
 
+  // Buscador reutilizable. `onDark=true` aplica estilos para vivir encima del
+  // banner (tipografias blancas, chips con fondo glass). Sobre fondo claro usa
+  // la paleta original centrada del hero sin banner.
+  const renderSearchBlock = (onDark: boolean) => (
+    <div className={onDark ? 'max-w-2xl' : 'max-w-3xl mx-auto'}>
+      <div className="relative">
+        <Search className="absolute left-5 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
+        <input
+          type="text"
+          value={query}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            setPage(1);
+          }}
+          placeholder="Buscar por nombre o referencia del producto..."
+          // text-slate-900 y placeholder:text-slate-400 fuerzan color oscuro
+          // aunque el banner lo envuelva con `text-white`; si no, el input
+          // quedaria con texto blanco sobre fondo blanco e ilegible.
+          className="w-full rounded-2xl border border-slate-200 bg-white py-4 pl-14 pr-28 text-base text-slate-900 placeholder:text-slate-400 shadow-lg shadow-slate-900/5 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/30"
+        />
+        {query && (
+          <button
+            type="button"
+            onClick={() => {
+              setQuery('');
+              setPage(1);
+            }}
+            className="absolute right-4 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:border-primary/40 hover:text-primary"
+            aria-label="Limpiar búsqueda"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        )}
+      </div>
+      <div
+        className={`mt-3 flex flex-wrap items-center gap-3 text-sm ${
+          onDark ? 'text-white/80' : 'justify-center text-slate-500'
+        }`}
+      >
+        <span>Puede buscar por ejemplo: papel, tóner, guantes, café.</span>
+        {activeCategory && (
+          <span
+            className={
+              onDark
+                ? 'rounded-full bg-white/15 px-3 py-1 text-white backdrop-blur-sm'
+                : 'rounded-full bg-slate-100 px-3 py-1 text-slate-600'
+            }
+          >
+            Categoría activa: {activeCategory.complete_name}
+          </span>
+        )}
+      </div>
+      {listing.searchTooShort && (
+        <p className={`mt-3 text-sm ${onDark ? 'text-amber-200' : 'text-amber-700'}`}>
+          Escriba al menos {listing.minSearchLength} caracteres para aplicar la búsqueda.
+        </p>
+      )}
+    </div>
+  );
+
   return (
     <>
-      <section className="pt-16 pb-12 lg:pt-24 lg:pb-16">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="max-w-4xl mx-auto text-center">
-            <span className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 text-xs font-bold uppercase tracking-wider text-primary">
-              Portafolio Imprima
-            </span>
-            <h1 className="mt-6 text-4xl font-extrabold leading-[1.05] text-slate-900 sm:text-5xl lg:text-6xl">
-              Explore todo el catálogo por categorías reales o búsquelo al instante
-            </h1>
-            <div className="mt-10 max-w-3xl mx-auto">
-              <div className="relative">
-                <Search className="absolute left-5 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
-                <input
-                  type="text"
-                  value={query}
-                  onChange={(event) => {
-                    setQuery(event.target.value);
-                    setPage(1);
-                  }}
-                  placeholder="Buscar por nombre o referencia del producto..."
-                  className="w-full rounded-2xl border border-slate-200 bg-white py-4 pl-14 pr-28 text-base shadow-lg shadow-slate-900/5 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/30"
-                />
-                {query && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setQuery('');
-                      setPage(1);
-                    }}
-                    className="absolute right-4 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:border-primary/40 hover:text-primary"
-                    aria-label="Limpiar búsqueda"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
+      {banner ? (
+        <section className="relative overflow-hidden">
+          {/* Banner de imagen administrado desde CMS. Reemplaza el hero por
+              defecto cuando el admin sube una imagen en 'catalogo_banner'.
+              Ya no usamos aspect-ratio fijo: el banner crece con su contenido
+              (titulo + subtitulo + buscador + CTA), que cambia segun lo que
+              configure el admin. Imagen de fondo con object-cover. */}
+          <div className="relative w-full">
+            {/* <img> nativo (no next/image) para alinear con el resto de imagenes
+                CMS del sitio (home, header, footer) que se sirven desde Supabase
+                Storage sin necesitar remotePatterns en next.config.ts. */}
+            <img
+              src={banner.imagen_url}
+              alt={banner.titulo || 'Banner del catálogo'}
+              className="absolute inset-0 w-full h-full object-cover"
+              loading="eager"
+              decoding="async"
+            />
+            {/* Overlay de color solido (rgba) con opacidad administrable desde
+                CMS. Garantiza contraste del texto blanco sobre cualquier imagen. */}
+            <div
+              className="absolute inset-0"
+              style={{
+                background: hexAOverlay(banner.overlay_color, banner.overlay_opacity),
+              }}
+            />
+            <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 sm:py-20 lg:py-24">
+              <div className="max-w-2xl text-white">
+                {banner.titulo && (
+                  <h1 className="text-3xl font-extrabold leading-tight sm:text-4xl lg:text-5xl">
+                    {banner.titulo}
+                  </h1>
+                )}
+                {banner.subtitulo && (
+                  <p className="mt-4 text-base sm:text-lg text-white/90 max-w-xl">
+                    {banner.subtitulo}
+                  </p>
+                )}
+                {/* Buscador dentro del banner: es la accion principal del
+                    catalogo y va antes del CTA opcional. */}
+                <div className="mt-8">{renderSearchBlock(true)}</div>
+                {banner.cta_texto && (
+                  // El CTA del banner abre el modal de leads (mismo flujo
+                  // que los LeadButton del sitio) con un mensaje prellenado
+                  // para cotizacion. Al enviar, redirige al WhatsApp global
+                  // (config_whatsapp) con ese texto ya incluido, y queda
+                  // registrado en /admin/leads con fuente='catalogo_banner'.
+                  <div className="mt-6">
+                    <LeadButton
+                      fuente="catalogo_banner"
+                      texto={banner.cta_texto}
+                      variant="primary"
+                      mensajePrefill={
+                        banner.mensaje_prefill?.trim() || CATALOGO_BANNER_PREFILL_DEFAULT
+                      }
+                    />
+                  </div>
                 )}
               </div>
-              <div className="mt-3 flex flex-wrap items-center justify-center gap-3 text-sm text-slate-500">
-                <span>Puede buscar por ejemplo: papel, tóner, guantes, café.</span>
-                {activeCategory && (
-                  <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-600">
-                    Categoría activa: {activeCategory.complete_name}
-                  </span>
-                )}
-              </div>
-              {listing.searchTooShort && (
-                <p className="mt-3 text-sm text-amber-700">
-                  Escriba al menos {listing.minSearchLength} caracteres para aplicar la búsqueda.
-                </p>
-              )}
             </div>
           </div>
-        </div>
-      </section>
+        </section>
+      ) : (
+        // Sin banner: hero de texto clasico con buscador centrado debajo.
+        <section className="pt-16 pb-12 lg:pt-24 lg:pb-16">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="max-w-4xl mx-auto text-center">
+              <span className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 text-xs font-bold uppercase tracking-wider text-primary">
+                Portafolio Imprima
+              </span>
+              <h1 className="mt-6 text-4xl font-extrabold leading-[1.05] text-slate-900 sm:text-5xl lg:text-6xl">
+                Explore todo el catálogo por categorías reales o búsquelo al instante
+              </h1>
+              <div className="mt-10">{renderSearchBlock(false)}</div>
+            </div>
+          </div>
+        </section>
+      )}
 
       <section className="pb-24">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
