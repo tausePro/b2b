@@ -220,3 +220,72 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
+
+// DELETE — admin: eliminar lead. Hard-delete restringido a super_admin
+// y direccion. Caso de uso principal: limpiar leads de prueba creados
+// durante QA del sitio. Si en el futuro queremos papelera con opcion
+// de restaurar, migrar a soft-delete via columna `deleted_at`.
+//
+// Acepta un solo id (`?id=<uuid>`) o multiples via body JSON
+// (`{ ids: [uuid, uuid] }`) para habilitar borrado masivo.
+export async function DELETE(request: NextRequest) {
+  try {
+    const supabase = await createServerSupabaseClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 403 });
+
+    const { data: perfil } = await supabase
+      .from('usuarios')
+      .select('rol')
+      .eq('auth_id', user.id)
+      .single();
+
+    // Intencionalmente mas restrictivo que PUT: solo roles administrativos
+    // altos pueden eliminar. 'editor_contenido' puede gestionar leads
+    // pero no borrarlos.
+    if (perfil?.rol !== 'super_admin' && perfil?.rol !== 'direccion') {
+      return NextResponse.json({ error: 'No autorizado' }, { status: 403 });
+    }
+
+    const ids: string[] = [];
+
+    const idFromQuery = request.nextUrl.searchParams.get('id');
+    if (idFromQuery) ids.push(idFromQuery);
+
+    // Parsear body solo si vino con contenido (DELETE suele no tenerlo).
+    try {
+      const raw = await request.text();
+      if (raw) {
+        const body = JSON.parse(raw) as { ids?: unknown };
+        if (Array.isArray(body.ids)) {
+          for (const id of body.ids) {
+            if (typeof id === 'string' && id.length > 0) ids.push(id);
+          }
+        }
+      }
+    } catch {
+      // Body no-JSON: lo ignoramos, usamos solo ?id=.
+    }
+
+    // Deduplicar y validar formato UUID basico (prevenir injection en el
+    // query aunque supabase-js ya parametriza).
+    const uuidRegex = /^[0-9a-fA-F-]{36}$/;
+    const idsValidos = Array.from(new Set(ids)).filter((id) => uuidRegex.test(id));
+
+    if (idsValidos.length === 0) {
+      return NextResponse.json({ error: 'Se requiere al menos un ID valido' }, { status: 400 });
+    }
+
+    const { error, count } = await supabaseAdmin
+      .from('leads')
+      .delete({ count: 'exact' })
+      .in('id', idsValidos);
+
+    if (error) throw error;
+
+    return NextResponse.json({ eliminados: count ?? 0 });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Error al eliminar lead';
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}

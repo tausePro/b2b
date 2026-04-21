@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Loader2, UserPlus, Filter, MessageCircle, Mail, Phone,
   Building2, Calendar, ChevronDown, Check, AlertCircle, Target,
+  Trash2,
 } from 'lucide-react';
 
 interface Lead {
@@ -124,6 +125,10 @@ export default function LeadsPage() {
   const [filtroAtribucion, setFiltroAtribucion] = useState('todos');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState<string | null>(null);
+  // IDs seleccionados por el checkbox de cada fila. Se usa para el
+  // borrado masivo desde el botón "Eliminar seleccionados".
+  const [seleccionados, setSeleccionados] = useState<Set<string>>(new Set());
+  const [borrando, setBorrando] = useState(false);
 
   const fetchLeads = useCallback(async () => {
     setLoading(true);
@@ -172,6 +177,54 @@ export default function LeadsPage() {
     } finally {
       setSaving(null);
     }
+  };
+
+  const eliminarLeads = async (ids: string[]) => {
+    if (ids.length === 0) return;
+    const pregunta =
+      ids.length === 1
+        ? '¿Eliminar este lead? Esta acción no se puede deshacer.'
+        : `¿Eliminar ${ids.length} leads? Esta acción no se puede deshacer.`;
+    if (!window.confirm(pregunta)) return;
+
+    setBorrando(true);
+    try {
+      let res: Response;
+      if (ids.length === 1) {
+        res = await fetch(`/api/leads?id=${encodeURIComponent(ids[0])}`, {
+          method: 'DELETE',
+        });
+      } else {
+        res = await fetch('/api/leads', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids }),
+        });
+      }
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'No se pudo eliminar');
+
+      // Actualizamos la lista local quitando los eliminados, en vez de
+      // re-fetch, para feedback instantáneo. El contador total del
+      // endpoint se desactualiza hasta el próximo refresh; es aceptable.
+      const borradosSet = new Set(ids);
+      setLeads((prev) => prev.filter((l) => !borradosSet.has(l.id)));
+      setSeleccionados(new Set());
+      setTotal((prev) => Math.max(0, prev - (data.eliminados ?? ids.length)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error al eliminar');
+    } finally {
+      setBorrando(false);
+    }
+  };
+
+  const toggleSeleccion = (id: string) => {
+    setSeleccionados((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   };
 
   const guardarNotas = async (id: string, notas: string) => {
@@ -275,6 +328,34 @@ export default function LeadsPage() {
         </span>
       </div>
 
+      {/* Barra de acciones masivas: aparece solo cuando hay selección.
+          Uso principal: limpiar leads de prueba generados durante QA. */}
+      {seleccionados.size > 0 && (
+        <div className="flex items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm">
+          <span className="font-semibold text-red-700">
+            {seleccionados.size} seleccionado{seleccionados.size === 1 ? '' : 's'}
+          </span>
+          <button
+            onClick={() => setSeleccionados(new Set())}
+            className="text-xs text-slate-500 hover:text-slate-700"
+          >
+            Limpiar selección
+          </button>
+          <button
+            onClick={() => eliminarLeads(Array.from(seleccionados))}
+            disabled={borrando}
+            className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm transition hover:bg-red-700 disabled:opacity-50"
+          >
+            {borrando ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Trash2 className="h-3.5 w-3.5" />
+            )}
+            Eliminar seleccionados
+          </button>
+        </div>
+      )}
+
       {/* Tabla */}
       {loading ? (
         <div className="flex items-center justify-center py-20">
@@ -298,17 +379,50 @@ export default function LeadsPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border bg-slate-50">
+                  <th className="px-3 py-3 w-8">
+                    <input
+                      type="checkbox"
+                      aria-label="Seleccionar todos"
+                      checked={
+                        leadsVisibles.length > 0 &&
+                        leadsVisibles.every((l) => seleccionados.has(l.id))
+                      }
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSeleccionados(new Set(leadsVisibles.map((l) => l.id)));
+                        } else {
+                          setSeleccionados(new Set());
+                        }
+                      }}
+                      className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary/20 cursor-pointer"
+                    />
+                  </th>
                   <th className="text-left px-4 py-3 font-semibold text-slate-500 text-xs uppercase tracking-wider">Contacto</th>
                   <th className="text-left px-4 py-3 font-semibold text-slate-500 text-xs uppercase tracking-wider">Fuente</th>
                   <th className="text-left px-4 py-3 font-semibold text-slate-500 text-xs uppercase tracking-wider">Atribución</th>
                   <th className="text-left px-4 py-3 font-semibold text-slate-500 text-xs uppercase tracking-wider">Estado</th>
                   <th className="text-left px-4 py-3 font-semibold text-slate-500 text-xs uppercase tracking-wider">Fecha</th>
                   <th className="text-left px-4 py-3 font-semibold text-slate-500 text-xs uppercase tracking-wider w-48">Notas</th>
+                  <th className="px-3 py-3 w-10"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
                 {leadsVisibles.map((lead) => (
-                  <tr key={lead.id} className="hover:bg-slate-50 transition-colors">
+                  <tr
+                    key={lead.id}
+                    className={`hover:bg-slate-50 transition-colors ${
+                      seleccionados.has(lead.id) ? 'bg-red-50/40' : ''
+                    }`}
+                  >
+                    <td className="px-3 py-3 align-top">
+                      <input
+                        type="checkbox"
+                        aria-label={`Seleccionar lead de ${lead.nombre}`}
+                        checked={seleccionados.has(lead.id)}
+                        onChange={() => toggleSeleccion(lead.id)}
+                        className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary/20 cursor-pointer mt-1"
+                      />
+                    </td>
                     <td className="px-4 py-3">
                       <div className="font-semibold text-slate-800">{lead.nombre}</div>
                       {lead.empresa && (
@@ -434,6 +548,17 @@ export default function LeadsPage() {
                           {lead.notas || 'Agregar nota...'}
                         </button>
                       )}
+                    </td>
+                    <td className="px-3 py-3 align-top">
+                      <button
+                        onClick={() => eliminarLeads([lead.id])}
+                        disabled={borrando}
+                        aria-label={`Eliminar lead de ${lead.nombre}`}
+                        title="Eliminar lead"
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition disabled:opacity-40"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
                     </td>
                   </tr>
                 ))}
