@@ -13,6 +13,11 @@ interface LeadModalProps {
   // form.mensaje sobre el mensaje_default global, asi que esto se
   // propaga automaticamente al WhatsApp final.
   mensajePrefill?: string;
+  // Numero de WhatsApp destino override (sin formato). Si se pasa,
+  // el backend redirige el enlace wa.me a este numero en vez del
+  // global configurado en config_whatsapp. Caso de uso principal:
+  // tarjeta de una comercial del equipo en /contacto.
+  numeroOverride?: string;
 }
 
 export default function LeadModal({
@@ -21,6 +26,7 @@ export default function LeadModal({
   fuente = 'landing',
   ctaTexto = 'Hablar con un asesor',
   mensajePrefill,
+  numeroOverride,
 }: LeadModalProps) {
   const [form, setForm] = useState({
     nombre: '',
@@ -50,7 +56,14 @@ export default function LeadModal({
       const res = await fetch('/api/leads', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, fuente }),
+        body: JSON.stringify({
+          ...form,
+          fuente,
+          // Si hay override de numero, el backend construye wa.me contra
+          // este valor en vez del global. Campo vacio/undefined = flujo
+          // por defecto (numero global).
+          numero_whatsapp_override: numeroOverride,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);

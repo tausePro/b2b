@@ -50,6 +50,7 @@ export const SECTION_LABELS: Record<string, string> = {
   seo: 'SEO / Schema / AEO',
   pagina_nosotros: 'Sobre Nosotros',
   pagina_contacto: 'Contacto',
+  contacto_comerciales: 'Contacto — Equipo comercial',
   pagina_faq: 'Preguntas Frecuentes',
   pagina_terminos: 'Términos y Condiciones',
   pagina_privacidad: 'Política de Privacidad',
