@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Image from 'next/image';
 import PublicLayout from '@/components/public/PublicLayout';
 import { getSeccion } from '@/lib/landing/getContenido';
 
@@ -41,8 +42,17 @@ export default async function NosotrosPage() {
           </div>
 
           {s.imagen_url && (
-            <div className="mb-12 rounded-2xl overflow-hidden">
-              <img src={s.imagen_url} alt={s.titulo || 'Sobre Nosotros'} className="w-full h-64 lg:h-80 object-cover" />
+            // Imagen hero de /nosotros: LCP de la pagina. Contenedor relative
+            // + fill + priority para precarga.
+            <div className="relative mb-12 rounded-2xl overflow-hidden w-full h-64 lg:h-80">
+              <Image
+                src={s.imagen_url}
+                alt={s.titulo || 'Sobre Nosotros'}
+                fill
+                priority
+                sizes="(max-width: 1024px) 100vw, 896px"
+                className="object-cover"
+              />
             </div>
           )}
 

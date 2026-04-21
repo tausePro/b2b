@@ -13,6 +13,31 @@ const AGENT_LINK_HEADER = [
 const nextConfig: NextConfig = {
   reactCompiler: true,
 
+  // next/image debe poder optimizar las imagenes servidas desde Supabase
+  // Storage (buckets publicos: landing-hero, comerciales, categorias, etc).
+  // Sin este allowlist el componente <Image> tira 400 Bad Request al intentar
+  // cargar cualquier URL de Supabase. El host se resuelve dinamicamente
+  // desde NEXT_PUBLIC_SUPABASE_URL para no hardcodear el subdominio del
+  // proyecto (permite moverse entre ambientes sin tocar esta config).
+  images: {
+    remotePatterns: (() => {
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      if (!supabaseUrl) return [];
+      try {
+        const { hostname } = new URL(supabaseUrl);
+        return [
+          {
+            protocol: 'https' as const,
+            hostname,
+            pathname: '/storage/v1/object/public/**',
+          },
+        ];
+      } catch {
+        return [];
+      }
+    })(),
+  },
+
   async headers() {
     return [
       {
