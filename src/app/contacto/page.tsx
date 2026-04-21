@@ -2,7 +2,8 @@ import type { Metadata } from 'next';
 import PublicLayout from '@/components/public/PublicLayout';
 import ContactoForm from '@/components/public/ContactoForm';
 import LeadButton from '@/components/public/LeadButton';
-import { getSeccion } from '@/lib/landing/getContenido';
+import ComercialesGrid, { type Comercial } from '@/components/public/ComercialesGrid';
+import { getSeccion, getSecciones } from '@/lib/landing/getContenido';
 import { Mail, Phone, MapPin, Clock } from 'lucide-react';
 
 // Literal numérico requerido por Next 16 segment configs.
@@ -17,7 +18,15 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default async function ContactoPage() {
-  const s = await getSeccion('pagina_contacto');
+  // Traemos pagina_contacto (info basica) y contacto_comerciales (equipo)
+  // en paralelo. Si la grilla de comerciales esta vacia o inactiva,
+  // <ComercialesGrid> no renderiza nada.
+  const data = await getSecciones(['pagina_contacto', 'contacto_comerciales']);
+  const s = data.pagina_contacto;
+  const comercialesSec = data.contacto_comerciales;
+  const comerciales = (comercialesSec?.contenido?.comerciales || []) as Comercial[];
+  const comercialesTitulo = comercialesSec?.titulo || 'Nuestro equipo comercial';
+  const comercialesSubtitulo = comercialesSec?.subtitulo || '';
 
   if (!s) {
     return (
@@ -141,6 +150,16 @@ export default async function ContactoPage() {
           </div>
         </div>
       </section>
+
+      {/* Grilla del equipo comercial: aparece al final de /contacto solo
+          si el admin configuro al menos una comercial en el CMS. Cada
+          tarjeta permite contactar directo por WhatsApp a la persona
+          (con tracking de lead por comercial via fuente dinamica). */}
+      <ComercialesGrid
+        titulo={comercialesTitulo}
+        subtitulo={comercialesSubtitulo}
+        comerciales={comerciales}
+      />
     </PublicLayout>
   );
 }

@@ -47,6 +47,14 @@ const FUENTES: Array<{ value: string; label: string; mode?: 'prefix' }> = [
   { value: 'producto_', label: 'Producto (detalle)', mode: 'prefix' },
   { value: 'contacto_formulario', label: 'Contacto — Formulario' },
   { value: 'contacto_whatsapp', label: 'Contacto — WhatsApp' },
+  // Prefix: matchea contacto_comercial_<slug> para cada comercial
+  // del equipo configurado en CMS. Permite ver el total de leads que
+  // entraron via tarjetas del equipo comercial en /contacto.
+  {
+    value: 'contacto_comercial_',
+    label: 'Contacto — Equipo comercial (todas)',
+    mode: 'prefix',
+  },
 ];
 
 function getEstadoStyle(estado: string) {
