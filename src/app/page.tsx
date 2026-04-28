@@ -16,7 +16,6 @@ import {
 } from '@/lib/landing/getContenido';
 import { getPublicCatalogRootCategories } from '@/lib/catalogoPublico';
 import { getHeroDynamicStats } from '@/lib/home/getHeroDynamicStats';
-import { getEmpaquesPublicAvailability } from '@/lib/empaques/catalogo';
 
 export async function generateMetadata(): Promise<Metadata> {
   try {
@@ -124,11 +123,10 @@ function buildJsonLd(seo: LandingSeccion | undefined, faqs: Array<{ pregunta: st
 }
 
 export default async function LandingPage() {
-  const [c, categoriasMap, heroDynamicStats, empaquesAvailability] = await Promise.all([
+  const [c, categoriasMap, heroDynamicStats] = await Promise.all([
     getContenido(),
     getCategoriasMap(),
     getHeroDynamicStats(),
-    getEmpaquesPublicAvailability(),
   ]);
   const hero = c.hero;
   const cats = c.categorias;
@@ -199,15 +197,13 @@ export default async function LandingPage() {
               </div>
             </div>
             <div className="flex items-center gap-4">
-              {empaquesAvailability.enabled && (
-                <Link
-                  href="/empaques"
-                  className="hidden sm:flex items-center gap-2 rounded-lg border border-slate-200 bg-white/80 px-5 py-2.5 text-sm font-bold text-slate-700 shadow-sm transition-all hover:border-primary/50 hover:text-slate-900"
-                >
-                  <Package className="w-4 h-4" />
-                  Empaques
-                </Link>
-              )}
+              <Link
+                href="/empaques"
+                className="hidden sm:flex items-center gap-2 rounded-lg border border-slate-200 bg-white/80 px-5 py-2.5 text-sm font-bold text-slate-700 shadow-sm transition-all hover:border-primary/50 hover:text-slate-900"
+              >
+                <Package className="w-4 h-4" />
+                Empaques
+              </Link>
               <Link
                 href="/login"
                 className="bg-primary hover:bg-primary/90 text-slate-900 px-6 py-2.5 rounded-lg font-bold text-sm transition-all shadow-sm flex items-center gap-2"
