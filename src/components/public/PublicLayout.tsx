@@ -1,8 +1,9 @@
 import Image from 'next/image';
 import Link from 'next/link';
-import { Building2 } from 'lucide-react';
+import { Building2, Package } from 'lucide-react';
 import WhatsAppBubble from './WhatsAppBubble';
 import LeadAttributionCapture from './LeadAttributionCapture';
+import { getEmpaquesPublicAvailability } from '@/lib/empaques/catalogo';
 
 // Dimensiones reales del asset public/logo-imprima-horizontal.png (198x79).
 // next/image exige width/height para preservar aspect ratio y evitar CLS;
@@ -14,7 +15,8 @@ interface PublicLayoutProps {
   children: React.ReactNode;
 }
 
-export default function PublicLayout({ children }: PublicLayoutProps) {
+export default async function PublicLayout({ children }: PublicLayoutProps) {
+  const empaquesAvailability = await getEmpaquesPublicAvailability();
   // El script WebMCP se inyecta globalmente en el <head> del root layout
   // (src/app/layout.tsx) para que se registre antes de hydration.
   return (
@@ -44,6 +46,15 @@ export default function PublicLayout({ children }: PublicLayoutProps) {
               </div>
             </div>
             <div className="flex items-center gap-4">
+              {empaquesAvailability.enabled && (
+                <Link
+                  href="/empaques"
+                  className="hidden sm:flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-5 py-2.5 text-sm font-bold text-slate-700 shadow-sm transition-all hover:border-primary/50 hover:text-slate-900"
+                >
+                  <Package className="w-4 h-4" />
+                  Empaques
+                </Link>
+              )}
               <Link
                 href="/login"
                 className="bg-primary hover:bg-primary/90 text-slate-900 px-6 py-2.5 rounded-lg font-bold text-sm transition-all shadow-sm flex items-center gap-2"
