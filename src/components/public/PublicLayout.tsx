@@ -1,6 +1,6 @@
 import Image from 'next/image';
 import Link from 'next/link';
-import { Building2 } from 'lucide-react';
+import { Building2, Package } from 'lucide-react';
 import WhatsAppBubble from './WhatsAppBubble';
 import LeadAttributionCapture from './LeadAttributionCapture';
 
@@ -44,6 +44,13 @@ export default function PublicLayout({ children }: PublicLayoutProps) {
               </div>
             </div>
             <div className="flex items-center gap-4">
+              <Link
+                href="/empaques"
+                className="hidden sm:flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-5 py-2.5 text-sm font-bold text-slate-700 shadow-sm transition-all hover:border-primary/50 hover:text-slate-900"
+              >
+                <Package className="w-4 h-4" />
+                Empaques
+              </Link>
               <Link
                 href="/login"
                 className="bg-primary hover:bg-primary/90 text-slate-900 px-6 py-2.5 rounded-lg font-bold text-sm transition-all shadow-sm flex items-center gap-2"

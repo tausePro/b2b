@@ -59,8 +59,8 @@ export async function updateSession(request: NextRequest) {
 
   const publicPaths = [
     '/login', '/auth/callback',
-    '/api/odoo', '/api/auth', '/api/internal', '/api/landing', '/api/leads', '/api/md', '/api/health', '/api/mcp',
-    '/catalogo', '/nosotros', '/contacto', '/faq', '/terminos', '/privacidad',
+    '/api/odoo', '/api/auth', '/api/internal', '/api/landing', '/api/leads', '/api/md', '/api/health', '/api/mcp', '/api/empaques',
+    '/catalogo', '/empaques', '/nosotros', '/contacto', '/faq', '/terminos', '/privacidad',
     // Agent-readiness / SEO: siempre deben ser públicos
     '/robots.txt', '/sitemap.xml', '/llms.txt', '/.well-known',
   ];
