@@ -102,6 +102,29 @@ export class EmpaquesConfigurationError extends Error {
   }
 }
 
+export async function getEmpaquesPublicAvailability(): Promise<{ enabled: boolean; reason: string | null }> {
+  try {
+    const admin = getSupabaseAdmin();
+    const { data, error } = await admin
+      .from('storefront_configs')
+      .select('activo')
+      .eq('slug', EMPAQUES_SLUG)
+      .maybeSingle();
+
+    if (error || !data) {
+      return { enabled: false, reason: error?.message ?? "No existe una configuración en storefront_configs con slug = 'empaques'." };
+    }
+
+    if (data.activo === false) {
+      return { enabled: false, reason: 'El storefront de Empaques está inactivo.' };
+    }
+
+    return { enabled: true, reason: null };
+  } catch (error) {
+    return { enabled: false, reason: error instanceof Error ? error.message : 'No se pudo resolver el estado de Empaques.' };
+  }
+}
+
 interface EmpaquesCatalogInput {
   categoryId?: number | null;
   limit?: number;

@@ -19,6 +19,7 @@ import {
   Search,
   FileText,
   UserPlus,
+  Package,
 } from 'lucide-react';
 
 interface MenuItem {
@@ -50,6 +51,7 @@ const allMenuSections: (MenuSection & { roles?: string[] })[] = [
     label: 'Contenido',
     items: [
       { href: '/admin/cms', label: 'CMS Landing', icon: FileText },
+      { href: '/admin/empaques', label: 'Empaques', icon: Package },
       { href: '/admin/leads', label: 'Leads', icon: UserPlus },
     ],
   },
@@ -134,7 +136,7 @@ export default function AdminLayout({
     return pathname.startsWith(href);
   };
 
-  const SidebarContent = ({ onNavigate }: { onNavigate?: () => void }) => (
+  const renderSidebarContent = (onNavigate?: () => void) => (
     <>
       {/* Logo */}
       <div className="h-16 flex items-center px-6 border-b border-border">
@@ -207,7 +209,7 @@ export default function AdminLayout({
     <div className="h-screen flex overflow-hidden bg-background-light font-display antialiased">
       {/* Sidebar Desktop */}
       <aside className="hidden lg:flex lg:w-64 flex-col bg-white border-r border-border flex-shrink-0 z-20">
-        <SidebarContent />
+        {renderSidebarContent()}
       </aside>
 
       {/* Mobile Sidebar */}
@@ -220,7 +222,7 @@ export default function AdminLayout({
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <SidebarContent onNavigate={() => setSidebarOpen(false)} />
+            {renderSidebarContent(() => setSidebarOpen(false))}
           </aside>
         </div>
       )}
