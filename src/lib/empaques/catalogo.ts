@@ -4,10 +4,12 @@ import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import {
   authenticate,
   getCategoriasProducto,
+  read,
   searchCount,
   searchRead,
   type OdooCategory,
   type OdooProduct,
+  type OdooSession,
 } from '@/lib/odoo/client';
 import { getServerOdooConfig } from '@/lib/odoo/serverConfig';
 import {
@@ -50,6 +52,12 @@ interface EmpaquesStorefrontContext {
   modoPricing: 'pricelist' | 'costo_margen';
   rootCategoryIds: number[];
   excludedCategoryIds: number[];
+  /**
+   * Si está seteado, los productos del storefront se resuelven desde esta
+   * pricelist Odoo (product.pricelist) y las categorías visibles se derivan
+   * de los productos resueltos. Si es null, se usa rootCategoryIds.
+   */
+  pricelistId: number | null;
 }
 
 export interface EmpaquesCategoryNode {
@@ -157,6 +165,7 @@ interface StorefrontConfigRow {
   activo: boolean | null;
   odoo_root_category_ids: unknown;
   odoo_excluded_category_ids: unknown;
+  odoo_pricelist_id: number | null;
 }
 
 interface StorefrontMargenRow {
@@ -297,6 +306,28 @@ function getDescendantIds(categories: OdooCategory[], rootIds: number[]) {
   return ids;
 }
 
+/**
+ * Devuelve un Set con los IDs de categorías Odoo originales más todos sus
+ * ancestros, útil para construir el árbol jerárquico cuando solo conocemos las
+ * categorías hoja a las que pertenecen los productos resueltos.
+ */
+function getAncestorIds(categories: OdooCategory[], leafIds: Iterable<number>) {
+  const byId = new Map<number, OdooCategory>();
+  for (const category of categories) byId.set(category.id, category);
+
+  const result = new Set<number>();
+  for (const leaf of leafIds) {
+    let current = byId.get(leaf);
+    while (current && !result.has(current.id)) {
+      result.add(current.id);
+      const parent = getParentId(current);
+      current = parent !== null ? byId.get(parent) : undefined;
+    }
+  }
+
+  return result;
+}
+
 function stripCommercialPrefix(category: OdooCategory) {
   if (category.id === EMPAQUES_ROOT_CATEGORY_ID) return 'Empaques';
   if (category.id === CAFETERIA_ROOT_CATEGORY_ID) return 'Cafetería';
@@ -312,16 +343,47 @@ function getCategoryOrder(category: OdooCategory, overrides: Map<number, Storefr
   return overrides.get(category.id)?.orden ?? 0;
 }
 
+interface CategoryTreeOptions {
+  /**
+   * Si se provee, el árbol incluye únicamente estas categorías y sus ancestros
+   * Odoo (modo pricelist). Si no se provee, se usa el comportamiento clásico
+   * basado en `rootCategoryIds` + descendants.
+   */
+  allowedCategoryIds?: Set<number>;
+  /** Categorías raíz Odoo a usar cuando no hay allowedCategoryIds. */
+  rootCategoryIds: number[];
+  excludedCategoryIds: number[];
+}
+
 function buildCategoryTree(
   categories: OdooCategory[],
-  rootCategoryIds: number[],
-  excludedCategoryIds: number[],
+  options: CategoryTreeOptions,
   editorialCtx: StorefrontEditorialContext
 ): CategoryTreeData {
-  const allowedIds = getDescendantIds(categories, rootCategoryIds);
-  for (const excludedId of excludedCategoryIds) {
-    allowedIds.delete(excludedId);
+  let allowedIds: Set<number>;
+  let topLevelIds: number[];
+
+  if (options.allowedCategoryIds) {
+    // Modo pricelist: tomar las categorías hoja de productos + ancestros.
+    allowedIds = getAncestorIds(categories, options.allowedCategoryIds);
+    for (const excludedId of options.excludedCategoryIds) {
+      allowedIds.delete(excludedId);
+    }
+    topLevelIds = Array.from(allowedIds).filter((id) => {
+      const category = categories.find((c) => c.id === id);
+      if (!category) return false;
+      const parent = getParentId(category);
+      return parent === null || !allowedIds.has(parent);
+    });
+  } else {
+    // Modo clásico: descendentes de rootCategoryIds menos excluidos.
+    allowedIds = getDescendantIds(categories, options.rootCategoryIds);
+    for (const excludedId of options.excludedCategoryIds) {
+      allowedIds.delete(excludedId);
+    }
+    topLevelIds = options.rootCategoryIds;
   }
+
   for (const hiddenCategoryId of getDescendantIds(categories, editorialCtx.hiddenCategoryIds)) {
     allowedIds.delete(hiddenCategoryId);
   }
@@ -366,7 +428,7 @@ function buildCategoryTree(
     return node;
   };
 
-  const categoriesTree = rootCategoryIds
+  const categoriesTree = topLevelIds
     .map((id) => filtered.find((category) => category.id === id))
     .filter((category): category is OdooCategory => Boolean(category))
     .sort((a, b) => getCategoryOrder(a, editorialCtx.categories) - getCategoryOrder(b, editorialCtx.categories) || stripCommercialPrefix(a).localeCompare(stripCommercialPrefix(b), 'es'))
@@ -375,30 +437,144 @@ function buildCategoryTree(
   return { categories: categoriesTree, categoryIndex };
 }
 
-function buildProductDomain(
-  search: string,
-  categoryId: number | null,
-  rootCategoryIds: number[],
-  excludedCategoryIds: number[],
-  hiddenProductIds: number[]
-) {
+/**
+ * Resuelve los IDs de product.template cubiertos por la pricelist Odoo.
+ *
+ * Reglas consideradas:
+ *   - applied_on = '1_product'         → product_tmpl_id directo.
+ *   - applied_on = '0_product_variant' → resolver el template de la variante.
+ *   - applied_on = '3_global'          → la pricelist no restringe el catálogo.
+ *   - applied_on = '2_product_category'→ ignorada para FILTRO (su rol es de
+ *     precio, no de membresía explícita; si Nicolás quiere usarla como
+ *     membresía agregaría reglas explícitas por producto).
+ *
+ * @returns Set de template IDs explícitos, o null si la pricelist tiene una
+ *          regla global y por tanto no debe usarse para filtrar el catálogo.
+ */
+async function resolvePricelistTemplateIds(
+  session: OdooSession,
+  pricelistId: number
+): Promise<Set<number> | null> {
+  const items = await searchRead(
+    'product.pricelist.item',
+    [['pricelist_id', '=', pricelistId]],
+    ['applied_on', 'product_tmpl_id', 'product_id'],
+    { session }
+  ) as unknown as Array<{
+    applied_on: string;
+    product_tmpl_id: [number, string] | false;
+    product_id: [number, string] | false;
+  }>;
+
+  const templateIds = new Set<number>();
+  const variantIds = new Set<number>();
+
+  for (const item of items) {
+    if (item.applied_on === '3_global') {
+      return null;
+    }
+    if (item.applied_on === '1_product' && Array.isArray(item.product_tmpl_id)) {
+      templateIds.add(item.product_tmpl_id[0]);
+      continue;
+    }
+    if (item.applied_on === '0_product_variant' && Array.isArray(item.product_id)) {
+      variantIds.add(item.product_id[0]);
+    }
+  }
+
+  if (variantIds.size > 0) {
+    const variantRows = await read(
+      'product.product',
+      Array.from(variantIds),
+      ['product_tmpl_id'],
+      session
+    ) as Array<{ product_tmpl_id: [number, string] | false }>;
+
+    for (const row of variantRows) {
+      if (Array.isArray(row.product_tmpl_id)) {
+        templateIds.add(row.product_tmpl_id[0]);
+      }
+    }
+  }
+
+  return templateIds;
+}
+
+/**
+ * Obtiene las categorías Odoo distintas a las que pertenecen los templates
+ * resueltos. Útil para derivar el árbol de categorías cuando la fuente del
+ * storefront es una pricelist.
+ */
+async function fetchTemplateCategoryIds(
+  session: OdooSession,
+  templateIds: number[]
+): Promise<Set<number>> {
+  if (templateIds.length === 0) return new Set();
+
+  const rows = await searchRead(
+    'product.template',
+    [['id', 'in', templateIds], ['active', '=', true], ['sale_ok', '=', true]],
+    ['categ_id'],
+    { session }
+  ) as unknown as Array<{ categ_id: [number, string] | false }>;
+
+  const result = new Set<number>();
+  for (const row of rows) {
+    if (Array.isArray(row.categ_id)) {
+      result.add(row.categ_id[0]);
+    }
+  }
+  return result;
+}
+
+interface BuildProductDomainOptions {
+  search: string;
+  categoryId: number | null;
+  rootCategoryIds: number[];
+  excludedCategoryIds: number[];
+  hiddenProductIds: number[];
+  /**
+   * Si se provee, el catálogo se restringe a estos template IDs (modo
+   * pricelist) y los rootCategoryIds se ignoran.
+   */
+  pricelistTemplateIds?: number[];
+}
+
+function buildProductDomain(options: BuildProductDomainOptions) {
+  const {
+    search,
+    categoryId,
+    rootCategoryIds,
+    excludedCategoryIds,
+    hiddenProductIds,
+    pricelistTemplateIds,
+  } = options;
+
   const domain: unknown[] = [
     ['sale_ok', '=', true],
     ['active', '=', true],
   ];
 
-  if (categoryId) {
-    domain.push(['categ_id', 'child_of', categoryId]);
-  } else {
-    if (rootCategoryIds.length === 1) {
-      domain.push(['categ_id', 'child_of', rootCategoryIds[0]]);
+  if (pricelistTemplateIds) {
+    if (pricelistTemplateIds.length === 0) {
+      // Pricelist sin productos resolubles: forzar resultado vacío.
+      domain.push(['id', '=', -1]);
     } else {
-      for (let i = 0; i < rootCategoryIds.length - 1; i += 1) {
-        domain.push('|');
-      }
-      for (const rootCategoryId of rootCategoryIds) {
-        domain.push(['categ_id', 'child_of', rootCategoryId]);
-      }
+      domain.push(['id', 'in', pricelistTemplateIds]);
+    }
+    if (categoryId) {
+      domain.push(['categ_id', 'child_of', categoryId]);
+    }
+  } else if (categoryId) {
+    domain.push(['categ_id', 'child_of', categoryId]);
+  } else if (rootCategoryIds.length === 1) {
+    domain.push(['categ_id', 'child_of', rootCategoryIds[0]]);
+  } else if (rootCategoryIds.length > 1) {
+    for (let i = 0; i < rootCategoryIds.length - 1; i += 1) {
+      domain.push('|');
+    }
+    for (const rootCategoryId of rootCategoryIds) {
+      domain.push(['categ_id', 'child_of', rootCategoryId]);
     }
   }
 
@@ -484,7 +660,7 @@ async function getEmpaquesStorefront(options: { includeInactive?: boolean } = {}
 
   const { data, error } = await admin
     .from('storefront_configs')
-    .select('id, slug, nombre, modo_pricing, activo, odoo_root_category_ids, odoo_excluded_category_ids')
+    .select('id, slug, nombre, modo_pricing, activo, odoo_root_category_ids, odoo_excluded_category_ids, odoo_pricelist_id')
     .eq('slug', EMPAQUES_SLUG)
     .maybeSingle();
 
@@ -501,6 +677,10 @@ async function getEmpaquesStorefront(options: { includeInactive?: boolean } = {}
     throw new EmpaquesConfigurationError('El storefront de Empaques está inactivo.');
   }
 
+  const pricelistId = typeof config.odoo_pricelist_id === 'number' && config.odoo_pricelist_id > 0
+    ? Math.trunc(config.odoo_pricelist_id)
+    : null;
+
   return {
     id: String(config.id),
     nombre: typeof config.nombre === 'string' ? config.nombre : 'Imprima Empaques',
@@ -508,6 +688,7 @@ async function getEmpaquesStorefront(options: { includeInactive?: boolean } = {}
     modoPricing: config.modo_pricing === 'pricelist' ? 'pricelist' : 'costo_margen',
     rootCategoryIds: asNumberArray(config.odoo_root_category_ids, ENABLED_ROOT_CATEGORY_IDS),
     excludedCategoryIds: asNumberArray(config.odoo_excluded_category_ids, EXCLUDED_CATEGORY_IDS),
+    pricelistId,
   };
 }
 
@@ -624,12 +805,31 @@ export async function getEmpaquesCatalogData(input: EmpaquesCatalogInput = {}): 
   const searchTooShort = rawSearch.length > 0 && rawSearch.length < EMPAQUES_MIN_SEARCH_LENGTH;
   const effectiveSearch = searchTooShort ? '' : rawSearch;
   const session = await authenticate(config);
-  const [categories, editorialCtx] = await Promise.all([
+  const [categories, editorialCtx, pricelistTemplateIdsSet] = await Promise.all([
     getCategoriasProducto(session),
     loadStorefrontEditorialContext(storefront.id),
+    storefront.pricelistId ? resolvePricelistTemplateIds(session, storefront.pricelistId) : Promise.resolve<Set<number> | null>(null),
   ]);
+
+  // Si la pricelist tiene regla global, ignoramos el filtro y caemos al modo
+  // clásico de root categories. Si tiene reglas explícitas, las usamos.
+  const usingPricelist = Boolean(storefront.pricelistId) && pricelistTemplateIdsSet !== null;
+  const pricelistTemplateIds = usingPricelist ? Array.from(pricelistTemplateIdsSet as Set<number>) : null;
+
+  const allowedCategoryIds = usingPricelist
+    ? await fetchTemplateCategoryIds(session, pricelistTemplateIds as number[])
+    : null;
+
   const effectiveExcludedCategoryIds = [...storefront.excludedCategoryIds, ...editorialCtx.hiddenCategoryIds];
-  const categoryTree = buildCategoryTree(categories, storefront.rootCategoryIds, storefront.excludedCategoryIds, editorialCtx);
+  const categoryTree = buildCategoryTree(
+    categories,
+    {
+      allowedCategoryIds: allowedCategoryIds ?? undefined,
+      rootCategoryIds: storefront.rootCategoryIds,
+      excludedCategoryIds: storefront.excludedCategoryIds,
+    },
+    editorialCtx
+  );
   const selectedCategory = requestedCategoryId ? categoryTree.categoryIndex[String(requestedCategoryId)] ?? null : null;
 
   if (requestedCategoryId && !selectedCategory) {
@@ -638,7 +838,14 @@ export async function getEmpaquesCatalogData(input: EmpaquesCatalogInput = {}): 
 
   const categoryId = selectedCategory?.id ?? null;
   const offset = (page - 1) * limit;
-  const domain = buildProductDomain(effectiveSearch, categoryId, storefront.rootCategoryIds, effectiveExcludedCategoryIds, editorialCtx.hiddenProductIds);
+  const domain = buildProductDomain({
+    search: effectiveSearch,
+    categoryId,
+    rootCategoryIds: storefront.rootCategoryIds,
+    excludedCategoryIds: effectiveExcludedCategoryIds,
+    hiddenProductIds: editorialCtx.hiddenProductIds,
+    pricelistTemplateIds: pricelistTemplateIds ?? undefined,
+  });
   const pricingCtx = await loadStorefrontPricingContext(storefront.id, storefront.modoPricing);
 
   const [productos, total] = await Promise.all([

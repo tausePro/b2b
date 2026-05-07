@@ -21,13 +21,20 @@ function normalizePricingMode(value: unknown) {
   return value === 'pricelist' ? 'pricelist' : 'costo_margen';
 }
 
+function normalizePricelistId(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return Math.trunc(parsed);
+}
+
 async function resolveStorefront(slug: string) {
   const auth = await authorizeAdmin();
   if (auth instanceof NextResponse) return auth;
 
   const { data, error } = await auth.admin
     .from('storefront_configs')
-    .select('id, slug, nombre, subdominio, modo_pricing, activo, odoo_root_category_ids, odoo_excluded_category_ids, configuracion_extra, created_at, updated_at')
+    .select('id, slug, nombre, subdominio, modo_pricing, activo, odoo_root_category_ids, odoo_excluded_category_ids, odoo_pricelist_id, configuracion_extra, created_at, updated_at')
     .eq('slug', slug)
     .maybeSingle();
 
@@ -67,13 +74,19 @@ export async function PATCH(
   const descripcion = typeof body.descripcion === 'string' ? body.descripcion.trim() : '';
   const rootCategoryIds = parseIntegerArray(body.odoo_root_category_ids);
   const excludedCategoryIds = parseIntegerArray(body.odoo_excluded_category_ids);
+  const pricelistId = Object.prototype.hasOwnProperty.call(body, 'odoo_pricelist_id')
+    ? normalizePricelistId(body.odoo_pricelist_id)
+    : (typeof resolved.storefront.odoo_pricelist_id === 'number' ? resolved.storefront.odoo_pricelist_id : null);
 
   if (!nombre) {
     return NextResponse.json({ error: 'El nombre es obligatorio.' }, { status: 400 });
   }
 
-  if (rootCategoryIds.length === 0) {
-    return NextResponse.json({ error: 'Debe existir al menos una categoría raíz Odoo.' }, { status: 400 });
+  if (!pricelistId && rootCategoryIds.length === 0) {
+    return NextResponse.json(
+      { error: 'Debe existir al menos una categoría raíz Odoo o una pricelist Odoo configurada.' },
+      { status: 400 },
+    );
   }
 
   const currentExtra = resolved.storefront.configuracion_extra && typeof resolved.storefront.configuracion_extra === 'object'
@@ -89,6 +102,7 @@ export async function PATCH(
       activo: normalizeBoolean(body.activo, Boolean(resolved.storefront.activo)),
       odoo_root_category_ids: rootCategoryIds,
       odoo_excluded_category_ids: excludedCategoryIds,
+      odoo_pricelist_id: pricelistId,
       configuracion_extra: {
         ...currentExtra,
         descripcion,
@@ -96,7 +110,7 @@ export async function PATCH(
       updated_at: new Date().toISOString(),
     })
     .eq('id', resolved.storefront.id)
-    .select('id, slug, nombre, subdominio, modo_pricing, activo, odoo_root_category_ids, odoo_excluded_category_ids, configuracion_extra, created_at, updated_at')
+    .select('id, slug, nombre, subdominio, modo_pricing, activo, odoo_root_category_ids, odoo_excluded_category_ids, odoo_pricelist_id, configuracion_extra, created_at, updated_at')
     .single();
 
   if (error) {

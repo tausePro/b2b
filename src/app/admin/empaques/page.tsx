@@ -27,7 +27,14 @@ interface StorefrontConfig {
   activo: boolean;
   odoo_root_category_ids: number[];
   odoo_excluded_category_ids: number[];
+  odoo_pricelist_id: number | null;
   configuracion_extra: Record<string, unknown> | null;
+}
+
+interface OdooPricelistOption {
+  id: number;
+  name: string;
+  currency: string | null;
 }
 
 interface CategoryNode {
@@ -230,6 +237,9 @@ export default function AdminEmpaquesPage() {
   const [activo, setActivo] = useState(true);
   const [rootCategoryIds, setRootCategoryIds] = useState('');
   const [excludedCategoryIds, setExcludedCategoryIds] = useState('');
+  const [pricelistId, setPricelistId] = useState<string>('');
+  const [pricelists, setPricelists] = useState<OdooPricelistOption[]>([]);
+  const [loadingPricelists, setLoadingPricelists] = useState(false);
 
   const [margenCategoryId, setMargenCategoryId] = useState('');
   const [margenPorcentaje, setMargenPorcentaje] = useState('20');
@@ -278,6 +288,26 @@ export default function AdminEmpaquesPage() {
     setActivo(Boolean(data.storefront.activo));
     setRootCategoryIds(formatIdList(data.storefront.odoo_root_category_ids));
     setExcludedCategoryIds(formatIdList(data.storefront.odoo_excluded_category_ids));
+    setPricelistId(
+      typeof data.storefront.odoo_pricelist_id === 'number' && data.storefront.odoo_pricelist_id > 0
+        ? String(data.storefront.odoo_pricelist_id)
+        : ''
+    );
+  }, []);
+
+  const loadPricelists = useCallback(async () => {
+    setLoadingPricelists(true);
+    try {
+      const data = await parseJsonResponse<{ pricelists: OdooPricelistOption[] }>(
+        await fetch('/api/odoo/pricelists')
+      );
+      setPricelists(data.pricelists ?? []);
+    } catch (loadError) {
+      console.error('[admin/empaques] no se pudieron cargar pricelists', loadError);
+      setPricelists([]);
+    } finally {
+      setLoadingPricelists(false);
+    }
   }, []);
 
   const loadMargenes = useCallback(async () => {
@@ -323,13 +353,20 @@ export default function AdminEmpaquesPage() {
     setLoading(true);
     setError(null);
     try {
-      await Promise.all([loadConfig(), loadMargenes(), loadPrecios(), loadCategoryOverrides(), loadProductOverrides()]);
+      await Promise.all([
+        loadConfig(),
+        loadMargenes(),
+        loadPrecios(),
+        loadCategoryOverrides(),
+        loadProductOverrides(),
+        loadPricelists(),
+      ]);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'No se pudo cargar el panel de Empaques.');
     } finally {
       setLoading(false);
     }
-  }, [loadCategoryOverrides, loadConfig, loadMargenes, loadPrecios, loadProductOverrides]);
+  }, [loadCategoryOverrides, loadConfig, loadMargenes, loadPrecios, loadPricelists, loadProductOverrides]);
 
   useEffect(() => {
     void loadAll();
@@ -371,6 +408,7 @@ export default function AdminEmpaquesPage() {
             activo,
             odoo_root_category_ids: parseIdList(rootCategoryIds),
             odoo_excluded_category_ids: parseIdList(excludedCategoryIds),
+            odoo_pricelist_id: pricelistId === '' ? null : Number(pricelistId),
           }),
         })
       );
@@ -648,13 +686,38 @@ export default function AdminEmpaquesPage() {
               />
               <span className="text-sm font-semibold text-slate-700">Storefront activo</span>
             </label>
+            <label className="space-y-2 md:col-span-2">
+              <span className="flex items-center justify-between text-sm font-semibold text-slate-700">
+                <span>Pricelist Odoo (fuente de productos)</span>
+                {loadingPricelists && <Loader2 className="h-4 w-4 animate-spin text-slate-400" />}
+              </span>
+              <select
+                value={pricelistId}
+                onChange={(event) => setPricelistId(event.target.value)}
+                className="w-full rounded-lg border border-border px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+              >
+                <option value="">— Sin pricelist (usar categorías raíz) —</option>
+                {pricelists.map((pl) => (
+                  <option key={pl.id} value={pl.id}>
+                    {pl.name}{pl.currency ? ` (${pl.currency})` : ''}
+                  </option>
+                ))}
+              </select>
+              <span className="text-xs text-slate-500">
+                Si seleccionas una pricelist, los productos del storefront se obtienen exclusivamente de las reglas de esa lista en Odoo y las categorías mostradas se derivan automáticamente de esos productos. Si la dejas vacía, se usan las categorías raíz de abajo.
+              </span>
+            </label>
             <label className="space-y-2">
               <span className="text-sm font-semibold text-slate-700">Categorías raíz Odoo</span>
               <input
                 value={rootCategoryIds}
                 onChange={(event) => setRootCategoryIds(event.target.value)}
-                className="w-full rounded-lg border border-border px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                disabled={pricelistId !== ''}
+                className="w-full rounded-lg border border-border px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary disabled:bg-slate-50 disabled:text-slate-400"
               />
+              {pricelistId !== '' && (
+                <span className="text-xs text-slate-500">Ignorado mientras haya una pricelist seleccionada.</span>
+              )}
             </label>
             <label className="space-y-2">
               <span className="text-sm font-semibold text-slate-700">Categorías excluidas Odoo</span>
