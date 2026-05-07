@@ -7,7 +7,7 @@ import { loadPricingContext, resolveProductPrice } from '@/lib/pricing/margins';
 const ALLOWED_ROLES = ['super_admin', 'direccion', 'asesor', 'comprador', 'aprobador'] as const;
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
   try {
@@ -35,11 +35,15 @@ export async function GET(
 
     const session = await authenticate(config);
     const result = await getProductVariants(session, templateId);
+    const fallbackPriceParam = Number(request.nextUrl.searchParams.get('fallback_price') ?? 0);
+    const fallbackPrice = Number.isFinite(fallbackPriceParam) && fallbackPriceParam > 0 ? fallbackPriceParam : 0;
 
     // Resolver pricing desde la empresa del usuario autenticado
     const empresaId = authorized.actor.empresa_id;
     let pricingCtx = null;
     let templateCategId: number | null = null;
+    let templateListPrice = 0;
+    let templateStandardPrice = 0;
 
     if (empresaId) {
       pricingCtx = await loadPricingContext(empresaId);
@@ -47,12 +51,14 @@ export async function GET(
       const templateRows = await read(
         'product.template',
         [templateId],
-        ['categ_id'],
+        ['categ_id', 'list_price', 'standard_price'],
         session
       );
       templateCategId = templateRows[0] && Array.isArray(templateRows[0].categ_id)
         ? (templateRows[0].categ_id as [number, string])[0]
         : null;
+      templateListPrice = Number(templateRows[0]?.list_price ?? 0);
+      templateStandardPrice = Number(templateRows[0]?.standard_price ?? 0);
     }
 
     return NextResponse.json({
@@ -60,12 +66,13 @@ export async function GET(
       variant_count: result.variants.length,
       attributes: result.attributes,
       variants: result.variants.map((v) => {
-        let finalPrice = v.lst_price;
+        let finalPrice = Number(v.lst_price ?? 0) > 0 ? v.lst_price : fallbackPrice || templateListPrice;
+        const pricingStandardPrice = templateStandardPrice > 0 ? templateStandardPrice : v.standard_price;
         if (pricingCtx) {
           finalPrice = resolveProductPrice(pricingCtx, {
             id: templateId,
-            list_price: v.lst_price,
-            standard_price: v.standard_price,
+            list_price: finalPrice,
+            standard_price: pricingStandardPrice,
             categ_id: templateCategId !== null ? [templateCategId, ''] : false,
           });
         }
@@ -75,8 +82,7 @@ export async function GET(
           default_code: v.default_code || null,
           image_128: v.image_128 || null,
           lst_price: finalPrice,
-          standard_price: v.standard_price,
-          attribute_value_ids: v.product_template_attribute_value_ids,
+          attribute_value_ids: v.product_template_attribute_value_ids || [],
         };
       }),
     });
