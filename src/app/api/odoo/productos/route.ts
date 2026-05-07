@@ -181,9 +181,14 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Pricelist efectiva: solo gobierna el catálogo cuando el cliente está en modo lista fija
+    // La pricelist del partner define la lista de productos asignados al cliente en Odoo
+    // (Nicolás crea una pricelist por cliente; si no negoció precios, deja la columna en cero).
+    // Por eso la pricelist filtra el catálogo SIEMPRE, sin importar el modo de pricing.
+    // El modo solo decide cómo se calcula el precio mostrado en el portal:
+    //   - 'pricelist'    -> usa el precio de la regla aplicada (resolveProductPrice fallback list_price).
+    //   - 'costo_margen' -> resolveProductPrice ignora list_price y aplica standard_price * (1 + margen%).
     const effectivePricelistId =
-      pricingCtx?.modoPricing === 'costo_margen' ? null : parsedPricelistId ?? partnerContext?.pricelist?.id ?? null;
+      parsedPricelistId ?? partnerContext?.pricelist?.id ?? null;
 
     if (parsedPartnerId) {
       // Prioridad: 1) Lista de precios (override o Odoo), 2) Etiquetas del partner, 3) Catálogo general
@@ -194,7 +199,9 @@ export async function GET(request: NextRequest) {
           categIds: parsedCategIds,
           search,
         });
-      } else {
+      }
+
+      if (productos.length === 0) {
         const partnerTagIds = partnerContext?.tag_ids ?? [];
         if (partnerTagIds.length > 0) {
           productos = await getProductos(session, {
@@ -204,14 +211,16 @@ export async function GET(request: NextRequest) {
             categIds: parsedCategIds,
             search,
           });
-        } else {
-          productos = await getProductos(session, {
-            limit,
-            offset,
-            categIds: parsedCategIds,
-            search,
-          });
         }
+      }
+
+      if (productos.length === 0) {
+        productos = await getProductos(session, {
+          limit,
+          offset,
+          categIds: parsedCategIds,
+          search,
+        });
       }
     } else if (parsedPricelistId) {
       productos = await getProductosByPricelist(session, parsedPricelistId, {
