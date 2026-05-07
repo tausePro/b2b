@@ -63,7 +63,7 @@ export default function CatalogoPage() {
 
       const { data: configEmpresa } = await supabase
         .from('empresa_configs')
-        .select('configuracion_extra, odoo_pricelist_id')
+        .select('configuracion_extra')
         .eq('empresa_id', user.empresa_id)
         .maybeSingle();
 
@@ -84,12 +84,8 @@ export default function CatalogoPage() {
       const restringirCatalogo = Boolean(extra.restringir_catalogo_portal);
       const autorizadosSet = new Set((productosAutorizados || []).map((item) => item.odoo_product_id));
 
-      // 2. Obtener productos desde Odoo filtrados por el partner_id y pricelist
+      // 2. Obtener productos desde Odoo filtrados por el partner_id
       const catalogParams = new URLSearchParams({ partner_id: String(empresa.odoo_partner_id) });
-      const plId = (configEmpresa as Record<string, unknown> | null)?.odoo_pricelist_id;
-      if (plId && Number.isFinite(Number(plId)) && Number(plId) > 0) {
-        catalogParams.set('pricelist_id', String(plId));
-      }
       const res = await fetch(`/api/odoo/productos?${catalogParams.toString()}`);
       const data = await res.json();
 
@@ -281,6 +277,7 @@ export default function CatalogoPage() {
             const cantidadEnCarrito = getItemQuantity(producto.id);
             const justAdded = addedIds.has(producto.id);
             const categoriaLabel = Array.isArray(producto.categ_id) ? producto.categ_id[1] : '';
+            const hasVariants = (producto.product_variant_count ?? 1) > 1;
 
             return (
               <div
@@ -317,7 +314,9 @@ export default function CatalogoPage() {
 
                   {showPrices && (
                     <p className="text-lg font-bold text-foreground mt-2">
-                      {formatCOP(producto.list_price)}
+                      {hasVariants && (!Number.isFinite(producto.list_price) || producto.list_price <= 0)
+                        ? 'Ver variantes'
+                        : formatCOP(producto.list_price)}
                       <span className="text-xs text-muted font-normal ml-1">/{producto.uom_name || 'und'}</span>
                     </p>
                   )}

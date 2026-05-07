@@ -47,7 +47,6 @@ interface EmpresaConfig {
   monto_aprobacion: number | null;
   control_presupuesto: boolean;
   odoo_partner_id: string | null;
-  odoo_pricelist_id: string | null;
   modo_pricing: string;
   modulos_activos: string[];
   configuracion_extra?: Record<string, unknown>;
@@ -299,8 +298,6 @@ export default function EmpresaConfigPage() {
   const [activateAsesorAccessError, setActivateAsesorAccessError] = useState<string | null>(null);
   const [activatingAsesorId, setActivatingAsesorId] = useState<string | null>(null);
   const [syncingOdooAsesor, setSyncingOdooAsesor] = useState(false);
-  const [pricelistsOdoo, setPricelistsOdoo] = useState<{ id: number; name: string; currency: string | null }[]>([]);
-  const [loadingPricelists, setLoadingPricelists] = useState(false);
   const [selectedAsesorForAccess, setSelectedAsesorForAccess] = useState<Asesor | null>(null);
   const [activateAsesorAccessForm, setActivateAsesorAccessForm] = useState<ActivateAsesorAccessFormState>(
     initialActivateAsesorAccessFormState
@@ -432,24 +429,6 @@ export default function EmpresaConfigPage() {
     };
     void fetchMargenes();
   }, [empresaId]);
-
-  useEffect(() => {
-    const fetchPricelists = async () => {
-      setLoadingPricelists(true);
-      try {
-        const res = await fetch('/api/odoo/pricelists');
-        const data = await res.json();
-        if (res.ok && Array.isArray(data.pricelists)) {
-          setPricelistsOdoo(data.pricelists);
-        }
-      } catch {
-        // silencioso
-      } finally {
-        setLoadingPricelists(false);
-      }
-    };
-    void fetchPricelists();
-  }, []);
 
   const handleLogoUpload = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -709,11 +688,6 @@ export default function EmpresaConfigPage() {
         include_tag_names: 'true',
       });
 
-      const pricelistOverride = config?.odoo_pricelist_id ? parseInt(config.odoo_pricelist_id, 10) : NaN;
-      if (Number.isFinite(pricelistOverride) && pricelistOverride > 0) {
-        paramsPartner.set('pricelist_id', String(pricelistOverride));
-      }
-
       const resPartner = await fetch(`/api/odoo/productos?${paramsPartner.toString()}`);
       const dataPartner = await resPartner.json();
 
@@ -766,7 +740,7 @@ export default function EmpresaConfigPage() {
     } finally {
       setLoadingProductosOdoo(false);
     }
-  }, [partnerIdProductos, config?.odoo_pricelist_id]);
+  }, [partnerIdProductos]);
 
   useEffect(() => {
     void fetchProductosOdoo();
@@ -792,10 +766,6 @@ export default function EmpresaConfigPage() {
       .update({
         color_primario: config.color_primario,
         logo_url: config.logo_url,
-        monto_aprobacion: config.monto_aprobacion,
-        control_presupuesto: config.control_presupuesto,
-        odoo_partner_id: config.odoo_partner_id,
-        odoo_pricelist_id: config.odoo_pricelist_id,
         modo_pricing: config.modo_pricing || 'costo_margen',
         modulos_activos: config.modulos_activos,
         configuracion_extra: configuracionExtraPortal,
@@ -1361,29 +1331,13 @@ export default function EmpresaConfigPage() {
 
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-2">Lista de Precios</label>
-                <select
-                  className="block w-full rounded-lg border border-border py-2.5 px-3 bg-white text-slate-900 focus:ring-primary focus:border-primary text-sm"
-                  value={config?.odoo_pricelist_id || ''}
-                  onChange={(e) => config && setConfig({ ...config, odoo_pricelist_id: e.target.value || null })}
-                  disabled={loadingPricelists}
-                >
-                  <option value="">
-                    {partnerOdooContext?.pricelist
-                      ? `— Automática: ${partnerOdooContext.pricelist.name} (ID ${partnerOdooContext.pricelist.id}) —`
-                      : '— Sin lista asignada en Odoo —'}
-                  </option>
-                  {pricelistsOdoo.map((pl) => (
-                    <option key={pl.id} value={String(pl.id)}>
-                      {pl.name}{pl.currency ? ` (${pl.currency})` : ''}
-                    </option>
-                  ))}
-                </select>
+                <div className="rounded-lg border border-border bg-slate-50 px-3 py-2.5 text-sm text-slate-700">
+                  {partnerOdooContext?.pricelist
+                    ? `${partnerOdooContext.pricelist.name} (ID ${partnerOdooContext.pricelist.id})`
+                    : 'Sin lista asignada en Odoo'}
+                </div>
                 <p className="mt-2 text-xs text-slate-500">
-                  {loadingPricelists
-                    ? 'Cargando listas de precios desde Odoo...'
-                    : partnerOdooContext?.pricelist
-                      ? `Pricelist del partner en Odoo: ${partnerOdooContext.pricelist.name} (ID ${partnerOdooContext.pricelist.id})`
-                      : 'Si no seleccionas ninguna, se usa la asignada al partner en Odoo.'}
+                  La lista fija se toma directamente del partner en Odoo. Para cambiarla, actualiza el contacto en Odoo.
                 </p>
               </div>
 

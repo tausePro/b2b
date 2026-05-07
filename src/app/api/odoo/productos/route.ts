@@ -114,7 +114,8 @@ export async function GET(request: NextRequest) {
 
     const session = await authenticate(config);
 
-    let productos;
+    let productos: OdooProduct[] = [];
+    let pricingCtx: PricingContext | null = null;
     let partnerContext: {
       id: number;
       name: string;
@@ -164,8 +165,25 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Pricelist efectiva: 1) override manual (query param), 2) pricelist del partner en Odoo
-    const effectivePricelistId = parsedPricelistId ?? partnerContext?.pricelist?.id ?? null;
+    if (parsedPartnerId) {
+      const supaAdmin = createSupabaseAdmin(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!
+      );
+      const { data: empresaRow } = await supaAdmin
+        .from('empresas')
+        .select('id')
+        .eq('odoo_partner_id', parsedPartnerId)
+        .maybeSingle();
+
+      if (empresaRow?.id) {
+        pricingCtx = await loadPricingContext(empresaRow.id);
+      }
+    }
+
+    // Pricelist efectiva: solo gobierna el catálogo cuando el cliente está en modo lista fija
+    const effectivePricelistId =
+      pricingCtx?.modoPricing === 'costo_margen' ? null : parsedPricelistId ?? partnerContext?.pricelist?.id ?? null;
 
     if (parsedPartnerId) {
       // Prioridad: 1) Lista de precios (override o Odoo), 2) Etiquetas del partner, 3) Catálogo general
@@ -210,21 +228,8 @@ export async function GET(request: NextRequest) {
     }
 
     // Aplicar pricing (override > costo+margen > pricelist) si hay partner_id
-    if (parsedPartnerId && productos.length > 0) {
-      const supaAdmin = createSupabaseAdmin(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.SUPABASE_SERVICE_ROLE_KEY!
-      );
-      const { data: empresaRow } = await supaAdmin
-        .from('empresas')
-        .select('id')
-        .eq('odoo_partner_id', parsedPartnerId)
-        .maybeSingle();
-
-      if (empresaRow?.id) {
-        const pricingCtx = await loadPricingContext(empresaRow.id);
-        productos = applyPricing(productos, pricingCtx);
-      }
+    if (pricingCtx && productos.length > 0) {
+      productos = applyPricing(productos, pricingCtx);
     }
 
     if (includeTagNames) {
