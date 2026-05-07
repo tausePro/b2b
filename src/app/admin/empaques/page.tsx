@@ -15,7 +15,8 @@ import {
   Trash2,
 } from 'lucide-react';
 
-type TabId = 'configuracion' | 'margenes' | 'precios';
+type TabId = 'configuracion' | 'margenes' | 'precios' | 'editorial';
+type PublicationState = 'borrador' | 'publicado';
 
 interface StorefrontConfig {
   id: string;
@@ -68,6 +69,62 @@ interface PrecioRow {
   precio_override: number;
 }
 
+interface CategoryOverrideRow {
+  id: string;
+  odoo_categ_id: number;
+  nombre_publico: string | null;
+  slug: string | null;
+  descripcion_corta: string | null;
+  imagen_url: string | null;
+  orden: number;
+  visible: boolean;
+  destacado: boolean;
+  seo_title: string | null;
+  seo_description: string | null;
+  estado_publicacion: PublicationState;
+}
+
+interface ProductOverrideRow {
+  id: string;
+  odoo_product_id: number;
+  nombre_publico: string | null;
+  slug: string | null;
+  descripcion_corta: string | null;
+  descripcion_larga: string | null;
+  imagen_url: string | null;
+  orden: number;
+  visible: boolean;
+  destacado: boolean;
+  seo_title: string | null;
+  seo_description: string | null;
+  estado_publicacion: PublicationState;
+}
+
+interface CategoryEditorialDraft {
+  nombre_publico: string;
+  slug: string;
+  descripcion_corta: string;
+  imagen_url: string;
+  orden: string;
+  visible: boolean;
+  destacado: boolean;
+  estado_publicacion: PublicationState;
+}
+
+interface ProductEditorialDraft {
+  nombre_publico: string;
+  slug: string;
+  descripcion_corta: string;
+  descripcion_larga: string;
+  imagen_url: string;
+  orden: string;
+  visible: boolean;
+  destacado: boolean;
+  seo_title: string;
+  seo_description: string;
+  estado_publicacion: PublicationState;
+}
+
 const currencyFormatter = new Intl.NumberFormat('es-CO', {
   style: 'currency',
   currency: 'COP',
@@ -88,6 +145,15 @@ function formatIdList(value: number[] | null | undefined) {
   return Array.isArray(value) ? value.join(', ') : '';
 }
 
+function slugify(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
 function flattenCategories(categories: CategoryNode[]) {
   const result: CategoryNode[] = [];
   const visit = (category: CategoryNode) => {
@@ -101,6 +167,35 @@ function flattenCategories(categories: CategoryNode[]) {
 function getDescription(config: StorefrontConfig | null) {
   const value = config?.configuracion_extra?.descripcion;
   return typeof value === 'string' ? value : '';
+}
+
+function buildCategoryDraft(category: CategoryNode, override?: CategoryOverrideRow): CategoryEditorialDraft {
+  return {
+    nombre_publico: override?.nombre_publico ?? category.name,
+    slug: override?.slug ?? slugify(category.complete_name),
+    descripcion_corta: override?.descripcion_corta ?? '',
+    imagen_url: override?.imagen_url ?? '',
+    orden: String(override?.orden ?? 0),
+    visible: override?.visible ?? true,
+    destacado: override?.destacado ?? false,
+    estado_publicacion: override?.estado_publicacion ?? 'borrador',
+  };
+}
+
+function buildProductDraft(product: CatalogProduct, override?: ProductOverrideRow): ProductEditorialDraft {
+  return {
+    nombre_publico: override?.nombre_publico ?? product.name,
+    slug: override?.slug ?? slugify(product.name),
+    descripcion_corta: override?.descripcion_corta ?? '',
+    descripcion_larga: override?.descripcion_larga ?? '',
+    imagen_url: override?.imagen_url ?? '',
+    orden: String(override?.orden ?? 0),
+    visible: override?.visible ?? true,
+    destacado: override?.destacado ?? false,
+    seo_title: override?.seo_title ?? '',
+    seo_description: override?.seo_description ?? '',
+    estado_publicacion: override?.estado_publicacion ?? 'borrador',
+  };
 }
 
 async function parseJsonResponse<T>(response: Response): Promise<T> {
@@ -117,6 +212,7 @@ export default function AdminEmpaquesPage() {
   const [savingConfig, setSavingConfig] = useState(false);
   const [savingMargin, setSavingMargin] = useState(false);
   const [savingPriceId, setSavingPriceId] = useState<number | null>(null);
+  const [savingEditorial, setSavingEditorial] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -124,6 +220,8 @@ export default function AdminEmpaquesPage() {
   const [catalog, setCatalog] = useState<CatalogResponse | null>(null);
   const [margenes, setMargenes] = useState<MargenRow[]>([]);
   const [precios, setPrecios] = useState<PrecioRow[]>([]);
+  const [categoryOverrides, setCategoryOverrides] = useState<CategoryOverrideRow[]>([]);
+  const [productOverrides, setProductOverrides] = useState<ProductOverrideRow[]>([]);
 
   const [nombre, setNombre] = useState('');
   const [subdominio, setSubdominio] = useState('');
@@ -140,6 +238,10 @@ export default function AdminEmpaquesPage() {
   const [productCategoryId, setProductCategoryId] = useState('');
   const [productPage, setProductPage] = useState(1);
   const [priceDrafts, setPriceDrafts] = useState<Record<number, string>>({});
+  const [editorialCategoryId, setEditorialCategoryId] = useState('');
+  const [editorialProductId, setEditorialProductId] = useState('');
+  const [categoryDraft, setCategoryDraft] = useState<CategoryEditorialDraft | null>(null);
+  const [productDraft, setProductDraft] = useState<ProductEditorialDraft | null>(null);
 
   const categories = useMemo(() => flattenCategories(catalog?.categories ?? []), [catalog?.categories]);
   const preciosByProductId = useMemo(() => {
@@ -147,6 +249,16 @@ export default function AdminEmpaquesPage() {
     precios.forEach((precio) => map.set(precio.odoo_product_id, precio));
     return map;
   }, [precios]);
+  const categoryOverridesById = useMemo(() => {
+    const map = new Map<number, CategoryOverrideRow>();
+    categoryOverrides.forEach((override) => map.set(override.odoo_categ_id, override));
+    return map;
+  }, [categoryOverrides]);
+  const productOverridesById = useMemo(() => {
+    const map = new Map<number, ProductOverrideRow>();
+    productOverrides.forEach((override) => map.set(override.odoo_product_id, override));
+    return map;
+  }, [productOverrides]);
 
   const showToast = useCallback((message: string) => {
     setToast(message);
@@ -182,13 +294,27 @@ export default function AdminEmpaquesPage() {
     setPrecios(data.precios);
   }, []);
 
+  const loadCategoryOverrides = useCallback(async () => {
+    const data = await parseJsonResponse<{ categorias: CategoryOverrideRow[] }>(
+      await fetch('/api/admin/storefronts/empaques/categorias')
+    );
+    setCategoryOverrides(data.categorias);
+  }, []);
+
+  const loadProductOverrides = useCallback(async () => {
+    const data = await parseJsonResponse<{ productos: ProductOverrideRow[] }>(
+      await fetch('/api/admin/storefronts/empaques/productos')
+    );
+    setProductOverrides(data.productos);
+  }, []);
+
   const loadCatalog = useCallback(async () => {
     const params = new URLSearchParams({ limit: '12', page: String(productPage) });
     if (productSearch.trim()) params.set('search', productSearch.trim());
     if (productCategoryId) params.set('category_id', productCategoryId);
 
     const data = await parseJsonResponse<CatalogResponse>(
-      await fetch(`/api/empaques/catalogo?${params.toString()}`)
+      await fetch(`/api/admin/storefronts/empaques/catalogo?${params.toString()}`)
     );
     setCatalog(data);
   }, [productCategoryId, productPage, productSearch]);
@@ -197,13 +323,13 @@ export default function AdminEmpaquesPage() {
     setLoading(true);
     setError(null);
     try {
-      await Promise.all([loadConfig(), loadMargenes(), loadPrecios()]);
+      await Promise.all([loadConfig(), loadMargenes(), loadPrecios(), loadCategoryOverrides(), loadProductOverrides()]);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'No se pudo cargar el panel de Empaques.');
     } finally {
       setLoading(false);
     }
-  }, [loadConfig, loadMargenes, loadPrecios]);
+  }, [loadCategoryOverrides, loadConfig, loadMargenes, loadPrecios, loadProductOverrides]);
 
   useEffect(() => {
     void loadAll();
@@ -216,6 +342,16 @@ export default function AdminEmpaquesPage() {
       });
     }
   }, [loadCatalog, loading]);
+
+  useEffect(() => {
+    const selectedCategory = categories.find((category) => String(category.id) === editorialCategoryId);
+    setCategoryDraft(selectedCategory ? buildCategoryDraft(selectedCategory, categoryOverridesById.get(selectedCategory.id)) : null);
+  }, [categories, categoryOverridesById, editorialCategoryId]);
+
+  useEffect(() => {
+    const selectedProduct = (catalog?.productos ?? []).find((product) => String(product.id) === editorialProductId);
+    setProductDraft(selectedProduct ? buildProductDraft(selectedProduct, productOverridesById.get(selectedProduct.id)) : null);
+  }, [catalog?.productos, editorialProductId, productOverridesById]);
 
   const handleSaveConfig = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -336,6 +472,75 @@ export default function AdminEmpaquesPage() {
     }
   };
 
+  const handleSaveCategoryEditorial = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!categoryDraft || !editorialCategoryId) return;
+    setSavingEditorial(true);
+    setError(null);
+
+    try {
+      await parseJsonResponse<{ categoria: CategoryOverrideRow }>(
+        await fetch('/api/admin/storefronts/empaques/categorias', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            odoo_categ_id: Number(editorialCategoryId),
+            nombre_publico: categoryDraft.nombre_publico,
+            slug: categoryDraft.slug,
+            descripcion_corta: categoryDraft.descripcion_corta,
+            imagen_url: categoryDraft.imagen_url,
+            orden: Number(categoryDraft.orden),
+            visible: categoryDraft.visible,
+            destacado: categoryDraft.destacado,
+            estado_publicacion: categoryDraft.estado_publicacion,
+          }),
+        })
+      );
+      await loadCategoryOverrides();
+      showToast('Categoría editorial guardada.');
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'No se pudo guardar la categoría editorial.');
+    } finally {
+      setSavingEditorial(false);
+    }
+  };
+
+  const handleSaveProductEditorial = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!productDraft || !editorialProductId) return;
+    setSavingEditorial(true);
+    setError(null);
+
+    try {
+      await parseJsonResponse<{ producto: ProductOverrideRow }>(
+        await fetch('/api/admin/storefronts/empaques/productos', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            odoo_product_id: Number(editorialProductId),
+            nombre_publico: productDraft.nombre_publico,
+            slug: productDraft.slug,
+            descripcion_corta: productDraft.descripcion_corta,
+            descripcion_larga: productDraft.descripcion_larga,
+            imagen_url: productDraft.imagen_url,
+            orden: Number(productDraft.orden),
+            visible: productDraft.visible,
+            destacado: productDraft.destacado,
+            seo_title: productDraft.seo_title,
+            seo_description: productDraft.seo_description,
+            estado_publicacion: productDraft.estado_publicacion,
+          }),
+        })
+      );
+      await loadProductOverrides();
+      showToast('Producto editorial guardado.');
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'No se pudo guardar el producto editorial.');
+    } finally {
+      setSavingEditorial(false);
+    }
+  };
+
   const handleSearchProducts = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setProductPage(1);
@@ -354,6 +559,7 @@ export default function AdminEmpaquesPage() {
     { id: 'configuracion', label: 'Configuración', icon: <Settings className="h-4 w-4" /> },
     { id: 'margenes', label: 'Márgenes', icon: <Percent className="h-4 w-4" /> },
     { id: 'precios', label: 'Precios manuales', icon: <Package className="h-4 w-4" /> },
+    { id: 'editorial', label: 'Editorial', icon: <Package className="h-4 w-4" /> },
   ];
 
   return (
@@ -658,6 +864,265 @@ export default function AdminEmpaquesPage() {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {activeTab === 'editorial' && (
+        <div className="grid gap-6 xl:grid-cols-2">
+          <form onSubmit={handleSaveCategoryEditorial} className="rounded-2xl border border-border bg-white p-6 shadow-sm">
+            <div className="mb-5">
+              <h2 className="text-lg font-bold text-slate-900">Categorías editoriales</h2>
+              <p className="text-sm text-slate-500">Controla nombres comerciales, visibilidad y destacados por categoría Odoo.</p>
+            </div>
+            <div className="space-y-4">
+              <label className="space-y-2 block">
+                <span className="text-sm font-semibold text-slate-700">Categoría</span>
+                <select
+                  value={editorialCategoryId}
+                  onChange={(event) => setEditorialCategoryId(event.target.value)}
+                  className="w-full rounded-lg border border-border px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                >
+                  <option value="">Selecciona una categoría</option>
+                  {categories.map((category) => {
+                    const override = categoryOverridesById.get(category.id);
+                    return (
+                      <option key={category.id} value={category.id}>
+                        {override?.nombre_publico ?? category.complete_name}{override?.estado_publicacion === 'publicado' ? ' · publicado' : ''}
+                      </option>
+                    );
+                  })}
+                </select>
+              </label>
+
+              {categoryDraft && (
+                <>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <label className="space-y-2 block">
+                      <span className="text-sm font-semibold text-slate-700">Nombre público</span>
+                      <input
+                        value={categoryDraft.nombre_publico}
+                        onChange={(event) => setCategoryDraft((current) => current ? { ...current, nombre_publico: event.target.value } : current)}
+                        className="w-full rounded-lg border border-border px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                      />
+                    </label>
+                    <label className="space-y-2 block">
+                      <span className="text-sm font-semibold text-slate-700">Slug</span>
+                      <input
+                        value={categoryDraft.slug}
+                        onChange={(event) => setCategoryDraft((current) => current ? { ...current, slug: event.target.value } : current)}
+                        className="w-full rounded-lg border border-border px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                      />
+                    </label>
+                  </div>
+                  <label className="space-y-2 block">
+                    <span className="text-sm font-semibold text-slate-700">Descripción corta</span>
+                    <textarea
+                      value={categoryDraft.descripcion_corta}
+                      onChange={(event) => setCategoryDraft((current) => current ? { ...current, descripcion_corta: event.target.value } : current)}
+                      rows={3}
+                      className="w-full rounded-lg border border-border px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                    />
+                  </label>
+                  <div className="grid gap-4 md:grid-cols-[1fr_120px]">
+                    <label className="space-y-2 block">
+                      <span className="text-sm font-semibold text-slate-700">Imagen URL</span>
+                      <input
+                        value={categoryDraft.imagen_url}
+                        onChange={(event) => setCategoryDraft((current) => current ? { ...current, imagen_url: event.target.value } : current)}
+                        className="w-full rounded-lg border border-border px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                      />
+                    </label>
+                    <label className="space-y-2 block">
+                      <span className="text-sm font-semibold text-slate-700">Orden</span>
+                      <input
+                        type="number"
+                        value={categoryDraft.orden}
+                        onChange={(event) => setCategoryDraft((current) => current ? { ...current, orden: event.target.value } : current)}
+                        className="w-full rounded-lg border border-border px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                      />
+                    </label>
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2.5 text-sm font-semibold text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={categoryDraft.visible}
+                        onChange={(event) => setCategoryDraft((current) => current ? { ...current, visible: event.target.checked } : current)}
+                        className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                      />
+                      Visible
+                    </label>
+                    <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2.5 text-sm font-semibold text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={categoryDraft.destacado}
+                        onChange={(event) => setCategoryDraft((current) => current ? { ...current, destacado: event.target.checked } : current)}
+                        className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                      />
+                      Destacada
+                    </label>
+                    <select
+                      value={categoryDraft.estado_publicacion}
+                      onChange={(event) => setCategoryDraft((current) => current ? { ...current, estado_publicacion: event.target.value as PublicationState } : current)}
+                      className="rounded-lg border border-border px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                    >
+                      <option value="borrador">Borrador</option>
+                      <option value="publicado">Publicado</option>
+                    </select>
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={savingEditorial}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {savingEditorial ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                    Guardar categoría
+                  </button>
+                </>
+              )}
+            </div>
+          </form>
+
+          <form onSubmit={handleSaveProductEditorial} className="rounded-2xl border border-border bg-white p-6 shadow-sm">
+            <div className="mb-5">
+              <h2 className="text-lg font-bold text-slate-900">Productos editoriales</h2>
+              <p className="text-sm text-slate-500">Edita contenido público sobre los productos cargados desde Odoo en la página actual.</p>
+            </div>
+            <div className="space-y-4">
+              <label className="space-y-2 block">
+                <span className="text-sm font-semibold text-slate-700">Producto</span>
+                <select
+                  value={editorialProductId}
+                  onChange={(event) => setEditorialProductId(event.target.value)}
+                  className="w-full rounded-lg border border-border px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                >
+                  <option value="">Selecciona un producto</option>
+                  {(catalog?.productos ?? []).map((product) => {
+                    const override = productOverridesById.get(product.id);
+                    return (
+                      <option key={product.id} value={product.id}>
+                        {override?.nombre_publico ?? product.name}{override?.estado_publicacion === 'publicado' ? ' · publicado' : ''}
+                      </option>
+                    );
+                  })}
+                </select>
+              </label>
+
+              {productDraft && (
+                <>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <label className="space-y-2 block">
+                      <span className="text-sm font-semibold text-slate-700">Nombre público</span>
+                      <input
+                        value={productDraft.nombre_publico}
+                        onChange={(event) => setProductDraft((current) => current ? { ...current, nombre_publico: event.target.value } : current)}
+                        className="w-full rounded-lg border border-border px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                      />
+                    </label>
+                    <label className="space-y-2 block">
+                      <span className="text-sm font-semibold text-slate-700">Slug</span>
+                      <input
+                        value={productDraft.slug}
+                        onChange={(event) => setProductDraft((current) => current ? { ...current, slug: event.target.value } : current)}
+                        className="w-full rounded-lg border border-border px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                      />
+                    </label>
+                  </div>
+                  <label className="space-y-2 block">
+                    <span className="text-sm font-semibold text-slate-700">Descripción corta</span>
+                    <textarea
+                      value={productDraft.descripcion_corta}
+                      onChange={(event) => setProductDraft((current) => current ? { ...current, descripcion_corta: event.target.value } : current)}
+                      rows={3}
+                      className="w-full rounded-lg border border-border px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                    />
+                  </label>
+                  <label className="space-y-2 block">
+                    <span className="text-sm font-semibold text-slate-700">Descripción larga</span>
+                    <textarea
+                      value={productDraft.descripcion_larga}
+                      onChange={(event) => setProductDraft((current) => current ? { ...current, descripcion_larga: event.target.value } : current)}
+                      rows={4}
+                      className="w-full rounded-lg border border-border px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                    />
+                  </label>
+                  <div className="grid gap-4 md:grid-cols-[1fr_120px]">
+                    <label className="space-y-2 block">
+                      <span className="text-sm font-semibold text-slate-700">Imagen URL</span>
+                      <input
+                        value={productDraft.imagen_url}
+                        onChange={(event) => setProductDraft((current) => current ? { ...current, imagen_url: event.target.value } : current)}
+                        className="w-full rounded-lg border border-border px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                      />
+                    </label>
+                    <label className="space-y-2 block">
+                      <span className="text-sm font-semibold text-slate-700">Orden</span>
+                      <input
+                        type="number"
+                        value={productDraft.orden}
+                        onChange={(event) => setProductDraft((current) => current ? { ...current, orden: event.target.value } : current)}
+                        className="w-full rounded-lg border border-border px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                      />
+                    </label>
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <label className="space-y-2 block">
+                      <span className="text-sm font-semibold text-slate-700">SEO title</span>
+                      <input
+                        value={productDraft.seo_title}
+                        onChange={(event) => setProductDraft((current) => current ? { ...current, seo_title: event.target.value } : current)}
+                        className="w-full rounded-lg border border-border px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                      />
+                    </label>
+                    <label className="space-y-2 block">
+                      <span className="text-sm font-semibold text-slate-700">SEO description</span>
+                      <input
+                        value={productDraft.seo_description}
+                        onChange={(event) => setProductDraft((current) => current ? { ...current, seo_description: event.target.value } : current)}
+                        className="w-full rounded-lg border border-border px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                      />
+                    </label>
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2.5 text-sm font-semibold text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={productDraft.visible}
+                        onChange={(event) => setProductDraft((current) => current ? { ...current, visible: event.target.checked } : current)}
+                        className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                      />
+                      Visible
+                    </label>
+                    <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2.5 text-sm font-semibold text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={productDraft.destacado}
+                        onChange={(event) => setProductDraft((current) => current ? { ...current, destacado: event.target.checked } : current)}
+                        className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                      />
+                      Destacado
+                    </label>
+                    <select
+                      value={productDraft.estado_publicacion}
+                      onChange={(event) => setProductDraft((current) => current ? { ...current, estado_publicacion: event.target.value as PublicationState } : current)}
+                      className="rounded-lg border border-border px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                    >
+                      <option value="borrador">Borrador</option>
+                      <option value="publicado">Publicado</option>
+                    </select>
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={savingEditorial}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {savingEditorial ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                    Guardar producto
+                  </button>
+                </>
+              )}
+            </div>
+          </form>
         </div>
       )}
     </div>

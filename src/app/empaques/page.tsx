@@ -3,6 +3,7 @@ import Link from 'next/link';
 import type { Metadata } from 'next';
 import {
   ArrowRight,
+  Box,
   Building2,
   Leaf,
   Package,
@@ -63,6 +64,10 @@ function buildCategoryHref(categoryId: number | null, search: string) {
 }
 
 function getProductImageSrc(product: EmpaquesCatalogProduct) {
+  if (typeof product.image_url === 'string' && product.image_url.length > 0) {
+    return product.image_url;
+  }
+
   return typeof product.image_128 === 'string' && product.image_128.length > 0
     ? `data:image/png;base64,${product.image_128}`
     : null;
@@ -188,7 +193,7 @@ function CategoryCard({
   product: EmpaquesCatalogProduct | null;
   variant: 'wide' | 'tall' | 'dark';
 }) {
-  const imageSrc = product ? getProductImageSrc(product) : null;
+  const imageSrc = category.imagen_url ?? (product ? getProductImageSrc(product) : null);
   const isTall = variant === 'tall';
   const isDark = variant === 'dark';
 
@@ -216,7 +221,7 @@ function CategoryCard({
           </span>
         )}
         <h4 className="text-3xl font-black text-white">{category.name}</h4>
-        <p className="mt-2 max-w-md text-sm font-bold leading-6 text-white/80">{category.complete_name}</p>
+        <p className="mt-2 max-w-md text-sm font-bold leading-6 text-white/80">{category.descripcion_corta ?? category.complete_name}</p>
         {isTall && (
           <span className="mt-6 flex h-12 w-12 items-center justify-center rounded-full bg-white/20 text-white backdrop-blur-md transition group-hover:bg-[#9CBB06] group-hover:text-slate-950">
             <ArrowRight className="h-5 w-5" />
