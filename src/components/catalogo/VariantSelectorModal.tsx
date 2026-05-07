@@ -78,7 +78,12 @@ export default function VariantSelectorModal({
     setError(null);
     setSelected(new Map());
     try {
-      const res = await fetch(`/api/odoo/productos/${product.id}/variantes`);
+      const params = new URLSearchParams();
+      if (Number.isFinite(product.list_price) && product.list_price > 0) {
+        params.set('fallback_price', String(product.list_price));
+      }
+      const queryString = params.toString();
+      const res = await fetch(`/api/odoo/productos/${product.id}/variantes${queryString ? `?${queryString}` : ''}`);
       if (!res.ok) {
         const payload = await res.json();
         throw new Error(payload.error || 'Error cargando variantes');
@@ -90,7 +95,7 @@ export default function VariantSelectorModal({
     } finally {
       setLoading(false);
     }
-  }, [product.id]);
+  }, [product.id, product.list_price]);
 
   useEffect(() => {
     if (open) {
