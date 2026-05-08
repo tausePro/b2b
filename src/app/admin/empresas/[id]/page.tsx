@@ -130,6 +130,15 @@ interface UserFormState {
   password: string;
 }
 
+interface EditUserFormState {
+  nombre: string;
+  apellido: string;
+  email: string;
+  rol: UserRoleCliente;
+  sede_id: string;
+  activo: boolean;
+}
+
 interface ActivateAsesorAccessFormState {
   password: string;
 }
@@ -141,6 +150,15 @@ const initialUserFormState: UserFormState = {
   rol: 'comprador',
   sede_id: '',
   password: '',
+};
+
+const initialEditUserFormState: EditUserFormState = {
+  nombre: '',
+  apellido: '',
+  email: '',
+  rol: 'comprador',
+  sede_id: '',
+  activo: true,
 };
 
 const initialActivateAsesorAccessFormState: ActivateAsesorAccessFormState = {
@@ -294,6 +312,12 @@ export default function EmpresaConfigPage() {
   const [creatingUser, setCreatingUser] = useState(false);
   const [createUserError, setCreateUserError] = useState<string | null>(null);
   const [newUserForm, setNewUserForm] = useState<UserFormState>(initialUserFormState);
+  const [showEditUserModal, setShowEditUserModal] = useState(false);
+  const [editingUser, setEditingUser] = useState<Usuario | null>(null);
+  const [editUserForm, setEditUserForm] = useState<EditUserFormState>(initialEditUserFormState);
+  const [editUserError, setEditUserError] = useState<string | null>(null);
+  const [savingEditUser, setSavingEditUser] = useState(false);
+  const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
   const [showActivateAsesorAccessModal, setShowActivateAsesorAccessModal] = useState(false);
   const [activateAsesorAccessError, setActivateAsesorAccessError] = useState<string | null>(null);
   const [activatingAsesorId, setActivatingAsesorId] = useState<string | null>(null);
@@ -507,6 +531,130 @@ export default function EmpresaConfigPage() {
     setShowCreateUserModal(false);
     setCreateUserError(null);
     setNewUserForm(initialUserFormState);
+  };
+
+  const openEditUserModal = (usuario: Usuario) => {
+    if (usuario.rol !== 'comprador' && usuario.rol !== 'aprobador') {
+      setToast('Solo se pueden editar usuarios con rol comprador o aprobador desde este panel.');
+      setTimeout(() => setToast(null), 4000);
+      return;
+    }
+    setEditingUser(usuario);
+    setEditUserForm({
+      nombre: usuario.nombre,
+      apellido: usuario.apellido,
+      email: usuario.email,
+      rol: usuario.rol as UserRoleCliente,
+      sede_id: usuario.sede_id || '',
+      activo: usuario.activo,
+    });
+    setEditUserError(null);
+    setShowEditUserModal(true);
+  };
+
+  const closeEditUserModal = () => {
+    setShowEditUserModal(false);
+    setEditingUser(null);
+    setEditUserError(null);
+    setEditUserForm(initialEditUserFormState);
+  };
+
+  const handleUpdateUser = async () => {
+    if (!editingUser || !empresa) return;
+
+    const nombre = editUserForm.nombre.trim();
+    const apellido = editUserForm.apellido.trim();
+    const email = editUserForm.email.trim().toLowerCase();
+    const requiereSede = editUserForm.rol === 'comprador' && empresa.usa_sedes;
+
+    if (!nombre || !apellido || !email) {
+      setEditUserError('Completa nombre, apellido y email.');
+      return;
+    }
+
+    if (requiereSede && !editUserForm.sede_id) {
+      setEditUserError('Debes asignar una sede al usuario comprador.');
+      return;
+    }
+
+    setSavingEditUser(true);
+    setEditUserError(null);
+
+    try {
+      const response = await fetch(`/api/admin/empresas/${empresaId}/usuarios/${editingUser.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nombre,
+          apellido,
+          email,
+          rol: editUserForm.rol,
+          sede_id: editUserForm.rol === 'comprador' ? (editUserForm.sede_id || null) : null,
+          activo: editUserForm.activo,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        setEditUserError(result.error || 'No se pudo actualizar el usuario.');
+        return;
+      }
+
+      await fetchData();
+      closeEditUserModal();
+      setToast(`Usuario ${result.usuario?.email || email} actualizado correctamente.`);
+      setTimeout(() => setToast(null), 3000);
+    } catch (error) {
+      setEditUserError(error instanceof Error ? error.message : 'No se pudo actualizar el usuario.');
+    } finally {
+      setSavingEditUser(false);
+    }
+  };
+
+  const handleDeleteUser = async (usuario: Usuario) => {
+    if (usuario.rol !== 'comprador' && usuario.rol !== 'aprobador') {
+      setToast('Solo se pueden eliminar usuarios con rol comprador o aprobador desde este panel.');
+      setTimeout(() => setToast(null), 4000);
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `¿Confirmar eliminación de ${usuario.nombre} ${usuario.apellido} (${usuario.email})?\n\n` +
+        'Se desactivará el usuario y se revocará su acceso. Si tiene pedidos asociados, ' +
+        'se conservará el perfil para preservar el historial; si no, será eliminado por completo.'
+    );
+    if (!confirmed) return;
+
+    setDeletingUserId(usuario.id);
+    try {
+      const response = await fetch(`/api/admin/empresas/${empresaId}/usuarios/${usuario.id}`, {
+        method: 'DELETE',
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        setToast(result.error || 'No se pudo eliminar el usuario.');
+        setTimeout(() => setToast(null), 5000);
+        return;
+      }
+
+      await fetchData();
+
+      if (result.hard_deleted) {
+        setToast(`Usuario ${usuario.email} eliminado por completo.`);
+      } else {
+        setToast(
+          `Usuario ${usuario.email} desactivado y acceso revocado. Se conservó el perfil por historial asociado.`
+        );
+      }
+      setTimeout(() => setToast(null), 5000);
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : 'No se pudo eliminar el usuario.');
+      setTimeout(() => setToast(null), 5000);
+    } finally {
+      setDeletingUserId(null);
+    }
   };
 
   const closeActivateAsesorAccessModal = () => {
@@ -1968,16 +2116,36 @@ export default function EmpresaConfigPage() {
                                 ? 'bg-green-100 text-green-800 border-green-200'
                                 : 'bg-slate-100 text-slate-800 border-slate-200'
                             }`}>
-                              {usuario.activo ? 'Activo' : 'Pendiente'}
+                              {usuario.activo ? 'Activo' : 'Inactivo'}
                             </span>
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                            <button className="text-slate-400 hover:text-primary transition-colors mx-2">
-                              <Pencil className="w-4 h-4" />
-                            </button>
-                            <button className="text-slate-400 hover:text-red-600 transition-colors mx-2">
-                              <Trash2 className="w-4 h-4" />
-                            </button>
+                            {(usuario.rol === 'comprador' || usuario.rol === 'aprobador') ? (
+                              <>
+                                <button
+                                  onClick={() => openEditUserModal(usuario)}
+                                  disabled={deletingUserId === usuario.id}
+                                  title="Editar usuario"
+                                  className="text-slate-400 hover:text-primary transition-colors mx-2 disabled:opacity-50"
+                                >
+                                  <Pencil className="w-4 h-4" />
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteUser(usuario)}
+                                  disabled={deletingUserId === usuario.id}
+                                  title="Eliminar usuario"
+                                  className="text-slate-400 hover:text-red-600 transition-colors mx-2 disabled:opacity-50"
+                                >
+                                  {deletingUserId === usuario.id ? (
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                  ) : (
+                                    <Trash2 className="w-4 h-4" />
+                                  )}
+                                </button>
+                              </>
+                            ) : (
+                              <span className="text-xs text-slate-400 italic">Solo lectura</span>
+                            )}
                           </td>
                         </tr>
                       );
@@ -2275,6 +2443,145 @@ export default function EmpresaConfigPage() {
               >
                 {creatingUser ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
                 Crear usuario
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showEditUserModal && editingUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 px-4">
+          <div className="w-full max-w-2xl rounded-2xl border border-border bg-white shadow-2xl">
+            <div className="flex items-start justify-between gap-4 border-b border-border px-6 py-5">
+              <div>
+                <h3 className="text-lg font-bold text-slate-900">Editar usuario cliente</h3>
+                <p className="mt-1 text-sm text-slate-500">
+                  Modifica los datos del perfil. La contraseña se gestiona por separado.
+                </p>
+              </div>
+              <button
+                onClick={closeEditUserModal}
+                disabled={savingEditUser}
+                className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-50 hover:text-slate-600"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="space-y-5 px-6 py-6">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-slate-700">Nombre</label>
+                  <input
+                    type="text"
+                    value={editUserForm.nombre}
+                    onChange={(e) => setEditUserForm((prev) => ({ ...prev, nombre: e.target.value }))}
+                    className="w-full rounded-lg border border-border bg-white px-3 py-2.5 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                    placeholder="Nombre"
+                  />
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-slate-700">Apellido</label>
+                  <input
+                    type="text"
+                    value={editUserForm.apellido}
+                    onChange={(e) => setEditUserForm((prev) => ({ ...prev, apellido: e.target.value }))}
+                    className="w-full rounded-lg border border-border bg-white px-3 py-2.5 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                    placeholder="Apellido"
+                  />
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-slate-700">Email</label>
+                  <input
+                    type="email"
+                    value={editUserForm.email}
+                    onChange={(e) => setEditUserForm((prev) => ({ ...prev, email: e.target.value }))}
+                    className="w-full rounded-lg border border-border bg-white px-3 py-2.5 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                    placeholder="usuario@empresa.com"
+                  />
+                  <p className="mt-1 text-xs text-slate-500">Si cambia, también se actualizará en autenticación.</p>
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-slate-700">Rol</label>
+                  <select
+                    value={editUserForm.rol}
+                    onChange={(e) => {
+                      const rol = e.target.value as UserRoleCliente;
+                      setEditUserForm((prev) => ({
+                        ...prev,
+                        rol,
+                        sede_id: rol === 'comprador' ? prev.sede_id : '',
+                      }));
+                    }}
+                    className="w-full rounded-lg border border-border bg-white px-3 py-2.5 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                  >
+                    <option value="comprador">Comprador</option>
+                    <option value="aprobador">Aprobador</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-slate-700">
+                    Sede {empresa.usa_sedes && editUserForm.rol === 'comprador' ? '(obligatoria)' : '(opcional)'}
+                  </label>
+                  <select
+                    value={editUserForm.sede_id}
+                    onChange={(e) => setEditUserForm((prev) => ({ ...prev, sede_id: e.target.value }))}
+                    disabled={editUserForm.rol !== 'comprador' || sedes.length === 0}
+                    className="w-full rounded-lg border border-border bg-white px-3 py-2.5 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-slate-100 disabled:text-slate-400"
+                  >
+                    <option value="">
+                      {sedes.length === 0
+                        ? 'Sin sedes disponibles'
+                        : editUserForm.rol === 'comprador'
+                          ? 'Selecciona una sede'
+                          : 'No aplica para este rol'}
+                    </option>
+                    {sedes.map((sede) => (
+                      <option key={sede.id} value={sede.id}>
+                        {sede.nombre}{sede.ciudad ? ` · ${sede.ciudad}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-slate-700">Estado</label>
+                  <div className="flex items-center gap-3 rounded-lg border border-border bg-white px-3 py-2.5">
+                    <input
+                      id="edit-user-activo"
+                      type="checkbox"
+                      checked={editUserForm.activo}
+                      onChange={(e) => setEditUserForm((prev) => ({ ...prev, activo: e.target.checked }))}
+                      className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary"
+                    />
+                    <label htmlFor="edit-user-activo" className="text-sm text-slate-700">
+                      Usuario activo (puede iniciar sesión y operar)
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              {editUserError && (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {editUserError}
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-3 border-t border-border px-6 py-4">
+              <button
+                onClick={closeEditUserModal}
+                disabled={savingEditUser}
+                className="rounded-lg border border-border px-4 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleUpdateUser}
+                disabled={savingEditUser}
+                className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white transition hover:bg-primary-dark disabled:opacity-50"
+              >
+                {savingEditUser ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                Guardar cambios
               </button>
             </div>
           </div>
