@@ -4,6 +4,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 
 const USER_SELECT = 'id, auth_id, email, nombre, apellido, rol, empresa_id, sede_id, activo, created_at';
 const ALLOWED_CLIENT_ROLES = new Set(['comprador', 'aprobador'] as const);
+const ALLOWED_ACTOR_ROLES = new Set(['super_admin', 'direccion'] as const);
 
 type ClientRole = 'comprador' | 'aprobador';
 
@@ -53,7 +54,13 @@ export async function POST(
       .eq('auth_id', user.id)
       .maybeSingle();
 
-    if (actorProfileError || !actorProfile || actorProfile.rol !== 'super_admin' || !actorProfile.activo) {
+    if (
+      actorProfileError ||
+      !actorProfile ||
+      !actorProfile.activo ||
+      !actorProfile.rol ||
+      !ALLOWED_ACTOR_ROLES.has(actorProfile.rol as 'super_admin' | 'direccion')
+    ) {
       return NextResponse.json(
         {
           error: 'FORBIDDEN',
