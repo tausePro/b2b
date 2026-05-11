@@ -175,6 +175,30 @@ async function loadApprovers(empresaId: string): Promise<Recipient[]> {
   }));
 }
 
+async function loadDireccionRecipients(): Promise<Recipient[]> {
+  // Gerencia Imprima (rol 'direccion') es transversal a todas las empresas cliente,
+  // por lo que no se filtra por empresa_id. Recibe notificaciones de todos los pedidos creados.
+  const admin = getSupabaseAdmin();
+  const { data, error } = await admin
+    .from('usuarios')
+    .select('id, email, nombre, apellido, rol, empresa_id')
+    .eq('rol', 'direccion')
+    .eq('activo', true);
+
+  if (error || !data) {
+    return [];
+  }
+
+  return data.map((item) => ({
+    id: String(item.id),
+    email: item.email ?? null,
+    nombre: item.nombre ?? null,
+    apellido: item.apellido ?? null,
+    rol: item.rol ?? null,
+    empresa_id: item.empresa_id ?? null,
+  }));
+}
+
 async function loadAdvisors(empresaId: string): Promise<Recipient[]> {
   const admin = getSupabaseAdmin();
   const { data, error } = await admin
@@ -220,10 +244,20 @@ async function resolveRecipients(event: PedidoNotificationEvent, pedido: PedidoC
     : [];
 
   switch (event) {
-    case 'pedido_creado_en_aprobacion':
-      return dedupeRecipients(await loadApprovers(pedido.empresa_id));
-    case 'pedido_creado_autoaprobado':
-      return dedupeRecipients([...creator, ...(await loadAdvisors(pedido.empresa_id))]);
+    case 'pedido_creado_en_aprobacion': {
+      const [approvers, direccion] = await Promise.all([
+        loadApprovers(pedido.empresa_id),
+        loadDireccionRecipients(),
+      ]);
+      return dedupeRecipients([...approvers, ...direccion]);
+    }
+    case 'pedido_creado_autoaprobado': {
+      const [advisors, direccion] = await Promise.all([
+        loadAdvisors(pedido.empresa_id),
+        loadDireccionRecipients(),
+      ]);
+      return dedupeRecipients([...creator, ...advisors, ...direccion]);
+    }
     case 'pedido_aprobado':
       return dedupeRecipients([...creator, ...(await loadAdvisors(pedido.empresa_id))]);
     case 'pedido_rechazado':
