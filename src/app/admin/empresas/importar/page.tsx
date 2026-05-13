@@ -120,7 +120,11 @@ export default function ImportarClientesPage() {
     cargarClientes();
   }, [cargarClientes]);
 
-  const importar = async (cliente: ClienteOdoo, modo: 'empresa' | 'sede' = 'empresa') => {
+  const importar = async (
+    cliente: ClienteOdoo,
+    modo: 'empresa' | 'sede' = 'empresa',
+    options: { confirmDuplicate?: boolean } = {}
+  ) => {
     const targetEmpresaId = empresaDestinoPorPartner[cliente.odoo_id] || cliente.empresa_padre_local_id || '';
 
     if (modo === 'sede' && !targetEmpresaId) {
@@ -150,11 +154,54 @@ export default function ImportarClientesPage() {
           ciudad: cliente.ciudad,
           requiere_aprobacion: requiereAprobacionImport,
           usa_sedes: usaSedesImport,
+          confirm_duplicate: options.confirmDuplicate === true,
         }),
       });
 
       const data = await res.json();
-      if (!res.ok && res.status !== 409) {
+
+      // 409 con duplicate_candidates: la empresa que se quiere importar coincide
+      // con una existente por NIT o nombre normalizado. Pedir confirmación al
+      // usuario para forzar la creación.
+      if (
+        res.status === 409 &&
+        modo === 'empresa' &&
+        Array.isArray(data.duplicate_candidates) &&
+        data.duplicate_candidates.length > 0 &&
+        !options.confirmDuplicate
+      ) {
+        const lista = (data.duplicate_candidates as Array<{
+          nombre: string;
+          nit: string | null;
+          odoo_partner_id: number | null;
+          match_reason: 'nit' | 'nombre';
+        }>)
+          .map(
+            (c, idx) =>
+              `${idx + 1}. ${c.nombre} — NIT: ${c.nit || 'sin NIT'} — Odoo ID: ${c.odoo_partner_id ?? 'N/A'} — coincide por ${c.match_reason}`
+          )
+          .join('\n');
+
+        const confirmar = window.confirm(
+          `Posible duplicado detectado.\n\nYa existe(n) en la plataforma:\n${lista}\n\n¿Deseas crear una empresa NUEVA de todos modos? Esto duplicará el registro.`
+        );
+
+        if (!confirmar) {
+          setImportState((prev) => ({
+            ...prev,
+            [cliente.odoo_id]: {
+              status: 'idle',
+              modo,
+              mensaje: 'Importación cancelada por duplicado.',
+            },
+          }));
+          return;
+        }
+
+        return importar(cliente, modo, { confirmDuplicate: true });
+      }
+
+      if (!res.ok) {
         throw new Error(data.error || 'Error importando');
       }
 

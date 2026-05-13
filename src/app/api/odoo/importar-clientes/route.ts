@@ -3,6 +3,7 @@ import { authenticate, searchCount, searchRead } from '@/lib/odoo/client';
 import { getServerOdooConfig } from '@/lib/odoo/serverConfig';
 import { syncOdooAsesor } from '@/lib/odoo/syncOdooAsesor';
 import { authorizeApiRoles } from '@/lib/auth/apiRouteGuards';
+import { findEmpresaDuplicates } from '@/lib/empresas/dedup';
 import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
@@ -185,6 +186,7 @@ export async function POST(request: NextRequest) {
       presupuesto_global,
       requiere_aprobacion = true,
       usa_sedes = true,
+      confirm_duplicate = false,
     } = body;
 
     if (!odoo_partner_id) {
@@ -401,6 +403,31 @@ export async function POST(request: NextRequest) {
         aviso_comercial: syncExistente.aviso,
         mensaje: 'Empresa ya importada. Se sincronizó comercial y asignación de asesor.',
       });
+    }
+
+    // Detectar duplicados por NIT normalizado o nombre antes de crear.
+    // Esto previene casos como dos empresas con el mismo NIT (con/sin DV) o
+    // el mismo nombre normalizado pero distinto odoo_partner_id.
+    if (!confirm_duplicate) {
+      const duplicates = await findEmpresaDuplicates(supabaseAdmin, {
+        nit: nitEmpresa,
+        nombre: nombreEmpresa || nombre || '',
+        excludeOdooPartnerId: odooPartnerId,
+      });
+
+      if (duplicates.length > 0) {
+        return NextResponse.json(
+          {
+            error: 'Posible duplicado detectado',
+            duplicate_candidates: duplicates,
+            mensaje:
+              'Se encontró al menos una empresa existente con NIT o nombre equivalente. ' +
+              'Revisa los candidatos y, si realmente deseas crear un registro nuevo, ' +
+              'reenvía la solicitud con confirm_duplicate=true.',
+          },
+          { status: 409 }
+        );
+      }
     }
 
     // Crear empresa
