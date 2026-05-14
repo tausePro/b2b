@@ -4,12 +4,14 @@ import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import {
   authenticate,
   getCategoriasProducto,
+  getTemplateCostInfoFromVariants,
   read,
   searchCount,
   searchRead,
   type OdooCategory,
   type OdooProduct,
   type OdooSession,
+  type TemplateCostInfo,
 } from '@/lib/odoo/client';
 import { getServerOdooConfig } from '@/lib/odoo/serverConfig';
 import {
@@ -17,6 +19,10 @@ import {
   getEffectiveMargin,
   type PricingContext,
 } from '@/lib/pricing/margins';
+import {
+  getCostStaleness,
+  markupOnCost,
+} from '@/lib/pricing/cost-staleness';
 
 export const EMPAQUES_DEFAULT_LIMIT = 24;
 export const EMPAQUES_MAX_LIMIT = 48;
@@ -43,6 +49,7 @@ const PRODUCT_FIELDS = [
   'default_code',
   'product_variant_count',
   'attribute_line_ids',
+  'write_date',
 ];
 
 interface EmpaquesStorefrontContext {
@@ -95,6 +102,19 @@ export interface EmpaquesCatalogProduct {
   price: number | null;
   pricing_source: EmpaquesPricingSource;
   requiere_precio_manual: boolean;
+  /**
+   * Información sensible solo disponible cuando getEmpaquesCatalogData se
+   * invoca con includeCostInfo=true (admin: super_admin / direccion).
+   * Para roles editor_contenido o storefront público estos campos van como
+   * undefined y no deben renderizarse.
+   */
+  standard_price?: number;
+  write_date?: string | null;
+  dias_desde_actualizacion?: number | null;
+  costo_desactualizado?: boolean | null;
+  markup_porcentaje?: number | null;
+  variantes_divergentes?: boolean;
+  variantes_consideradas?: number;
 }
 
 export interface EmpaquesCatalogData {
@@ -150,6 +170,12 @@ interface EmpaquesCatalogInput {
   limit?: number;
   page?: number;
   search?: string | null;
+  /**
+   * Si es true, se incluyen los campos sensibles (standard_price, write_date,
+   * markup_porcentaje, dias_desde_actualizacion, costo_desactualizado) en cada
+   * producto. Reservado para admins (super_admin / direccion).
+   */
+  includeCostInfo?: boolean;
 }
 
 interface CategoryTreeData {
@@ -628,14 +654,15 @@ function resolveEmpaquesPrice(ctx: PricingContext, product: OdooProduct): Pick<E
 function mapProduct(
   product: OdooProduct,
   pricingCtx: PricingContext,
-  editorialCtx: StorefrontEditorialContext
+  editorialCtx: StorefrontEditorialContext,
+  options: { includeCostInfo?: boolean; variantInfo?: TemplateCostInfo } = {}
 ): EmpaquesCatalogProduct {
   const pricing = resolveEmpaquesPrice(pricingCtx, product);
   const override = editorialCtx.products.get(product.id);
   const name = override?.nombre_publico?.trim() || product.name;
   const description = override?.descripcion_corta?.trim() || (typeof product.description_sale === 'string' ? product.description_sale : false);
 
-  return {
+  const base: EmpaquesCatalogProduct = {
     id: product.id,
     name,
     slug: override?.slug?.trim() || slugify(name),
@@ -653,6 +680,28 @@ function mapProduct(
     seo_description: override?.seo_description?.trim() || null,
     ...pricing,
   };
+
+  if (options.includeCostInfo) {
+    // Preferir datos de variantes cuando estén disponibles. El write_date del
+    // product.template se contamina con barridos masivos de Odoo y por eso no
+    // sirve como proxy de "antigüedad real del costo".
+    const variantInfo = options.variantInfo;
+    const costoEfectivo = variantInfo?.costo_efectivo
+      ?? (typeof product.standard_price === 'number' ? product.standard_price : 0);
+    const fechaEfectiva = variantInfo?.fecha_costo_efectivo
+      ?? (typeof product.write_date === 'string' ? product.write_date : null);
+    const staleness = getCostStaleness(fechaEfectiva);
+
+    base.standard_price = costoEfectivo;
+    base.write_date = fechaEfectiva;
+    base.dias_desde_actualizacion = staleness.dias;
+    base.costo_desactualizado = staleness.desactualizado;
+    base.markup_porcentaje = markupOnCost(base.price, costoEfectivo);
+    base.variantes_divergentes = variantInfo?.variantes_divergentes ?? false;
+    base.variantes_consideradas = variantInfo?.variantes_consideradas ?? 0;
+  }
+
+  return base;
 }
 
 async function getEmpaquesStorefront(options: { includeInactive?: boolean } = {}): Promise<EmpaquesStorefrontContext> {
@@ -690,6 +739,27 @@ async function getEmpaquesStorefront(options: { includeInactive?: boolean } = {}
     excludedCategoryIds: asNumberArray(config.odoo_excluded_category_ids, EXCLUDED_CATEGORY_IDS),
     pricelistId,
   };
+}
+
+/**
+ * Wrapper exportado que carga el contexto de pricing de un storefront solo
+ * con su id. Resuelve internamente `modo_pricing` consultando Supabase.
+ *
+ * Devuelve null si el storefront no existe. Útil para endpoints externos
+ * que reciben `storefront_id` como query param y necesitan pricing.
+ */
+export async function loadStorefrontPricingContextById(storefrontId: string): Promise<PricingContext | null> {
+  const admin = getSupabaseAdmin();
+  const { data, error } = await admin
+    .from('storefront_configs')
+    .select('modo_pricing')
+    .eq('id', storefrontId)
+    .maybeSingle();
+
+  if (error || !data) return null;
+
+  const modoPricing = (data.modo_pricing as EmpaquesStorefrontContext['modoPricing']) ?? 'costo_margen';
+  return loadStorefrontPricingContext(storefrontId, modoPricing);
 }
 
 async function loadStorefrontPricingContext(storefrontId: string, modoPricing: EmpaquesStorefrontContext['modoPricing']): Promise<PricingContext> {
@@ -853,6 +923,33 @@ export async function getEmpaquesCatalogData(input: EmpaquesCatalogInput = {}): 
     searchCount('product.template', domain, session),
   ]);
 
+  const productosTyped = productos as unknown as OdooProduct[];
+  const includeCostInfo = input.includeCostInfo === true;
+
+  // Cargar info real de costo desde variantes (un solo searchRead por página)
+  // únicamente cuando el caller pidió info sensible. Esto evita el sesgo del
+  // write_date masivo de product.template y permite detectar variantes con
+  // costos divergentes (señal de variante desactualizada).
+  //
+  // OPTIMIZACIÓN: solo enriquecemos templates con product_variant_count > 1
+  // para no sobrecargar Odoo en páginas con muchos productos sin variantes.
+  let costInfoByTemplate: Map<number, TemplateCostInfo> | null = null;
+  if (includeCostInfo && productosTyped.length > 0) {
+    const templateIdsConVariantes = productosTyped
+      .filter((p) => Number(p.product_variant_count ?? 1) > 1)
+      .map((p) => p.id);
+    if (templateIdsConVariantes.length > 0) {
+      try {
+        costInfoByTemplate = await getTemplateCostInfoFromVariants(
+          session,
+          templateIdsConVariantes
+        );
+      } catch (variantErr) {
+        console.warn('[empaques/catalogo] No se pudo enriquecer con variantes:', variantErr);
+      }
+    }
+  }
+
   return {
     query: {
       search: rawSearch,
@@ -862,7 +959,12 @@ export async function getEmpaquesCatalogData(input: EmpaquesCatalogInput = {}): 
     },
     storefront,
     categories: categoryTree.categories,
-    productos: (productos as unknown as OdooProduct[]).map((product) => mapProduct(product, pricingCtx, editorialCtx)),
+    productos: productosTyped.map((product) =>
+      mapProduct(product, pricingCtx, editorialCtx, {
+        includeCostInfo,
+        variantInfo: costInfoByTemplate?.get(product.id),
+      })
+    ),
     total,
     totalPages: total > 0 ? Math.ceil(total / limit) : 0,
     selectedCategory,
