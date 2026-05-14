@@ -4,8 +4,10 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
   AlertCircle,
+  AlertTriangle,
   ArrowUpRight,
   CheckCircle2,
+  Layers,
   Loader2,
   Package,
   Percent,
@@ -14,6 +16,8 @@ import {
   Settings,
   Trash2,
 } from 'lucide-react';
+import { formatMarkupPercent } from '@/lib/pricing/cost-staleness';
+import { VariantsModal } from '@/components/admin/VariantsModal';
 
 type TabId = 'configuracion' | 'margenes' | 'precios' | 'editorial';
 type PublicationState = 'borrador' | 'publicado';
@@ -52,6 +56,18 @@ interface CatalogProduct {
   price: number | null;
   pricing_source: 'override' | 'costo_margen' | 'manual_pendiente';
   requiere_precio_manual: boolean;
+  product_variant_count: number;
+  /**
+   * Campos sensibles enviados solo cuando el rol del actor es super_admin o
+   * direccion. Para editor_contenido vienen como undefined.
+   */
+  standard_price?: number;
+  write_date?: string | null;
+  dias_desde_actualizacion?: number | null;
+  costo_desactualizado?: boolean | null;
+  markup_porcentaje?: number | null;
+  variantes_divergentes?: boolean;
+  variantes_consideradas?: number;
 }
 
 interface CatalogResponse {
@@ -220,6 +236,7 @@ export default function AdminEmpaquesPage() {
   const [savingMargin, setSavingMargin] = useState(false);
   const [savingPriceId, setSavingPriceId] = useState<number | null>(null);
   const [savingEditorial, setSavingEditorial] = useState(false);
+  const [variantsModal, setVariantsModal] = useState<{ templateId: number; productName: string; fallbackPrice?: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -601,6 +618,7 @@ export default function AdminEmpaquesPage() {
   ];
 
   return (
+    <>
     <div className="max-w-6xl space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
@@ -863,18 +881,103 @@ export default function AdminEmpaquesPage() {
                 const draftValue = priceDrafts[product.id] ?? String(override?.precio_override ?? product.price ?? '');
                 const saving = savingPriceId === product.id;
 
+                const canSeeCost = product.standard_price !== undefined;
+                const costStale = canSeeCost && product.costo_desactualizado === true;
+                const markupValue = product.markup_porcentaje;
+                const markupColor =
+                  typeof markupValue !== 'number'
+                    ? 'text-slate-400'
+                    : markupValue < 0
+                      ? 'text-red-600 font-bold'
+                      : markupValue < 10
+                        ? 'text-amber-600'
+                        : 'text-emerald-600';
+
                 return (
-                  <div key={product.id} className="grid gap-4 px-6 py-4 lg:grid-cols-[1fr_180px_280px] lg:items-center">
+                  <div key={product.id} className="grid gap-4 px-6 py-4 lg:grid-cols-[1fr_220px_280px] lg:items-center">
                     <div>
-                      <p className="font-semibold text-slate-900">{product.name}</p>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="font-semibold text-slate-900">{product.name}</p>
+                        {product.product_variant_count > 1 && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setVariantsModal({
+                                templateId: product.id,
+                                productName: product.name,
+                                fallbackPrice: product.price ?? undefined,
+                              })
+                            }
+                            className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/5 px-2 py-0.5 text-[10px] font-semibold text-primary hover:bg-primary/10 transition-colors"
+                            title="Ver variantes con costo, markup y antigüedad por variante"
+                          >
+                            <Layers className="h-3 w-3" />
+                            {product.product_variant_count} variantes
+                          </button>
+                        )}
+                      </div>
                       <p className="mt-1 text-xs text-slate-500">
                         {product.default_code ? `${product.default_code} · ` : ''}{product.categ_id ? product.categ_id[1] : 'Sin categoría'}
                       </p>
                     </div>
                     <div>
-                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Precio actual</p>
+                      <div className="flex items-baseline gap-2 flex-wrap">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Precio</p>
+                        {canSeeCost && typeof markupValue === 'number' && (
+                          <span
+                            className={`text-xs font-bold ${markupColor}`}
+                            title={
+                              markupValue < 0
+                                ? 'Estás vendiendo a pérdida (precio menor al costo).'
+                                : 'Margen sobre el costo de Odoo: (precio − costo) / costo.'
+                            }
+                          >
+                            {markupValue < 0 && <AlertTriangle className="inline h-3 w-3 mr-0.5 -mt-0.5" />}
+                            {formatMarkupPercent(markupValue)}
+                          </span>
+                        )}
+                      </div>
                       <p className="font-bold text-slate-900">{product.price === null ? 'Pendiente' : currencyFormatter.format(product.price)}</p>
                       <p className="text-xs text-slate-500">{product.pricing_source === 'override' ? 'Manual' : product.pricing_source === 'costo_margen' ? 'Costo + margen' : 'Pendiente manual'}</p>
+                      {canSeeCost && (
+                        <div className="mt-1.5 flex items-center gap-1.5 text-xs">
+                          <span
+                            className={costStale ? 'text-red-600 font-semibold' : 'text-slate-500'}
+                            title={
+                              costStale
+                                ? 'El producto no se actualiza en Odoo desde hace más de 30 días. El costo podría estar desactualizado.'
+                                : product.variantes_consideradas && product.variantes_consideradas > 1
+                                  ? `Costo más alto entre ${product.variantes_consideradas} variantes activas (proxy del costo real más reciente).`
+                                  : 'Costo registrado en Odoo (standard_price).'
+                            }
+                          >
+                            Costo: {currencyFormatter.format(product.standard_price ?? 0)}
+                          </span>
+                          {product.variantes_divergentes && (
+                            <span
+                              className="inline-flex items-center text-amber-600"
+                              title="Las variantes activas tienen costos muy distintos entre sí. Es posible que alguna variante tenga el costo desactualizado en Odoo. Revisa el producto."
+                            >
+                              <AlertTriangle className="h-3 w-3" />
+                            </span>
+                          )}
+                          {typeof product.dias_desde_actualizacion === 'number' && (
+                            <span
+                              className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
+                                costStale
+                                  ? 'bg-red-100 text-red-700'
+                                  : 'bg-emerald-50 text-emerald-700'
+                              }`}
+                              title="Días desde la última escritura sobre cualquier variante activa del producto en Odoo. Es proxy de antigüedad del costo: si nadie movió la variante en mucho tiempo (compra, ajuste, recosteo), el costo podría estar viejo."
+                            >
+                              {costStale && <AlertTriangle className="h-2.5 w-2.5" />}
+                              {product.dias_desde_actualizacion === 0
+                                ? 'hoy'
+                                : `${product.dias_desde_actualizacion}d`}
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
                     <div className="flex items-center gap-2">
                       <input
@@ -1189,5 +1292,17 @@ export default function AdminEmpaquesPage() {
         </div>
       )}
     </div>
+
+    {variantsModal && (
+      <VariantsModal
+        templateId={variantsModal.templateId}
+        productName={variantsModal.productName}
+        fallbackPrice={variantsModal.fallbackPrice}
+        storefrontId={storefront?.id}
+        open={Boolean(variantsModal)}
+        onClose={() => setVariantsModal(null)}
+      />
+    )}
+    </>
   );
 }

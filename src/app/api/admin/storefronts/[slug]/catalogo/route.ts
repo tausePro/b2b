@@ -18,6 +18,8 @@ function parsePositiveInteger(value: string | null) {
   return parsed;
 }
 
+const COST_VISIBLE_ROLES = new Set(['super_admin', 'direccion']);
+
 export async function GET(
   request: NextRequest,
   context: { params: Promise<{ slug: string }> }
@@ -40,12 +42,15 @@ export async function GET(
       ? Math.min(requestedLimit, EMPAQUES_MAX_LIMIT)
       : EMPAQUES_DEFAULT_LIMIT;
 
+    const includeCostInfo = COST_VISIBLE_ROLES.has(auth.actor.rol);
+
     const data = await getEmpaquesCatalogData({
       search,
       categoryId,
       limit,
       page,
       includeInactive: true,
+      includeCostInfo,
     });
 
     return NextResponse.json({

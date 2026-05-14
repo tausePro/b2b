@@ -463,6 +463,12 @@ export interface OdooProduct {
   default_code: string | false;
   product_variant_count?: number;
   attribute_line_ids?: number[];
+  /**
+   * Fecha ISO de la última escritura sobre el registro en Odoo
+   * (cualquier campo). Útil como proxy para detectar costos
+   * potencialmente desactualizados.
+   */
+  write_date?: string | false;
 }
 
 export interface OdooProductVariant {
@@ -475,6 +481,7 @@ export interface OdooProductVariant {
   standard_price: number;
   product_template_attribute_value_ids: number[];
   active: boolean;
+  write_date?: string | false;
 }
 
 export interface OdooAttributeValue {
@@ -741,7 +748,7 @@ export async function getClientes(
 const PRODUCT_TEMPLATE_FIELDS = [
   'id', 'name', 'description_sale', 'list_price', 'standard_price', 'uom_name', 'categ_id',
   'product_tag_ids', 'active', 'sale_ok', 'image_128', 'default_code',
-  'product_variant_count', 'attribute_line_ids',
+  'product_variant_count', 'attribute_line_ids', 'write_date',
 ];
 
 export interface ProductVariantsResult {
@@ -809,11 +816,483 @@ export async function getProductVariants(
   const variants = await searchRead(
     'product.product',
     [['product_tmpl_id', '=', templateId], ['active', '=', true]],
-    ['id', 'name', 'product_tmpl_id', 'default_code', 'image_128', 'lst_price', 'standard_price', 'product_template_attribute_value_ids', 'active'],
+    ['id', 'name', 'product_tmpl_id', 'default_code', 'image_128', 'lst_price', 'standard_price', 'product_template_attribute_value_ids', 'active', 'write_date'],
     { order: 'name asc', session }
   ) as unknown as OdooProductVariant[];
 
   return { variants, attributes };
+}
+
+export interface TemplateCostInfo {
+  /**
+   * Costo efectivo del template. Prioridad:
+   *   1. price_unit de la última operación de compra (factura > orden) entre
+   *      las variantes activas del template.
+   *   2. Fallback: max(standard_price) entre variantes con standard_price > 0.
+   */
+  costo_efectivo: number;
+  /**
+   * Fecha ISO asociada al costo_efectivo:
+   *   - Si vino de una compra: fecha del documento (YYYY-MM-DD).
+   *   - Si vino del fallback: write_date más reciente de las variantes.
+   */
+  fecha_costo_efectivo: string | null;
+  /** Fuente del costo efectivo. */
+  costo_source: 'invoice' | 'order' | 'standard_price';
+  /** Costos de variantes considerados (sin duplicar, ordenados desc). Para debug. */
+  costos_variantes: number[];
+  /** true si la variante con costo máximo y la mínima difieren > 50% (señal de variante desactualizada). */
+  variantes_divergentes: boolean;
+  /** Número de variantes activas consideradas. */
+  variantes_consideradas: number;
+}
+
+/**
+ * Tope superior de templates a enriquecer en una sola llamada. Si se supera
+ * este número, getTemplateCostInfoFromVariants retorna un Map vacío y el
+ * caller cae al fallback (write_date del product.template). Esto protege a
+ * Odoo de queries masivas sobre product.product que han llegado a tumbar la
+ * conexión psycopg2.
+ */
+const MAX_ENRICH_TEMPLATES = 100;
+
+/**
+ * Tamaño de chunk para batchear el searchRead sobre product.product. Cada
+ * chunk se ejecuta en serie para no abrir muchas sesiones concurrentes en
+ * Odoo. Con chunk_size=25 y MAX_ENRICH_TEMPLATES=100 nunca pasamos de 4
+ * round-trips por página.
+ */
+const ENRICH_CHUNK_SIZE = 25;
+
+/**
+ * Para un conjunto de product.template IDs, lee sus variantes activas
+ * (product.product) y resuelve, por template:
+ *
+ *   - el costo efectivo: max(standard_price) de variantes con standard_price > 0.
+ *     Convención: la variante con costo más alto refleja la última compra real.
+ *     Las variantes con costo viejo suelen quedar más bajas por inflación.
+ *   - la fecha efectiva: max(write_date) entre esas mismas variantes. Refleja
+ *     cuándo se modificó realmente algo a nivel variante, sin contaminarse con
+ *     barridos masivos sobre product.template (que actualizan write_date a
+ *     todo el catálogo de golpe).
+ *   - flag de divergencia: si max(standard_price) / min(standard_price) > 1.5
+ *     entre variantes consideradas, marca variantes_divergentes=true para
+ *     señalar que probablemente hay una variante con costo desactualizado.
+ *
+ * Si un template no tiene variantes con costo > 0, no aparece en el Map y el
+ * caller debe usar el costo/write_date del template como fallback.
+ *
+ * Estrategia de carga (defensiva contra saturación de Odoo):
+ *   1. Si templateIds.length > MAX_ENRICH_TEMPLATES, retornamos Map vacío sin
+ *      consultar Odoo.
+ *   2. Procesamos en chunks de ENRICH_CHUNK_SIZE en serie.
+ *   3. Si un chunk falla (timeout, conexión cerrada), seguimos con los demás
+ *      mediante allSettled — preferimos info parcial sobre tirar la página.
+ */
+export async function getTemplateCostInfoFromVariants(
+  session: OdooSession,
+  templateIds: number[]
+): Promise<Map<number, TemplateCostInfo>> {
+  const result = new Map<number, TemplateCostInfo>();
+  if (!templateIds.length) return result;
+
+  // Deduplicar para no enviar IDs repetidos a Odoo.
+  const uniqueIds = Array.from(new Set(templateIds));
+
+  // Cap duro: si hay demasiados templates, mejor caemos al fallback.
+  if (uniqueIds.length > MAX_ENRICH_TEMPLATES) {
+    console.warn(
+      `[getTemplateCostInfoFromVariants] Skip enrich: ${uniqueIds.length} templates exceden el cap (${MAX_ENRICH_TEMPLATES}). Caer al fallback de write_date del template.`
+    );
+    return result;
+  }
+
+  // Trocear en chunks para no enviar dominios gigantes a Odoo.
+  const chunks: number[][] = [];
+  for (let i = 0; i < uniqueIds.length; i += ENRICH_CHUNK_SIZE) {
+    chunks.push(uniqueIds.slice(i, i + ENRICH_CHUNK_SIZE));
+  }
+
+  type VariantRow = {
+    id: number;
+    product_tmpl_id: [number, string] | false;
+    standard_price: number;
+    write_date: string | false;
+  };
+
+  const variants: VariantRow[] = [];
+  for (const chunk of chunks) {
+    try {
+      const rows = (await searchRead(
+        'product.product',
+        [
+          ['product_tmpl_id', 'in', chunk],
+          ['active', '=', true],
+        ],
+        ['id', 'product_tmpl_id', 'standard_price', 'write_date'],
+        { session }
+      )) as unknown as VariantRow[];
+      variants.push(...rows);
+    } catch (chunkErr) {
+      // Toleramos fallos parciales: seguimos con los demás chunks. La info
+      // que falte se llenará con el fallback en el caller.
+      console.warn(
+        `[getTemplateCostInfoFromVariants] Chunk falló (${chunk.length} ids):`,
+        chunkErr instanceof Error ? chunkErr.message : chunkErr
+      );
+    }
+  }
+
+  // Para resolver el costo "real", consultamos en paralelo el historial de
+  // compras de TODAS las variantes activas que encontramos. Esto reemplaza
+  // el comportamiento histórico que tomaba max(standard_price) — el
+  // standard_price es un promedio AVCO/FIFO que NO refleja el último precio
+  // pagado al proveedor.
+  const variantIds = variants.map((v) => v.id);
+  let lastPurchaseByVariant: Map<number, LastPurchaseCost> = new Map();
+  if (variantIds.length > 0) {
+    try {
+      lastPurchaseByVariant = await getLastPurchaseCostByVariants(session, variantIds, {
+        // El cap original (100) es por templates. Como cada template puede
+        // tener varias variantes, ampliamos a 1500 para cubrir páginas grandes
+        // sin saltar al "skip enrich".
+        maxVariants: MAX_ENRICH_TEMPLATES * 15,
+      });
+    } catch (err) {
+      console.warn(
+        '[getTemplateCostInfoFromVariants] No se pudo cargar historial de compras:',
+        err instanceof Error ? err.message : err
+      );
+    }
+  }
+
+  // Agrupar variantes por templateId conservando standard_price (fallback) y
+  // su última compra (preferida).
+  type VariantAggregate = {
+    variantId: number;
+    standardPrice: number;
+    writeDate: string | null;
+    purchase: LastPurchaseCost | null;
+  };
+  const byTemplate = new Map<number, VariantAggregate[]>();
+  for (const v of variants) {
+    const tmplId = Array.isArray(v.product_tmpl_id) ? v.product_tmpl_id[0] : null;
+    if (!tmplId) continue;
+    const list = byTemplate.get(tmplId) ?? [];
+    list.push({
+      variantId: v.id,
+      standardPrice: typeof v.standard_price === 'number' ? v.standard_price : 0,
+      writeDate: typeof v.write_date === 'string' ? v.write_date : null,
+      purchase: lastPurchaseByVariant.get(v.id) ?? null,
+    });
+    byTemplate.set(tmplId, list);
+  }
+
+  for (const [tmplId, list] of byTemplate.entries()) {
+    if (list.length === 0) continue;
+
+    // Estrategia A: si alguna variante tiene historial de compra, el costo
+    // efectivo del template es el price_unit de la variante con la fecha de
+    // compra MÁS RECIENTE. Refleja "qué tan actualizado está mi costo de
+    // referencia para este producto".
+    const conCompra = list.filter((v) => v.purchase !== null) as Array<
+      VariantAggregate & { purchase: LastPurchaseCost }
+    >;
+    if (conCompra.length > 0) {
+      conCompra.sort((a, b) => b.purchase.date.localeCompare(a.purchase.date));
+      const pick = conCompra[0];
+      const costos = conCompra.map((v) => v.purchase.price_unit);
+      const maxCosto = Math.max(...costos);
+      const minCosto = Math.min(...costos);
+      const variantes_divergentes = costos.length > 1 && minCosto > 0 && maxCosto / minCosto > 1.5;
+      const costosUnicos = Array.from(new Set(costos)).sort((a, b) => b - a);
+
+      result.set(tmplId, {
+        costo_efectivo: pick.purchase.price_unit,
+        fecha_costo_efectivo: pick.purchase.date,
+        costo_source: pick.purchase.source,
+        costos_variantes: costosUnicos,
+        variantes_divergentes,
+        variantes_consideradas: conCompra.length,
+      });
+      continue;
+    }
+
+    // Estrategia B (fallback): sin historial de compras, usar el max
+    // standard_price entre variantes con costo > 0 (comportamiento previo).
+    const conCosto = list.filter((v) => v.standardPrice > 0);
+    if (conCosto.length === 0) continue;
+
+    const costos = conCosto.map((v) => v.standardPrice);
+    const maxCosto = Math.max(...costos);
+    const minCosto = Math.min(...costos);
+    const variantes_divergentes = conCosto.length > 1 && minCosto > 0 && maxCosto / minCosto > 1.5;
+
+    let fechaMax: string | null = null;
+    for (const v of conCosto) {
+      if (!v.writeDate) continue;
+      if (!fechaMax || v.writeDate > fechaMax) {
+        fechaMax = v.writeDate;
+      }
+    }
+
+    const costosUnicos = Array.from(new Set(costos)).sort((a, b) => b - a);
+
+    result.set(tmplId, {
+      costo_efectivo: maxCosto,
+      fecha_costo_efectivo: fechaMax,
+      costo_source: 'standard_price',
+      costos_variantes: costosUnicos,
+      variantes_divergentes,
+      variantes_consideradas: conCosto.length,
+    });
+  }
+
+  return result;
+}
+
+/**
+ * Costo "real" derivado de la última compra registrada para una variante.
+ *
+ * Una variante puede tener varias fuentes de costo:
+ *   - `standard_price` (campo "Costo" en Odoo): promedio AVCO/FIFO calculado.
+ *     NO refleja el último precio pagado; va suavizando con cada recepción.
+ *   - Última `purchase.order.line` confirmada (precio negociado).
+ *   - Última `account.move.line` posted de factura de proveedor (precio
+ *     realmente facturado, puede incluir ajustes).
+ *
+ * Para decisiones comerciales (markup, descuentos, alertas) es más fiel el
+ * precio real de la última compra. Esta función consulta ambas fuentes y se
+ * queda con la más reciente por variante.
+ */
+export interface LastPurchaseCost {
+  /** ID de la variante (product.product.id). */
+  variant_id: number;
+  /** Precio unitario de la última compra (sin IVA, en moneda de la operación). */
+  price_unit: number;
+  /** Fecha de la operación (YYYY-MM-DD). */
+  date: string;
+  /** Fuente del dato. */
+  source: 'invoice' | 'order';
+  /** Proveedor (res.partner). */
+  partner_id: number | null;
+  partner_name: string | null;
+  /** Moneda de la operación (puede no ser COP en compras importadas). */
+  currency: string | null;
+  /** Cantidad de la línea, por si el usuario quiere validar contexto. */
+  quantity: number;
+  /** Referencia humana del documento (ej: FACTU/2026/05/0103 o P28047). */
+  document_ref: string | null;
+}
+
+/**
+ * Para un conjunto de IDs de variante (product.product), consulta en paralelo:
+ *   - account.move.line (facturas de proveedor posted)
+ *   - purchase.order.line (órdenes de compra confirmadas: state in purchase|done)
+ *
+ * y devuelve, por variante, el evento con fecha más reciente.
+ *
+ * Defensivo igual que getTemplateCostInfoFromVariants:
+ *   - Si variantIds excede MAX_ENRICH_TEMPLATES, devuelve Map vacío.
+ *   - Procesa en chunks de ENRICH_CHUNK_SIZE en serie.
+ *   - Filtra por fecha (últimos N años) para acotar volumen.
+ *   - Tolera fallos parciales.
+ */
+export async function getLastPurchaseCostByVariants(
+  session: OdooSession,
+  variantIds: number[],
+  options: { lookbackYears?: number; maxVariants?: number } = {}
+): Promise<Map<number, LastPurchaseCost>> {
+  const result = new Map<number, LastPurchaseCost>();
+  if (!variantIds.length) return result;
+
+  const uniqueIds = Array.from(new Set(variantIds));
+  // Por defecto reutilizamos MAX_ENRICH_TEMPLATES (100), pero el caller puede
+  // ampliarlo cuando ya viene acotado por número de templates (ej: 100
+  // templates × 10 variantes = 1000 variantes posibles).
+  const maxVariants = options.maxVariants ?? MAX_ENRICH_TEMPLATES;
+  if (uniqueIds.length > maxVariants) {
+    console.warn(
+      `[getLastPurchaseCostByVariants] Skip enrich: ${uniqueIds.length} variantes exceden el cap (${maxVariants}).`
+    );
+    return result;
+  }
+
+  // Lookback configurable. Por defecto 3 años — suficiente para detectar
+  // productos sin movimiento reciente sin traer histórico antiguo.
+  const lookbackYears = options.lookbackYears ?? 3;
+  const cutoffDate = new Date();
+  cutoffDate.setFullYear(cutoffDate.getFullYear() - lookbackYears);
+  const cutoff = cutoffDate.toISOString().slice(0, 10);
+
+  const chunks: number[][] = [];
+  for (let i = 0; i < uniqueIds.length; i += ENRICH_CHUNK_SIZE) {
+    chunks.push(uniqueIds.slice(i, i + ENRICH_CHUNK_SIZE));
+  }
+
+  type InvoiceLineRow = {
+    id: number;
+    product_id: [number, string] | false;
+    price_unit: number;
+    date: string | false;
+    move_id: [number, string] | false;
+    partner_id: [number, string] | false;
+    currency_id: [number, string] | false;
+    quantity: number;
+  };
+
+  type OrderLineRow = {
+    id: number;
+    product_id: [number, string] | false;
+    price_unit: number;
+    date_order: string | false;
+    order_id: [number, string] | false;
+    partner_id: [number, string] | false;
+    currency_id: [number, string] | false;
+    product_qty: number;
+    state: string;
+  };
+
+  const invoiceByVariant = new Map<number, InvoiceLineRow>();
+  const orderByVariant = new Map<number, OrderLineRow>();
+
+  for (const chunk of chunks) {
+    // Facturas de proveedor posted.
+    try {
+      const rows = (await searchRead(
+        'account.move.line',
+        [
+          ['product_id', 'in', chunk],
+          ['parent_state', '=', 'posted'],
+          ['move_id.move_type', '=', 'in_invoice'],
+          ['price_unit', '>', 0],
+          ['date', '>=', cutoff],
+        ],
+        ['id', 'product_id', 'price_unit', 'date', 'move_id', 'partner_id', 'currency_id', 'quantity'],
+        { order: 'date desc, id desc', session }
+      )) as unknown as InvoiceLineRow[];
+      for (const row of rows) {
+        const pid = Array.isArray(row.product_id) ? row.product_id[0] : null;
+        if (!pid) continue;
+        // searchRead viene ordenado desc → la primera ocurrencia es la más reciente.
+        if (!invoiceByVariant.has(pid)) {
+          invoiceByVariant.set(pid, row);
+        }
+      }
+    } catch (err) {
+      console.warn(
+        `[getLastPurchaseCostByVariants] invoice chunk falló (${chunk.length} ids):`,
+        err instanceof Error ? err.message : err
+      );
+    }
+
+    // Órdenes de compra confirmadas.
+    try {
+      const rows = (await searchRead(
+        'purchase.order.line',
+        [
+          ['product_id', 'in', chunk],
+          ['state', 'in', ['purchase', 'done']],
+          ['price_unit', '>', 0],
+          ['date_order', '>=', cutoff],
+        ],
+        ['id', 'product_id', 'price_unit', 'date_order', 'order_id', 'partner_id', 'currency_id', 'product_qty', 'state'],
+        { order: 'date_order desc, id desc', session }
+      )) as unknown as OrderLineRow[];
+      for (const row of rows) {
+        const pid = Array.isArray(row.product_id) ? row.product_id[0] : null;
+        if (!pid) continue;
+        if (!orderByVariant.has(pid)) {
+          orderByVariant.set(pid, row);
+        }
+      }
+    } catch (err) {
+      console.warn(
+        `[getLastPurchaseCostByVariants] order chunk falló (${chunk.length} ids):`,
+        err instanceof Error ? err.message : err
+      );
+    }
+  }
+
+  // Resolver "más reciente" por variante.
+  for (const pid of uniqueIds) {
+    const inv = invoiceByVariant.get(pid);
+    const ord = orderByVariant.get(pid);
+
+    // Normalizar fechas a YYYY-MM-DD para comparar lexicográficamente.
+    const invDate = inv && typeof inv.date === 'string' ? inv.date.slice(0, 10) : null;
+    const ordDate = ord && typeof ord.date_order === 'string' ? ord.date_order.slice(0, 10) : null;
+
+    let pick:
+      | {
+          source: 'invoice' | 'order';
+          price: number;
+          date: string;
+          partner: [number, string] | false;
+          currency: [number, string] | false;
+          quantity: number;
+          docRef: [number, string] | false;
+        }
+      | null = null;
+
+    if (invDate && ordDate) {
+      pick = invDate >= ordDate
+        ? {
+            source: 'invoice',
+            price: inv!.price_unit,
+            date: invDate,
+            partner: inv!.partner_id,
+            currency: inv!.currency_id,
+            quantity: inv!.quantity,
+            docRef: inv!.move_id,
+          }
+        : {
+            source: 'order',
+            price: ord!.price_unit,
+            date: ordDate,
+            partner: ord!.partner_id,
+            currency: ord!.currency_id,
+            quantity: ord!.product_qty,
+            docRef: ord!.order_id,
+          };
+    } else if (invDate) {
+      pick = {
+        source: 'invoice',
+        price: inv!.price_unit,
+        date: invDate,
+        partner: inv!.partner_id,
+        currency: inv!.currency_id,
+        quantity: inv!.quantity,
+        docRef: inv!.move_id,
+      };
+    } else if (ordDate) {
+      pick = {
+        source: 'order',
+        price: ord!.price_unit,
+        date: ordDate,
+        partner: ord!.partner_id,
+        currency: ord!.currency_id,
+        quantity: ord!.product_qty,
+        docRef: ord!.order_id,
+      };
+    }
+
+    if (pick) {
+      result.set(pid, {
+        variant_id: pid,
+        price_unit: pick.price,
+        date: pick.date,
+        source: pick.source,
+        partner_id: Array.isArray(pick.partner) ? pick.partner[0] : null,
+        partner_name: Array.isArray(pick.partner) ? pick.partner[1] : null,
+        currency: Array.isArray(pick.currency) ? pick.currency[1] : null,
+        quantity: pick.quantity,
+        document_ref: Array.isArray(pick.docRef) ? pick.docRef[1] : null,
+      });
+    }
+  }
+
+  return result;
 }
 
 export async function getProductos(

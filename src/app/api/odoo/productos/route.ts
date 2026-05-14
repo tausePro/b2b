@@ -6,12 +6,23 @@ import {
   getProductos,
   getProductosByPricelist,
   getEtiquetasProducto,
+  getTemplateCostInfoFromVariants,
   read,
+  type TemplateCostInfo,
 } from '@/lib/odoo/client';
 import type { OdooProduct } from '@/lib/odoo/client';
 import { getServerOdooConfig } from '@/lib/odoo/serverConfig';
 import { authorizeApiRoles, getAccessibleOdooPartnerIds } from '@/lib/auth/apiRouteGuards';
 import { loadPricingContext, resolveProductPrice, type PricingContext } from '@/lib/pricing/margins';
+import { getCostStaleness, markupOnCost } from '@/lib/pricing/cost-staleness';
+
+/**
+ * Roles que pueden ver costo, markup y antigüedad.
+ *   - super_admin / direccion: panel admin global.
+ *   - asesor: consume desde su vista comercial (Fase 2 agregará la pantalla).
+ * Se excluyen comprador y aprobador (usuarios del cliente) y editor_contenido.
+ */
+const COST_VISIBLE_ROLES = new Set(['super_admin', 'direccion', 'asesor']);
 
 const AUTHENTICATED_PRODUCT_ROLES = ['super_admin', 'direccion', 'asesor', 'comprador', 'aprobador'] as const;
 const AUTHENTICATED_MAX_LIMIT = 500;
@@ -73,15 +84,18 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    let actorRole: string | null = null;
+
     if (!publicCatalogRequest) {
       const authorized = await authorizeApiRoles(AUTHENTICATED_PRODUCT_ROLES);
       if (authorized instanceof NextResponse) {
         return authorized;
       }
 
-      const actorRole = authorized.actor.rol as (typeof AUTHENTICATED_PRODUCT_ROLES)[number];
+      actorRole = authorized.actor.rol;
+      const typedRole = authorized.actor.rol as (typeof AUTHENTICATED_PRODUCT_ROLES)[number];
 
-      if (!parsedPartnerId && (actorRole === 'comprador' || actorRole === 'aprobador')) {
+      if (!parsedPartnerId && (typedRole === 'comprador' || typedRole === 'aprobador')) {
         return NextResponse.json(
           {
             error: 'FORBIDDEN',
@@ -104,6 +118,8 @@ export async function GET(request: NextRequest) {
         }
       }
     }
+
+    const canSeeCost = actorRole !== null && COST_VISIBLE_ROLES.has(actorRole);
 
     const limit = normalizeLimit(
       searchParams.get('limit'),
@@ -236,15 +252,47 @@ export async function GET(request: NextRequest) {
       productos = await getProductos(session, { categIds: parsedCategIds, limit, offset, search });
     }
 
-    // Aplicar pricing (override > costo+margen > pricelist) si hay partner_id
-    if (pricingCtx && productos.length > 0) {
-      productos = applyPricing(productos, pricingCtx);
+    // Orden importante:
+    //   1) primero pedimos el costo efectivo por template (última compra
+    //      factura > orden, fallback a max(standard_price) de variantes).
+    //   2) recién luego aplicamos pricing, para que el modo 'costo+margen'
+    //      use ese costo efectivo y el markup mostrado sea coherente con
+    //      el modal de variantes.
+    //
+    // Si el rol no puede ver el costo (comprador/aprobador/editor_contenido),
+    // saltamos el paso 1 para no gastar requests a Odoo: el pricing seguirá
+    // usando standard_price del template (no se expone al cliente).
+    //
+    // El enrich está acotado por MAX_ENRICH_TEMPLATES (100) dentro de
+    // getTemplateCostInfoFromVariants. Si la página tiene más templates,
+    // esos caen al standard_price del template como fallback.
+    let costInfoByTemplate: Map<number, TemplateCostInfo> | null = null;
+    if (canSeeCost && productos.length > 0) {
+      try {
+        costInfoByTemplate = await getTemplateCostInfoFromVariants(
+          session,
+          productos.map((p) => p.id)
+        );
+      } catch (variantErr) {
+        console.warn('[API /odoo/productos] No se pudo enriquecer con variantes:', variantErr);
+      }
     }
+
+    // Aplicar pricing (override > costo+margen > pricelist) si hay partner_id.
+    // Pasamos costInfoByTemplate para que costo_margen use el costo real de
+    // la última compra en lugar del standard_price (AVCO/FIFO) del template.
+    if (pricingCtx && productos.length > 0) {
+      productos = applyPricing(productos, pricingCtx, costInfoByTemplate);
+    }
+
+    const productosTransformados = productos.map((producto) =>
+      transformProductForRole(producto, canSeeCost, costInfoByTemplate?.get(producto.id))
+    );
 
     if (includeTagNames) {
       const etiquetas = await getEtiquetasProducto(session);
       const etiquetasMap = new Map(etiquetas.map((tag) => [tag.id, tag.name]));
-      const productosConEtiquetas = productos.map((producto) => ({
+      const productosConEtiquetas = productosTransformados.map((producto) => ({
         ...producto,
         product_tags: (producto.product_tag_ids || []).map((tagId) => [tagId, etiquetasMap.get(tagId) || `Etiqueta ${tagId}`]),
       }));
@@ -257,7 +305,7 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    return NextResponse.json({ productos, total: productos.length, partner_context: partnerContext });
+    return NextResponse.json({ productos: productosTransformados, total: productosTransformados.length, partner_context: partnerContext });
   } catch (err) {
     console.error('[API /odoo/productos]', err);
     return NextResponse.json(
@@ -267,9 +315,82 @@ export async function GET(request: NextRequest) {
   }
 }
 
-function applyPricing(productos: OdooProduct[], ctx: PricingContext): OdooProduct[] {
-  return productos.map((producto) => ({
-    ...producto,
-    list_price: resolveProductPrice(ctx, producto),
-  }));
+/**
+ * Aplica el pricing al catálogo. Si recibimos `costInfoByTemplate`, sustituimos
+ * el `standard_price` del template por el costo efectivo (última compra real)
+ * SOLO para fines del cálculo de precio en modo costo+margen.
+ *
+ * Esto garantiza coherencia: el list_price mostrado al admin se calcula con
+ * el mismo costo que se exhibe como "costo efectivo" en la UI, y por tanto el
+ * markup_porcentaje cuadra. Sin este paso, el list_price quedaba calculado
+ * sobre standard_price (promedio AVCO/FIFO) mientras la UI mostraba el costo
+ * de la última factura — resultado: márgenes inconsistentes en la lista.
+ */
+function applyPricing(
+  productos: OdooProduct[],
+  ctx: PricingContext,
+  costInfoByTemplate: Map<number, TemplateCostInfo> | null
+): OdooProduct[] {
+  return productos.map((producto) => {
+    const info = costInfoByTemplate?.get(producto.id);
+    const productoForPricing = info
+      ? { ...producto, standard_price: info.costo_efectivo }
+      : producto;
+    return {
+      ...producto,
+      list_price: resolveProductPrice(ctx, productoForPricing),
+    };
+  });
+}
+
+type EnrichedProduct = OdooProduct & {
+  dias_desde_actualizacion?: number | null;
+  costo_desactualizado?: boolean | null;
+  markup_porcentaje?: number | null;
+  /** True si las variantes de este producto tienen costos muy distintos (alguna desactualizada). */
+  variantes_divergentes?: boolean;
+  /** Cuántas variantes activas con costo > 0 se consideraron al calcular costo_efectivo. */
+  variantes_consideradas?: number;
+};
+
+/**
+ * Transforma un producto antes de enviarlo al cliente según el rol del actor:
+ *
+ *   - Si `canSeeCost` es true (super_admin, dirección, asesor): el producto
+ *     conserva standard_price y write_date, y se enriquece con
+ *     markup_porcentaje, dias_desde_actualizacion y costo_desactualizado.
+ *     Si recibe `variantInfo` (de getTemplateCostInfoFromVariants), reemplaza
+ *     standard_price/write_date del template por los efectivos de variantes
+ *     para evitar el sesgo del write_date masivo de product.template.
+ *   - Si es false (comprador, aprobador, editor_contenido, público):
+ *     standard_price y write_date son eliminados.
+ */
+function transformProductForRole(
+  producto: OdooProduct,
+  canSeeCost: boolean,
+  variantInfo?: TemplateCostInfo
+): EnrichedProduct {
+  if (canSeeCost) {
+    // Si tenemos info real de variantes, la preferimos sobre los datos del template.
+    const costoEfectivo = variantInfo?.costo_efectivo ?? producto.standard_price;
+    const fechaEfectiva = variantInfo?.fecha_costo_efectivo ?? producto.write_date ?? null;
+    const staleness = getCostStaleness(fechaEfectiva);
+
+    return {
+      ...producto,
+      standard_price: costoEfectivo,
+      write_date: typeof fechaEfectiva === 'string' ? fechaEfectiva : false,
+      dias_desde_actualizacion: staleness.dias,
+      costo_desactualizado: staleness.desactualizado,
+      markup_porcentaje: markupOnCost(producto.list_price, costoEfectivo),
+      variantes_divergentes: variantInfo?.variantes_divergentes ?? false,
+      variantes_consideradas: variantInfo?.variantes_consideradas ?? 0,
+    };
+  }
+
+  // Eliminar campos sensibles para roles que no deben ver el costo.
+  const rest = { ...producto } as Partial<OdooProduct>;
+  delete rest.standard_price;
+  delete rest.write_date;
+  return rest as OdooProduct;
 }
