@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo, useCallback, type ChangeEvent } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import Link from 'next/link';
 import {
@@ -23,6 +23,7 @@ import {
   Save,
   X,
   Percent,
+  AlertTriangle,
 } from 'lucide-react';
 
 interface Empresa {
@@ -265,8 +266,33 @@ const sectionNav = [
   { id: 'margenes', label: 'Márgenes de Venta', icon: Percent },
 ];
 
+interface DeleteEmpresaPreview {
+  empresa: {
+    id: string;
+    nombre: string;
+    nit: string | null;
+    odoo_partner_id: number | null;
+    activa: boolean;
+  };
+  dependencias: {
+    pedidos: number;
+    usuarios_total: number;
+    usuarios_activos: number;
+    usuarios_inactivos: number;
+    sedes: number;
+    configs: number;
+    asesores: number;
+    productos_autorizados: number;
+    margenes: number;
+    overrides_precios: number;
+  };
+  puede_eliminar: boolean;
+  bloqueos: string[];
+}
+
 export default function EmpresaConfigPage() {
   const params = useParams();
+  const router = useRouter();
   const empresaId = params.id as string;
 
   const [empresa, setEmpresa] = useState<Empresa | null>(null);
@@ -326,6 +352,15 @@ export default function EmpresaConfigPage() {
   const [activateAsesorAccessForm, setActivateAsesorAccessForm] = useState<ActivateAsesorAccessFormState>(
     initialActivateAsesorAccessFormState
   );
+
+  // Eliminación de empresa
+  const [showDeleteEmpresaModal, setShowDeleteEmpresaModal] = useState(false);
+  const [deleteEmpresaPreview, setDeleteEmpresaPreview] = useState<DeleteEmpresaPreview | null>(null);
+  const [loadingDeleteEmpresaPreview, setLoadingDeleteEmpresaPreview] = useState(false);
+  const [deletingEmpresa, setDeletingEmpresa] = useState(false);
+  const [deleteEmpresaError, setDeleteEmpresaError] = useState<string | null>(null);
+  const [deleteEmpresaConfirmName, setDeleteEmpresaConfirmName] = useState('');
+  const [deleteEmpresaIncludeLogos, setDeleteEmpresaIncludeLogos] = useState(true);
 
   const partnerIdProductos = useMemo(() => {
     const partnerDesdeConfig = Number(config?.odoo_partner_id);
@@ -654,6 +689,88 @@ export default function EmpresaConfigPage() {
       setTimeout(() => setToast(null), 5000);
     } finally {
       setDeletingUserId(null);
+    }
+  };
+
+  const handleOpenDeleteEmpresaModal = async () => {
+    setShowDeleteEmpresaModal(true);
+    setDeleteEmpresaError(null);
+    setDeleteEmpresaConfirmName('');
+    setDeleteEmpresaIncludeLogos(true);
+    setDeleteEmpresaPreview(null);
+    setLoadingDeleteEmpresaPreview(true);
+    try {
+      const res = await fetch(`/api/admin/empresas/${empresaId}`, {
+        cache: 'no-store',
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setDeleteEmpresaError(data.error || 'No se pudo cargar el resumen de la empresa.');
+      } else {
+        setDeleteEmpresaPreview(data as DeleteEmpresaPreview);
+      }
+    } catch (err) {
+      setDeleteEmpresaError(err instanceof Error ? err.message : 'Error desconocido cargando resumen.');
+    } finally {
+      setLoadingDeleteEmpresaPreview(false);
+    }
+  };
+
+  const closeDeleteEmpresaModal = () => {
+    setShowDeleteEmpresaModal(false);
+    setDeleteEmpresaError(null);
+    setDeleteEmpresaConfirmName('');
+    setDeleteEmpresaPreview(null);
+  };
+
+  const handleDeleteEmpresa = async () => {
+    if (!empresa) return;
+
+    if (deleteEmpresaConfirmName.trim().toLowerCase() !== empresa.nombre.trim().toLowerCase()) {
+      setDeleteEmpresaError('El nombre escrito no coincide con el nombre de la empresa.');
+      return;
+    }
+
+    setDeletingEmpresa(true);
+    setDeleteEmpresaError(null);
+
+    try {
+      const res = await fetch(`/api/admin/empresas/${empresaId}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          confirmacion_nombre: empresa.nombre,
+          eliminar_logos: deleteEmpresaIncludeLogos,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        const partes: string[] = [];
+        if (typeof data.error === 'string') partes.push(data.error);
+        if (typeof data.sugerencia === 'string') partes.push(data.sugerencia);
+        setDeleteEmpresaError(partes.join(' ') || 'No se pudo eliminar la empresa.');
+        return;
+      }
+
+      const detalle = data.cascada_db
+        ? ` Se eliminaron ${data.cascada_db.sedes ?? 0} sede(s), ${data.cascada_db.configs ?? 0} config(s), ${data.cascada_db.asesor_empresas ?? 0} asignación(es) de asesor.`
+        : '';
+      const storageInfo = data.storage?.solicitado
+        ? ` Storage: ${data.storage.archivos_eliminados ?? 0} archivo(s) eliminado(s)${data.storage.error ? ' (con error: ' + data.storage.error + ')' : ''}.`
+        : '';
+
+      sessionStorage.setItem(
+        'admin_empresas_toast',
+        `Empresa "${empresa.nombre}" eliminada.${detalle}${storageInfo}`
+      );
+      router.push('/admin/empresas');
+      router.refresh();
+    } catch (err) {
+      setDeleteEmpresaError(err instanceof Error ? err.message : 'Error desconocido eliminando la empresa.');
+    } finally {
+      setDeletingEmpresa(false);
     }
   };
 
@@ -1213,6 +1330,14 @@ export default function EmpresaConfigPage() {
             <ArrowLeft className="w-4 h-4" />
             Volver
           </Link>
+          <button
+            onClick={handleOpenDeleteEmpresaModal}
+            className="flex items-center gap-2 bg-white hover:bg-red-50 text-red-600 border border-red-200 hover:border-red-400 px-4 py-2 rounded-lg text-sm font-semibold transition-all active:scale-95"
+            title="Eliminar esta empresa de la plataforma (no toca Odoo)"
+          >
+            <Trash2 className="w-4 h-4" />
+            Eliminar empresa
+          </button>
           <button
             onClick={handleSave}
             disabled={saving}
@@ -2683,6 +2808,189 @@ export default function EmpresaConfigPage() {
             <button onClick={() => setToast(null)} className="text-slate-400 hover:text-slate-600">
               <X className="w-4 h-4" />
             </button>
+          </div>
+        </div>
+      )}
+
+      {showDeleteEmpresaModal && empresa && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 px-4">
+          <div className="w-full max-w-2xl rounded-2xl border border-border bg-white shadow-2xl">
+            <div className="flex items-start justify-between gap-4 border-b border-border px-6 py-5">
+              <div className="flex items-start gap-3">
+                <div className="p-2 bg-red-50 rounded-lg">
+                  <AlertTriangle className="w-5 h-5 text-red-600" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900">Eliminar empresa</h3>
+                  <p className="text-sm text-slate-500 mt-0.5">
+                    Esta acción es irreversible y solo afecta a la plataforma B2B.
+                    <strong className="text-slate-700"> No se modifica nada en Odoo.</strong>
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={closeDeleteEmpresaModal}
+                disabled={deletingEmpresa}
+                className="text-slate-400 hover:text-slate-600 disabled:opacity-50"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="px-6 py-5 space-y-5">
+              {loadingDeleteEmpresaPreview ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="w-6 h-6 animate-spin text-primary" />
+                </div>
+              ) : deleteEmpresaPreview ? (
+                <>
+                  <div className="bg-slate-50 border border-border rounded-lg p-4">
+                    <p className="text-xs uppercase tracking-wide font-semibold text-slate-500 mb-2">
+                      Empresa a eliminar
+                    </p>
+                    <p className="font-semibold text-slate-900">{deleteEmpresaPreview.empresa.nombre}</p>
+                    <p className="text-xs text-slate-500 mt-1">
+                      NIT: {deleteEmpresaPreview.empresa.nit || 'sin NIT'} · Odoo Partner ID:{' '}
+                      {deleteEmpresaPreview.empresa.odoo_partner_id ?? 'N/A'}
+                    </p>
+                  </div>
+
+                  {deleteEmpresaPreview.bloqueos.length > 0 && (
+                    <div className="bg-red-50 border border-red-200 rounded-lg p-4 space-y-2">
+                      <p className="text-sm font-semibold text-red-800">No se puede eliminar todavía:</p>
+                      <ul className="list-disc list-inside text-sm text-red-700 space-y-1">
+                        {deleteEmpresaPreview.bloqueos.map((mensaje, idx) => (
+                          <li key={idx}>{mensaje}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  <div>
+                    <p className="text-xs uppercase tracking-wide font-semibold text-slate-500 mb-2">
+                      Datos asociados (se eliminan en cascada)
+                    </p>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+                      <div className="bg-white border border-border rounded-lg p-3">
+                        <p className="text-slate-500 text-xs">Pedidos</p>
+                        <p
+                          className={`font-bold ${
+                            deleteEmpresaPreview.dependencias.pedidos > 0 ? 'text-red-600' : 'text-slate-900'
+                          }`}
+                        >
+                          {deleteEmpresaPreview.dependencias.pedidos}
+                        </p>
+                      </div>
+                      <div className="bg-white border border-border rounded-lg p-3">
+                        <p className="text-slate-500 text-xs">Usuarios (totales)</p>
+                        <p
+                          className={`font-bold ${
+                            deleteEmpresaPreview.dependencias.usuarios_total > 0
+                              ? 'text-red-600'
+                              : 'text-slate-900'
+                          }`}
+                        >
+                          {deleteEmpresaPreview.dependencias.usuarios_total}
+                          {deleteEmpresaPreview.dependencias.usuarios_total > 0 && (
+                            <span className="text-xs text-slate-500 font-normal ml-1">
+                              ({deleteEmpresaPreview.dependencias.usuarios_activos} activos)
+                            </span>
+                          )}
+                        </p>
+                      </div>
+                      <div className="bg-white border border-border rounded-lg p-3">
+                        <p className="text-slate-500 text-xs">Sedes</p>
+                        <p className="font-bold text-slate-900">{deleteEmpresaPreview.dependencias.sedes}</p>
+                      </div>
+                      <div className="bg-white border border-border rounded-lg p-3">
+                        <p className="text-slate-500 text-xs">Configs</p>
+                        <p className="font-bold text-slate-900">{deleteEmpresaPreview.dependencias.configs}</p>
+                      </div>
+                      <div className="bg-white border border-border rounded-lg p-3">
+                        <p className="text-slate-500 text-xs">Asignaciones de asesor</p>
+                        <p className="font-bold text-slate-900">{deleteEmpresaPreview.dependencias.asesores}</p>
+                      </div>
+                      <div className="bg-white border border-border rounded-lg p-3">
+                        <p className="text-slate-500 text-xs">Márgenes</p>
+                        <p className="font-bold text-slate-900">{deleteEmpresaPreview.dependencias.margenes}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {deleteEmpresaPreview.puede_eliminar && (
+                    <>
+                      <div>
+                        <label className="block text-sm font-semibold text-slate-700 mb-2">
+                          Para confirmar, escribe el nombre exacto de la empresa:
+                        </label>
+                        <p className="text-xs text-slate-500 mb-2 font-mono">{empresa.nombre}</p>
+                        <input
+                          type="text"
+                          value={deleteEmpresaConfirmName}
+                          onChange={(e) => setDeleteEmpresaConfirmName(e.target.value)}
+                          disabled={deletingEmpresa}
+                          autoFocus
+                          placeholder="Escribe el nombre completo aquí"
+                          className="w-full px-3 py-2 border border-border rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-red-500 focus:border-red-500"
+                        />
+                      </div>
+
+                      <label className="flex items-start gap-2 text-sm text-slate-700 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={deleteEmpresaIncludeLogos}
+                          onChange={(e) => setDeleteEmpresaIncludeLogos(e.target.checked)}
+                          disabled={deletingEmpresa}
+                          className="mt-0.5 rounded border-border text-red-600 focus:ring-red-500"
+                        />
+                        <span>
+                          Eliminar también los archivos del logo en Storage
+                          <span className="block text-xs text-slate-500 mt-0.5">
+                            Bucket <span className="font-mono">logos-empresas/{empresaId}</span>. Si lo dejas
+                            desmarcado, los archivos quedan huérfanos pero accesibles.
+                          </span>
+                        </span>
+                      </label>
+                    </>
+                  )}
+                </>
+              ) : (
+                <p className="text-sm text-slate-500">No se pudo cargar el resumen.</p>
+              )}
+
+              {deleteEmpresaError && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
+                  {deleteEmpresaError}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-3 border-t border-border px-6 py-4 bg-slate-50/50 rounded-b-2xl">
+              <button
+                onClick={closeDeleteEmpresaModal}
+                disabled={deletingEmpresa}
+                className="px-4 py-2 text-sm font-semibold text-slate-600 hover:text-slate-900 transition disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleDeleteEmpresa}
+                disabled={
+                  deletingEmpresa ||
+                  loadingDeleteEmpresaPreview ||
+                  !deleteEmpresaPreview?.puede_eliminar ||
+                  deleteEmpresaConfirmName.trim().toLowerCase() !== empresa.nombre.trim().toLowerCase()
+                }
+                className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-5 py-2 rounded-lg text-sm font-semibold shadow-md shadow-red-600/20 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {deletingEmpresa ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Trash2 className="w-4 h-4" />
+                )}
+                {deletingEmpresa ? 'Eliminando...' : 'Eliminar definitivamente'}
+              </button>
+            </div>
           </div>
         </div>
       )}
