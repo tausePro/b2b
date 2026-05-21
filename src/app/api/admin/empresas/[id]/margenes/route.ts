@@ -1,39 +1,37 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient as createSupabaseClient } from '@supabase/supabase-js';
-import { createServerSupabaseClient } from '@/lib/supabase/server';
+import {
+  authorizeApiRoles,
+  getAccessibleEmpresaIds,
+  type AuthorizedApiContext,
+} from '@/lib/auth/apiRouteGuards';
 
-function getSupabaseAdmin() {
-  return createSupabaseClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
-}
+const ALLOWED_ROLES = ['super_admin', 'direccion', 'asesor'] as const;
 
-const ALLOWED_ROLES = ['super_admin', 'direccion'];
-
-async function authorize() {
-  const supabase = await createServerSupabaseClient();
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser();
-
-  if (userError || !user) {
-    return { error: NextResponse.json({ error: 'UNAUTHORIZED' }, { status: 401 }) };
+/**
+ * Garantiza que el actor autenticado tenga permiso sobre la empresa.
+ *
+ * super_admin y direccion ven todas las empresas.
+ * asesor sólo ve las que están en `asesor_empresas` (filtro que ya hace
+ * `getAccessibleEmpresaIds`).
+ *
+ * Devuelve `null` si está autorizado, o un NextResponse 403 listo para
+ * devolver si no lo está.
+ */
+async function ensureEmpresaAccess(
+  ctx: AuthorizedApiContext,
+  empresaId: string
+): Promise<NextResponse | null> {
+  const empresas = await getAccessibleEmpresaIds(ctx);
+  if (!empresas.includes(empresaId)) {
+    return NextResponse.json(
+      {
+        error: 'FORBIDDEN',
+        details: 'No tienes acceso a esta empresa.',
+      },
+      { status: 403 }
+    );
   }
-
-  const admin = getSupabaseAdmin();
-  const { data: perfil } = await admin
-    .from('usuarios')
-    .select('id, rol, activo')
-    .eq('auth_id', user.id)
-    .maybeSingle();
-
-  if (!perfil?.activo || !perfil.rol || !ALLOWED_ROLES.includes(perfil.rol)) {
-    return { error: NextResponse.json({ error: 'FORBIDDEN' }, { status: 403 }) };
-  }
-
-  return { admin, perfil };
+  return null;
 }
 
 // GET — Listar márgenes de una empresa
@@ -41,15 +39,16 @@ export async function GET(
   _request: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
-  const auth = await authorize();
-  if ('error' in auth && auth.error) return auth.error;
-  const { admin } = auth as { admin: ReturnType<typeof getSupabaseAdmin>; perfil: { id: string } };
+  const auth = await authorizeApiRoles(ALLOWED_ROLES);
+  if (auth instanceof NextResponse) return auth;
 
   const { id: empresaId } = await context.params;
+  const forbidden = await ensureEmpresaAccess(auth, empresaId);
+  if (forbidden) return forbidden;
 
-  const { data, error } = await admin
+  const { data, error } = await auth.admin
     .from('margenes_venta')
-    .select('id, empresa_id, odoo_categ_id, margen_porcentaje, created_at, updated_at')
+    .select('id, empresa_id, odoo_categ_id, margen_porcentaje, actualizado_por_id, created_at, updated_at')
     .eq('empresa_id', empresaId)
     .order('odoo_categ_id', { ascending: true, nullsFirst: true });
 
@@ -65,17 +64,31 @@ export async function POST(
   request: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
-  const auth = await authorize();
-  if ('error' in auth && auth.error) return auth.error;
-  const { admin } = auth as { admin: ReturnType<typeof getSupabaseAdmin>; perfil: { id: string } };
+  const auth = await authorizeApiRoles(ALLOWED_ROLES);
+  if (auth instanceof NextResponse) return auth;
 
   const { id: empresaId } = await context.params;
+  const forbidden = await ensureEmpresaAccess(auth, empresaId);
+  if (forbidden) return forbidden;
+
   const body = await request.json();
 
-  // Cambio de modo_pricing
+  // Cambio de modo_pricing: prerrogativa de super_admin/direccion.
+  // El asesor edita márgenes pero NO cambia el modelo de pricing global
+  // del cliente. Eso queda bloqueado explícitamente acá.
   if (typeof body._set_modo_pricing === 'string') {
+    if (auth.actor.rol === 'asesor') {
+      return NextResponse.json(
+        {
+          error: 'FORBIDDEN',
+          details:
+            'El cambio de modo de pricing (pricelist vs costo+margen) está reservado a dirección o super admin.',
+        },
+        { status: 403 }
+      );
+    }
     const modo = body._set_modo_pricing === 'pricelist' ? 'pricelist' : 'costo_margen';
-    const { error: upsertError } = await admin
+    const { error: upsertError } = await auth.admin
       .from('empresa_configs')
       .upsert(
         { empresa_id: empresaId, modo_pricing: modo },
@@ -99,13 +112,14 @@ export async function POST(
     );
   }
 
-  const { data, error } = await admin
+  const { data, error } = await auth.admin
     .from('margenes_venta')
     .upsert(
       {
         empresa_id: empresaId,
         odoo_categ_id: odoo_categ_id,
         margen_porcentaje: margen_porcentaje,
+        actualizado_por_id: auth.actor.id,
       },
       { onConflict: 'empresa_id,odoo_categ_id' }
     )
@@ -124,11 +138,13 @@ export async function DELETE(
   request: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
-  const auth = await authorize();
-  if ('error' in auth && auth.error) return auth.error;
-  const { admin } = auth as { admin: ReturnType<typeof getSupabaseAdmin>; perfil: { id: string } };
+  const auth = await authorizeApiRoles(ALLOWED_ROLES);
+  if (auth instanceof NextResponse) return auth;
 
   const { id: empresaId } = await context.params;
+  const forbidden = await ensureEmpresaAccess(auth, empresaId);
+  if (forbidden) return forbidden;
+
   const { searchParams } = new URL(request.url);
   const margenId = searchParams.get('margen_id');
 
@@ -136,7 +152,7 @@ export async function DELETE(
     return NextResponse.json({ error: 'margen_id es requerido.' }, { status: 400 });
   }
 
-  const { error } = await admin
+  const { error } = await auth.admin
     .from('margenes_venta')
     .delete()
     .eq('id', margenId)

@@ -28,7 +28,9 @@ import {
   Save,
   Plus,
   Trash2,
+  AlertTriangle,
 } from 'lucide-react';
+import { formatMarkupPercent } from '@/lib/pricing/cost-staleness';
 
 interface ClienteDetalle {
   id: string;
@@ -86,6 +88,16 @@ interface ProductoOdooCliente {
   categ_id: [number, string] | false;
   image_128: string | false;
   default_code: string | false;
+  // Campos enriquecidos por /api/odoo/productos cuando el actor puede ver
+  // costo (super_admin, direccion, asesor). Llegan como undefined para los
+  // demás roles, por eso son opcionales.
+  standard_price?: number;
+  write_date?: string | false;
+  dias_desde_actualizacion?: number | null;
+  costo_desactualizado?: boolean | null;
+  markup_porcentaje?: number | null;
+  variantes_divergentes?: boolean;
+  variantes_consideradas?: number;
 }
 
 const supabase = createClient();
@@ -112,8 +124,13 @@ export default function ClienteDetallePage() {
   const [loadingProductos, setLoadingProductos] = useState(false);
   const [busquedaProducto, setBusquedaProducto] = useState('');
 
-  // Pricing (solo dirección y super_admin)
-  const canManagePricing = user?.rol === 'direccion' || user?.rol === 'super_admin';
+  // Pricing: gerencia y asesores pueden gestionar márgenes y overrides de
+  // las empresas que les corresponden. El cambio de modo de pricing
+  // (costo+margen vs pricelist) sigue siendo decisión de dirección/super_admin
+  // porque afecta a toda la lógica de precios del cliente.
+  const canManagePricing =
+    user?.rol === 'direccion' || user?.rol === 'super_admin' || user?.rol === 'asesor';
+  const canChangeModoPricing = user?.rol === 'direccion' || user?.rol === 'super_admin';
   const [modoPricing, setModoPricing] = useState<string>('costo_margen');
   const [savingModo, setSavingModo] = useState(false);
   const [margenes, setMargenes] = useState<{ id: string; odoo_categ_id: number | null; margen_porcentaje: number }[]>([]);
@@ -627,7 +644,7 @@ export default function ClienteDetallePage() {
                             <Package className="w-5 h-5 text-muted/40" />
                           </div>
                         )}
-                        <div className="min-w-0">
+                        <div className="min-w-0 flex-1">
                           <p className="text-sm font-medium text-foreground leading-tight truncate">{producto.name}</p>
                           <p className="text-xs text-muted mt-1">
                             Ref: {typeof producto.default_code === 'string' ? producto.default_code : '—'}
@@ -636,9 +653,84 @@ export default function ClienteDetallePage() {
                             <p className="text-xs text-muted">{producto.categ_id[1]}</p>
                           )}
                           {showPrices && (
-                            <p className="text-xs font-semibold text-primary mt-1">
-                              {new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(producto.list_price || 0)}
-                            </p>
+                            <div className="mt-1 flex items-baseline gap-2">
+                              <p className="text-xs font-semibold text-primary">
+                                {new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(producto.list_price || 0)}
+                              </p>
+                              {typeof producto.markup_porcentaje === 'number' && (
+                                <span
+                                  className={`text-[10px] font-bold inline-flex items-center gap-0.5 ${
+                                    producto.markup_porcentaje < 0
+                                      ? 'text-red-600'
+                                      : producto.markup_porcentaje < 10
+                                        ? 'text-amber-600'
+                                        : 'text-emerald-600'
+                                  }`}
+                                  title={
+                                    producto.markup_porcentaje < 0
+                                      ? 'Estás vendiendo a pérdida (precio menor al costo).'
+                                      : 'Margen sobre costo de Odoo: (precio − costo) / costo.'
+                                  }
+                                >
+                                  {producto.markup_porcentaje < 0 && (
+                                    <AlertTriangle className="h-2.5 w-2.5" />
+                                  )}
+                                  {formatMarkupPercent(producto.markup_porcentaje)}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                          {/* Costo + antigüedad solo se muestran si vienen del endpoint
+                              (roles con visibilidad de costo: super_admin, direccion, asesor). */}
+                          {typeof producto.standard_price === 'number' && (
+                            <div className="mt-1 flex items-center gap-1.5 text-[10px] flex-wrap">
+                              <span
+                                className={
+                                  producto.costo_desactualizado === true
+                                    ? 'text-red-600 font-semibold'
+                                    : 'text-muted'
+                                }
+                                title={
+                                  producto.costo_desactualizado === true
+                                    ? 'El producto no se actualiza en Odoo desde hace más de 30 días. El costo podría estar desactualizado.'
+                                    : producto.variantes_consideradas && producto.variantes_consideradas > 1
+                                      ? `Costo más alto entre ${producto.variantes_consideradas} variantes activas (proxy del costo real más reciente).`
+                                      : 'Costo registrado en Odoo (standard_price).'
+                                }
+                              >
+                                Costo:{' '}
+                                {new Intl.NumberFormat('es-CO', {
+                                  style: 'currency',
+                                  currency: 'COP',
+                                  maximumFractionDigits: 0,
+                                }).format(producto.standard_price)}
+                              </span>
+                              {producto.variantes_divergentes && (
+                                <span
+                                  className="inline-flex items-center text-amber-600"
+                                  title="Las variantes activas tienen costos muy distintos entre sí. Es posible que alguna variante tenga el costo desactualizado en Odoo. Revisa el producto."
+                                >
+                                  <AlertTriangle className="h-2.5 w-2.5" />
+                                </span>
+                              )}
+                              {typeof producto.dias_desde_actualizacion === 'number' && (
+                                <span
+                                  className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 font-semibold ${
+                                    producto.costo_desactualizado === true
+                                      ? 'bg-red-100 text-red-700'
+                                      : 'bg-emerald-50 text-emerald-700'
+                                  }`}
+                                  title="Días desde la última escritura sobre cualquier variante activa del producto en Odoo. Es proxy de antigüedad del costo: si nadie movió la variante en mucho tiempo (compra, ajuste, recosteo), el costo podría estar viejo."
+                                >
+                                  {producto.costo_desactualizado === true && (
+                                    <AlertTriangle className="h-2.5 w-2.5" />
+                                  )}
+                                  {producto.dias_desde_actualizacion === 0
+                                    ? 'hoy'
+                                    : `${producto.dias_desde_actualizacion}d`}
+                                </span>
+                              )}
+                            </div>
                           )}
                           {canManagePricing && (
                             <div className="flex items-center gap-1 mt-1.5">
@@ -730,7 +822,7 @@ export default function ClienteDetallePage() {
             </div>
           </div>
 
-          {/* Pricing - solo dirección y super_admin */}
+          {/* Pricing - dirección, super_admin y asesores con la empresa asignada */}
           {canManagePricing && (
             <div className="bg-white rounded-xl border border-border p-5 space-y-5">
               <div className="flex items-center gap-2">
@@ -738,54 +830,67 @@ export default function ClienteDetallePage() {
                 <h2 className="font-semibold text-foreground">Precios y Márgenes</h2>
               </div>
 
-              {/* Modo pricing */}
-              <div className="space-y-2">
-                <p className="text-xs font-medium text-muted">Modo de precios</p>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      setSavingModo(true);
-                      try {
-                        const res = await fetch(`/api/admin/empresas/${clienteId}/margenes`, {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ _set_modo_pricing: 'costo_margen' }),
-                        });
-                        if (res.ok) {
-                          setModoPricing('costo_margen');
-                          setPricingToast('Modo: Costo + Margen');
-                        }
-                      } catch { /* silencioso */ } finally { setSavingModo(false); }
-                    }}
-                    disabled={savingModo}
-                    className={`flex-1 px-3 py-2 rounded-lg text-xs font-medium border-2 transition-colors ${modoPricing !== 'pricelist' ? 'border-primary bg-primary/5 text-primary' : 'border-border text-muted hover:border-slate-300'}`}
-                  >
-                    Costo + Margen
-                  </button>
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      setSavingModo(true);
-                      try {
-                        const res = await fetch(`/api/admin/empresas/${clienteId}/margenes`, {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ _set_modo_pricing: 'pricelist' }),
-                        });
-                        if (res.ok) {
-                          setModoPricing('pricelist');
-                          setPricingToast('Modo: Lista de Precios Fija');
-                        }
-                      } catch { /* silencioso */ } finally { setSavingModo(false); }
-                    }}
-                    disabled={savingModo}
-                    className={`flex-1 px-3 py-2 rounded-lg text-xs font-medium border-2 transition-colors ${modoPricing === 'pricelist' ? 'border-primary bg-primary/5 text-primary' : 'border-border text-muted hover:border-slate-300'}`}
-                  >
-                    Lista Fija (Odoo)
-                  </button>
+              {/* Modo pricing — sólo direccion/super_admin pueden cambiarlo.
+                  Para asesores se muestra el valor actual como dato informativo
+                  para que entiendan qué afecta a sus márgenes/overrides. */}
+              {canChangeModoPricing ? (
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-muted">Modo de precios</p>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setSavingModo(true);
+                        try {
+                          const res = await fetch(`/api/admin/empresas/${clienteId}/margenes`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ _set_modo_pricing: 'costo_margen' }),
+                          });
+                          if (res.ok) {
+                            setModoPricing('costo_margen');
+                            setPricingToast('Modo: Costo + Margen');
+                          }
+                        } catch { /* silencioso */ } finally { setSavingModo(false); }
+                      }}
+                      disabled={savingModo}
+                      className={`flex-1 px-3 py-2 rounded-lg text-xs font-medium border-2 transition-colors ${modoPricing !== 'pricelist' ? 'border-primary bg-primary/5 text-primary' : 'border-border text-muted hover:border-slate-300'}`}
+                    >
+                      Costo + Margen
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setSavingModo(true);
+                        try {
+                          const res = await fetch(`/api/admin/empresas/${clienteId}/margenes`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ _set_modo_pricing: 'pricelist' }),
+                          });
+                          if (res.ok) {
+                            setModoPricing('pricelist');
+                            setPricingToast('Modo: Lista de Precios Fija');
+                          }
+                        } catch { /* silencioso */ } finally { setSavingModo(false); }
+                      }}
+                      disabled={savingModo}
+                      className={`flex-1 px-3 py-2 rounded-lg text-xs font-medium border-2 transition-colors ${modoPricing === 'pricelist' ? 'border-primary bg-primary/5 text-primary' : 'border-border text-muted hover:border-slate-300'}`}
+                    >
+                      Lista Fija (Odoo)
+                    </button>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-muted">Modo de precios</p>
+                  <div className="px-3 py-2 rounded-lg border border-border bg-background-light text-xs text-muted">
+                    {modoPricing === 'pricelist'
+                      ? 'Lista Fija (Odoo) — definido por dirección.'
+                      : 'Costo + Margen — definido por dirección.'}
+                  </div>
+                </div>
+              )}
 
               {/* Márgenes */}
               {modoPricing !== 'pricelist' && (
