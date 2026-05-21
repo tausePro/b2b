@@ -112,8 +112,13 @@ export default function ClienteDetallePage() {
   const [loadingProductos, setLoadingProductos] = useState(false);
   const [busquedaProducto, setBusquedaProducto] = useState('');
 
-  // Pricing (solo dirección y super_admin)
-  const canManagePricing = user?.rol === 'direccion' || user?.rol === 'super_admin';
+  // Pricing: gerencia y asesores pueden gestionar márgenes y overrides de
+  // las empresas que les corresponden. El cambio de modo de pricing
+  // (costo+margen vs pricelist) sigue siendo decisión de dirección/super_admin
+  // porque afecta a toda la lógica de precios del cliente.
+  const canManagePricing =
+    user?.rol === 'direccion' || user?.rol === 'super_admin' || user?.rol === 'asesor';
+  const canChangeModoPricing = user?.rol === 'direccion' || user?.rol === 'super_admin';
   const [modoPricing, setModoPricing] = useState<string>('costo_margen');
   const [savingModo, setSavingModo] = useState(false);
   const [margenes, setMargenes] = useState<{ id: string; odoo_categ_id: number | null; margen_porcentaje: number }[]>([]);
@@ -730,7 +735,7 @@ export default function ClienteDetallePage() {
             </div>
           </div>
 
-          {/* Pricing - solo dirección y super_admin */}
+          {/* Pricing - dirección, super_admin y asesores con la empresa asignada */}
           {canManagePricing && (
             <div className="bg-white rounded-xl border border-border p-5 space-y-5">
               <div className="flex items-center gap-2">
@@ -738,54 +743,67 @@ export default function ClienteDetallePage() {
                 <h2 className="font-semibold text-foreground">Precios y Márgenes</h2>
               </div>
 
-              {/* Modo pricing */}
-              <div className="space-y-2">
-                <p className="text-xs font-medium text-muted">Modo de precios</p>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      setSavingModo(true);
-                      try {
-                        const res = await fetch(`/api/admin/empresas/${clienteId}/margenes`, {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ _set_modo_pricing: 'costo_margen' }),
-                        });
-                        if (res.ok) {
-                          setModoPricing('costo_margen');
-                          setPricingToast('Modo: Costo + Margen');
-                        }
-                      } catch { /* silencioso */ } finally { setSavingModo(false); }
-                    }}
-                    disabled={savingModo}
-                    className={`flex-1 px-3 py-2 rounded-lg text-xs font-medium border-2 transition-colors ${modoPricing !== 'pricelist' ? 'border-primary bg-primary/5 text-primary' : 'border-border text-muted hover:border-slate-300'}`}
-                  >
-                    Costo + Margen
-                  </button>
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      setSavingModo(true);
-                      try {
-                        const res = await fetch(`/api/admin/empresas/${clienteId}/margenes`, {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ _set_modo_pricing: 'pricelist' }),
-                        });
-                        if (res.ok) {
-                          setModoPricing('pricelist');
-                          setPricingToast('Modo: Lista de Precios Fija');
-                        }
-                      } catch { /* silencioso */ } finally { setSavingModo(false); }
-                    }}
-                    disabled={savingModo}
-                    className={`flex-1 px-3 py-2 rounded-lg text-xs font-medium border-2 transition-colors ${modoPricing === 'pricelist' ? 'border-primary bg-primary/5 text-primary' : 'border-border text-muted hover:border-slate-300'}`}
-                  >
-                    Lista Fija (Odoo)
-                  </button>
+              {/* Modo pricing — sólo direccion/super_admin pueden cambiarlo.
+                  Para asesores se muestra el valor actual como dato informativo
+                  para que entiendan qué afecta a sus márgenes/overrides. */}
+              {canChangeModoPricing ? (
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-muted">Modo de precios</p>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setSavingModo(true);
+                        try {
+                          const res = await fetch(`/api/admin/empresas/${clienteId}/margenes`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ _set_modo_pricing: 'costo_margen' }),
+                          });
+                          if (res.ok) {
+                            setModoPricing('costo_margen');
+                            setPricingToast('Modo: Costo + Margen');
+                          }
+                        } catch { /* silencioso */ } finally { setSavingModo(false); }
+                      }}
+                      disabled={savingModo}
+                      className={`flex-1 px-3 py-2 rounded-lg text-xs font-medium border-2 transition-colors ${modoPricing !== 'pricelist' ? 'border-primary bg-primary/5 text-primary' : 'border-border text-muted hover:border-slate-300'}`}
+                    >
+                      Costo + Margen
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setSavingModo(true);
+                        try {
+                          const res = await fetch(`/api/admin/empresas/${clienteId}/margenes`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ _set_modo_pricing: 'pricelist' }),
+                          });
+                          if (res.ok) {
+                            setModoPricing('pricelist');
+                            setPricingToast('Modo: Lista de Precios Fija');
+                          }
+                        } catch { /* silencioso */ } finally { setSavingModo(false); }
+                      }}
+                      disabled={savingModo}
+                      className={`flex-1 px-3 py-2 rounded-lg text-xs font-medium border-2 transition-colors ${modoPricing === 'pricelist' ? 'border-primary bg-primary/5 text-primary' : 'border-border text-muted hover:border-slate-300'}`}
+                    >
+                      Lista Fija (Odoo)
+                    </button>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-muted">Modo de precios</p>
+                  <div className="px-3 py-2 rounded-lg border border-border bg-background-light text-xs text-muted">
+                    {modoPricing === 'pricelist'
+                      ? 'Lista Fija (Odoo) — definido por dirección.'
+                      : 'Costo + Margen — definido por dirección.'}
+                  </div>
+                </div>
+              )}
 
               {/* Márgenes */}
               {modoPricing !== 'pricelist' && (

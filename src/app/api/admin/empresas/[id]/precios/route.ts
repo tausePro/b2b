@@ -1,39 +1,34 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient as createSupabaseClient } from '@supabase/supabase-js';
-import { createServerSupabaseClient } from '@/lib/supabase/server';
+import {
+  authorizeApiRoles,
+  getAccessibleEmpresaIds,
+  type AuthorizedApiContext,
+} from '@/lib/auth/apiRouteGuards';
 
-function getSupabaseAdmin() {
-  return createSupabaseClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
-}
+const ALLOWED_ROLES = ['super_admin', 'direccion', 'asesor'] as const;
 
-const ALLOWED_ROLES = ['super_admin', 'direccion'];
-
-async function authorize() {
-  const supabase = await createServerSupabaseClient();
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser();
-
-  if (userError || !user) {
-    return { error: NextResponse.json({ error: 'UNAUTHORIZED' }, { status: 401 }) };
+/**
+ * Verifica que el actor pueda operar sobre la empresa solicitada.
+ *
+ * super_admin/direccion siempre pueden; asesor sólo si la empresa está en
+ * `asesor_empresas`. La verificación se delega a `getAccessibleEmpresaIds`
+ * que ya implementa esa lógica unificada.
+ */
+async function ensureEmpresaAccess(
+  ctx: AuthorizedApiContext,
+  empresaId: string
+): Promise<NextResponse | null> {
+  const empresas = await getAccessibleEmpresaIds(ctx);
+  if (!empresas.includes(empresaId)) {
+    return NextResponse.json(
+      {
+        error: 'FORBIDDEN',
+        details: 'No tienes acceso a esta empresa.',
+      },
+      { status: 403 }
+    );
   }
-
-  const admin = getSupabaseAdmin();
-  const { data: perfil } = await admin
-    .from('usuarios')
-    .select('id, rol, activo')
-    .eq('auth_id', user.id)
-    .maybeSingle();
-
-  if (!perfil?.activo || !perfil.rol || !ALLOWED_ROLES.includes(perfil.rol)) {
-    return { error: NextResponse.json({ error: 'FORBIDDEN' }, { status: 403 }) };
-  }
-
-  return { admin, perfil };
+  return null;
 }
 
 // GET — Listar overrides de precio de una empresa
@@ -41,15 +36,16 @@ export async function GET(
   _request: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
-  const auth = await authorize();
-  if ('error' in auth && auth.error) return auth.error;
-  const { admin } = auth as { admin: ReturnType<typeof getSupabaseAdmin>; perfil: { id: string } };
+  const auth = await authorizeApiRoles(ALLOWED_ROLES);
+  if (auth instanceof NextResponse) return auth;
 
   const { id: empresaId } = await context.params;
+  const forbidden = await ensureEmpresaAccess(auth, empresaId);
+  if (forbidden) return forbidden;
 
-  const { data, error } = await admin
+  const { data, error } = await auth.admin
     .from('precios_empresa_producto')
-    .select('id, empresa_id, odoo_product_id, precio_override, created_at, updated_at')
+    .select('id, empresa_id, odoo_product_id, precio_override, actualizado_por_id, created_at, updated_at')
     .eq('empresa_id', empresaId)
     .order('odoo_product_id', { ascending: true });
 
@@ -65,11 +61,13 @@ export async function POST(
   request: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
-  const auth = await authorize();
-  if ('error' in auth && auth.error) return auth.error;
-  const { admin } = auth as { admin: ReturnType<typeof getSupabaseAdmin>; perfil: { id: string } };
+  const auth = await authorizeApiRoles(ALLOWED_ROLES);
+  if (auth instanceof NextResponse) return auth;
 
   const { id: empresaId } = await context.params;
+  const forbidden = await ensureEmpresaAccess(auth, empresaId);
+  if (forbidden) return forbidden;
+
   const body = await request.json();
 
   const odoo_product_id = Number(body.odoo_product_id);
@@ -88,13 +86,14 @@ export async function POST(
     );
   }
 
-  const { data, error } = await admin
+  const { data, error } = await auth.admin
     .from('precios_empresa_producto')
     .upsert(
       {
         empresa_id: empresaId,
         odoo_product_id,
         precio_override,
+        actualizado_por_id: auth.actor.id,
       },
       { onConflict: 'empresa_id,odoo_product_id' }
     )
@@ -113,11 +112,13 @@ export async function DELETE(
   request: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
-  const auth = await authorize();
-  if ('error' in auth && auth.error) return auth.error;
-  const { admin } = auth as { admin: ReturnType<typeof getSupabaseAdmin>; perfil: { id: string } };
+  const auth = await authorizeApiRoles(ALLOWED_ROLES);
+  if (auth instanceof NextResponse) return auth;
 
   const { id: empresaId } = await context.params;
+  const forbidden = await ensureEmpresaAccess(auth, empresaId);
+  if (forbidden) return forbidden;
+
   const { searchParams } = new URL(request.url);
   const precioId = searchParams.get('precio_id');
 
@@ -125,7 +126,7 @@ export async function DELETE(
     return NextResponse.json({ error: 'precio_id es requerido.' }, { status: 400 });
   }
 
-  const { error } = await admin
+  const { error } = await auth.admin
     .from('precios_empresa_producto')
     .delete()
     .eq('id', precioId)
