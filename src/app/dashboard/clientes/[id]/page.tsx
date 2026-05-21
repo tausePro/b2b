@@ -28,7 +28,9 @@ import {
   Save,
   Plus,
   Trash2,
+  AlertTriangle,
 } from 'lucide-react';
+import { formatMarkupPercent } from '@/lib/pricing/cost-staleness';
 
 interface ClienteDetalle {
   id: string;
@@ -86,6 +88,16 @@ interface ProductoOdooCliente {
   categ_id: [number, string] | false;
   image_128: string | false;
   default_code: string | false;
+  // Campos enriquecidos por /api/odoo/productos cuando el actor puede ver
+  // costo (super_admin, direccion, asesor). Llegan como undefined para los
+  // demás roles, por eso son opcionales.
+  standard_price?: number;
+  write_date?: string | false;
+  dias_desde_actualizacion?: number | null;
+  costo_desactualizado?: boolean | null;
+  markup_porcentaje?: number | null;
+  variantes_divergentes?: boolean;
+  variantes_consideradas?: number;
 }
 
 const supabase = createClient();
@@ -632,7 +644,7 @@ export default function ClienteDetallePage() {
                             <Package className="w-5 h-5 text-muted/40" />
                           </div>
                         )}
-                        <div className="min-w-0">
+                        <div className="min-w-0 flex-1">
                           <p className="text-sm font-medium text-foreground leading-tight truncate">{producto.name}</p>
                           <p className="text-xs text-muted mt-1">
                             Ref: {typeof producto.default_code === 'string' ? producto.default_code : '—'}
@@ -641,9 +653,84 @@ export default function ClienteDetallePage() {
                             <p className="text-xs text-muted">{producto.categ_id[1]}</p>
                           )}
                           {showPrices && (
-                            <p className="text-xs font-semibold text-primary mt-1">
-                              {new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(producto.list_price || 0)}
-                            </p>
+                            <div className="mt-1 flex items-baseline gap-2">
+                              <p className="text-xs font-semibold text-primary">
+                                {new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(producto.list_price || 0)}
+                              </p>
+                              {typeof producto.markup_porcentaje === 'number' && (
+                                <span
+                                  className={`text-[10px] font-bold inline-flex items-center gap-0.5 ${
+                                    producto.markup_porcentaje < 0
+                                      ? 'text-red-600'
+                                      : producto.markup_porcentaje < 10
+                                        ? 'text-amber-600'
+                                        : 'text-emerald-600'
+                                  }`}
+                                  title={
+                                    producto.markup_porcentaje < 0
+                                      ? 'Estás vendiendo a pérdida (precio menor al costo).'
+                                      : 'Margen sobre costo de Odoo: (precio − costo) / costo.'
+                                  }
+                                >
+                                  {producto.markup_porcentaje < 0 && (
+                                    <AlertTriangle className="h-2.5 w-2.5" />
+                                  )}
+                                  {formatMarkupPercent(producto.markup_porcentaje)}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                          {/* Costo + antigüedad solo se muestran si vienen del endpoint
+                              (roles con visibilidad de costo: super_admin, direccion, asesor). */}
+                          {typeof producto.standard_price === 'number' && (
+                            <div className="mt-1 flex items-center gap-1.5 text-[10px] flex-wrap">
+                              <span
+                                className={
+                                  producto.costo_desactualizado === true
+                                    ? 'text-red-600 font-semibold'
+                                    : 'text-muted'
+                                }
+                                title={
+                                  producto.costo_desactualizado === true
+                                    ? 'El producto no se actualiza en Odoo desde hace más de 30 días. El costo podría estar desactualizado.'
+                                    : producto.variantes_consideradas && producto.variantes_consideradas > 1
+                                      ? `Costo más alto entre ${producto.variantes_consideradas} variantes activas (proxy del costo real más reciente).`
+                                      : 'Costo registrado en Odoo (standard_price).'
+                                }
+                              >
+                                Costo:{' '}
+                                {new Intl.NumberFormat('es-CO', {
+                                  style: 'currency',
+                                  currency: 'COP',
+                                  maximumFractionDigits: 0,
+                                }).format(producto.standard_price)}
+                              </span>
+                              {producto.variantes_divergentes && (
+                                <span
+                                  className="inline-flex items-center text-amber-600"
+                                  title="Las variantes activas tienen costos muy distintos entre sí. Es posible que alguna variante tenga el costo desactualizado en Odoo. Revisa el producto."
+                                >
+                                  <AlertTriangle className="h-2.5 w-2.5" />
+                                </span>
+                              )}
+                              {typeof producto.dias_desde_actualizacion === 'number' && (
+                                <span
+                                  className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 font-semibold ${
+                                    producto.costo_desactualizado === true
+                                      ? 'bg-red-100 text-red-700'
+                                      : 'bg-emerald-50 text-emerald-700'
+                                  }`}
+                                  title="Días desde la última escritura sobre cualquier variante activa del producto en Odoo. Es proxy de antigüedad del costo: si nadie movió la variante en mucho tiempo (compra, ajuste, recosteo), el costo podría estar viejo."
+                                >
+                                  {producto.costo_desactualizado === true && (
+                                    <AlertTriangle className="h-2.5 w-2.5" />
+                                  )}
+                                  {producto.dias_desde_actualizacion === 0
+                                    ? 'hoy'
+                                    : `${producto.dias_desde_actualizacion}d`}
+                                </span>
+                              )}
+                            </div>
                           )}
                           {canManagePricing && (
                             <div className="flex items-center gap-1 mt-1.5">
