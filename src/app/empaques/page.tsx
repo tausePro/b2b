@@ -23,6 +23,21 @@ import {
   getEmpaquesPublicAvailability,
   getEmpaquesCatalogData,
 } from '@/lib/empaques/catalogo';
+import {
+  DEFAULT_LANDING_CONFIG,
+  type EmpaquesLandingConfig,
+  type LandingBenefitIcon,
+  getEmpaquesLandingConfig,
+} from '@/lib/empaques/landing-config';
+
+const BENEFIT_ICON_MAP: Record<LandingBenefitIcon, typeof Sparkles> = {
+  sparkles: Sparkles,
+  leaf: Leaf,
+  route: Route,
+  package: Package,
+  box: Box,
+  building: Building2,
+};
 
 export const dynamic = 'force-dynamic';
 
@@ -132,10 +147,23 @@ function EmpaquesHeader() {
   );
 }
 
-function HeroSection({ data, highlights }: { data: EmpaquesCatalogData; highlights: EmpaquesCatalogData | null }) {
+function HeroSection({
+  data,
+  highlights,
+  config,
+}: {
+  data: EmpaquesCatalogData;
+  highlights: EmpaquesCatalogData | null;
+  config: EmpaquesLandingConfig['hero'];
+}) {
   const highlightedProducts = highlights?.productos.length ? highlights.productos : data.productos;
   const featuredProduct = getFeaturedProduct(highlightedProducts);
-  const imageSrc = featuredProduct ? getProductImageSrc(featuredProduct) : null;
+  const heroImageOverride = config.imagen_url;
+  const fallbackImageSrc = featuredProduct ? getProductImageSrc(featuredProduct) : null;
+  const imageSrc = heroImageOverride ?? fallbackImageSrc;
+  const imageAlt = heroImageOverride
+    ? config.titulo_destacado
+    : featuredProduct?.name ?? 'Producto de Empaques Imprima';
 
   return (
     <section className="relative flex min-h-[760px] items-center overflow-hidden bg-white">
@@ -145,7 +173,7 @@ function HeroSection({ data, highlights }: { data: EmpaquesCatalogData; highligh
         <div className="absolute right-[-8%] top-24 hidden h-[560px] w-[560px] items-center justify-center rounded-full bg-white/30 p-16 backdrop-blur-sm lg:flex">
           <Image
             src={imageSrc}
-            alt={featuredProduct?.name ?? 'Producto de Empaques Imprima'}
+            alt={imageAlt}
             width={460}
             height={460}
             unoptimized
@@ -157,26 +185,26 @@ function HeroSection({ data, highlights }: { data: EmpaquesCatalogData; highligh
       <div className="relative z-10 mx-auto grid w-full max-w-7xl grid-cols-1 items-center gap-12 px-4 py-24 sm:px-6 lg:grid-cols-2 lg:px-8">
         <div className="max-w-2xl space-y-8">
           <h1 className="text-5xl font-black leading-[1.05] tracking-tight text-slate-950 md:text-7xl">
-            Soluciones de Empaque que <span className="text-[#9CBB06]">Impulsan tu Marca</span>
+            {config.titulo_pre} <span className="text-[#9CBB06]">{config.titulo_destacado}</span>
           </h1>
           <p className="max-w-xl text-xl font-bold leading-relaxed text-slate-600">
-            Diseño estratégico, sostenibilidad y producción a escala para empresas que exigen calidad premium en cada entrega.
+            {config.subtitulo}
           </p>
           <div className="flex flex-col gap-4 pt-2 sm:flex-row">
             <Link
               href="#catalogo"
               className="inline-flex items-center justify-center gap-2 rounded-full bg-[#9CBB06] px-8 py-4 text-lg font-black text-slate-950 shadow-lg shadow-[#9CBB06]/20 transition hover:bg-[#8cab05]"
             >
-              Ver Catálogo Corporativo
+              {config.cta_primario_texto}
               <ArrowRight className="h-5 w-5" />
             </Link>
             <LeadButton
               fuente="empaques_hero"
-              texto="Hablar con un Asesor"
+              texto={config.cta_secundario_texto}
               variant="outline"
               hideIcon
               className="justify-center rounded-full border border-slate-300 bg-white px-8 py-4 text-lg font-black text-slate-950 hover:bg-slate-50"
-              mensajePrefill="Estoy interesado en soluciones de empaque para mi empresa."
+              mensajePrefill={config.mensaje_lead}
             />
           </div>
         </div>
@@ -264,49 +292,31 @@ function CategoriesSection({ data, highlights }: { data: EmpaquesCatalogData; hi
   );
 }
 
-function BenefitsSection() {
-  const benefits = [
-    {
-      icon: Sparkles,
-      title: 'Personalización Total',
-      text: 'Desde dimensiones exactas hasta acabados especiales para que el empaque responda a tu producto y operación.',
-    },
-    {
-      icon: Leaf,
-      title: 'Compromiso Sostenible',
-      text: 'Alternativas y materiales pensados para reducir impacto sin comprometer presentación ni resistencia.',
-    },
-    {
-      icon: Route,
-      title: 'Logística Nacional Optimizada',
-      text: 'Acompañamiento comercial para abastecer necesidades recurrentes, proyectos especiales y operación nacional.',
-    },
-  ];
-
+function BenefitsSection({ config }: { config: EmpaquesLandingConfig['ventajas'] }) {
   return (
     <section id="ventajas" className="relative overflow-hidden bg-[#F1F1EE] px-4 py-28 sm:px-6 lg:px-8">
       <div className="absolute right-0 top-0 h-[520px] w-[520px] translate-x-1/3 -translate-y-1/2 rounded-full bg-[#9CBB06]/10 blur-3xl" />
       <div className="absolute bottom-0 left-0 h-[420px] w-[420px] -translate-x-1/4 translate-y-1/3 rounded-full bg-slate-300/30 blur-3xl" />
       <div className="relative z-10 mx-auto flex max-w-7xl flex-col gap-14 md:flex-row md:items-center">
         <div className="w-full space-y-6 md:w-1/3">
-          <h2 className="text-sm font-black uppercase tracking-[0.24em] text-[#9CBB06]">Ventaja Competitiva</h2>
+          <h2 className="text-sm font-black uppercase tracking-[0.24em] text-[#9CBB06]">{config.eyebrow}</h2>
           <h3 className="text-4xl font-black leading-tight tracking-tight text-slate-950 md:text-5xl">
-            Por qué elegir <br />Imprima B2B
+            {config.titulo}
           </h3>
           <p className="text-lg font-bold leading-8 text-slate-600">
-            Desarrollamos sistemas de empaque que optimizan tu cadena de suministro y elevan la percepción de tu marca.
+            {config.subtitulo}
           </p>
         </div>
         <div className="grid w-full grid-cols-1 gap-6 sm:grid-cols-2 md:w-2/3">
-          {benefits.map((benefit, index) => {
-            const Icon = benefit.icon;
+          {config.items.map((benefit, index) => {
+            const Icon = BENEFIT_ICON_MAP[benefit.icon] ?? Sparkles;
             return (
-              <div key={benefit.title} className={`rounded-2xl border border-white/50 bg-white/80 p-8 shadow-sm backdrop-blur-xl transition hover:shadow-md ${index === 2 ? 'sm:col-span-2' : ''}`}>
+              <div key={`${benefit.titulo}-${index}`} className={`rounded-2xl border border-white/50 bg-white/80 p-8 shadow-sm backdrop-blur-xl transition hover:shadow-md ${index === 2 ? 'sm:col-span-2' : ''}`}>
                 <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-xl bg-[#D9E997]">
                   <Icon className="h-7 w-7 text-[#9CBB06]" />
                 </div>
-                <h4 className="text-xl font-black text-slate-950">{benefit.title}</h4>
-                <p className="mt-3 text-sm font-semibold leading-7 text-slate-600">{benefit.text}</p>
+                <h4 className="text-xl font-black text-slate-950">{benefit.titulo}</h4>
+                <p className="mt-3 text-sm font-semibold leading-7 text-slate-600">{benefit.texto}</p>
               </div>
             );
           })}
@@ -620,20 +630,22 @@ function EmpaquesContent({
   search,
   categoryId,
   page,
+  landing,
 }: {
   data: EmpaquesCatalogData;
   highlights: EmpaquesCatalogData | null;
   search: string;
   categoryId: number | null;
   page: number;
+  landing: EmpaquesLandingConfig;
 }) {
   return (
     <div className="min-h-screen bg-[#F8F8F5] text-slate-950 antialiased">
       <EmpaquesHeader />
       <main>
-        <HeroSection data={data} highlights={highlights} />
+        <HeroSection data={data} highlights={highlights} config={landing.hero} />
         <CategoriesSection data={data} highlights={highlights} />
-        <BenefitsSection />
+        <BenefitsSection config={landing.ventajas} />
         <CatalogProductsSection data={data} search={search} categoryId={categoryId} page={page} />
         <QuoteSection data={data} />
       </main>
@@ -653,10 +665,23 @@ export default async function EmpaquesPage({ searchParams }: EmpaquesPageProps) 
   const search = getSingleSearchParam(resolvedSearchParams?.q).trim();
   const categoryId = parsePositiveInteger(getSingleSearchParam(resolvedSearchParams?.categoria));
   const page = parsePositiveInteger(getSingleSearchParam(resolvedSearchParams?.page)) ?? 1;
-  const result = await loadEmpaquesData(search, categoryId, page);
+
+  const [result, landing] = await Promise.all([
+    loadEmpaquesData(search, categoryId, page),
+    getEmpaquesLandingConfig().catch(() => DEFAULT_LANDING_CONFIG),
+  ]);
 
   if (result.ok) {
-    return <EmpaquesContent data={result.data} highlights={result.highlights} search={search} categoryId={categoryId} page={page} />;
+    return (
+      <EmpaquesContent
+        data={result.data}
+        highlights={result.highlights}
+        search={search}
+        categoryId={categoryId}
+        page={page}
+        landing={landing}
+      />
+    );
   }
 
   return <ConfigurationPending message={result.configurationError} />;
