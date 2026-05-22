@@ -25,6 +25,8 @@ import { formatMarkupPercent } from '@/lib/pricing/cost-staleness';
 import { VariantsModal } from '@/components/admin/VariantsModal';
 import { useAuth } from '@/contexts/AuthContext';
 import { MediaUpload } from '@/components/admin/MediaUpload';
+import type { UserRole } from '@/types';
+import { userHasAnyRole } from '@/lib/auth/roles';
 import {
   DEFAULT_LANDING_CONFIG,
   LANDING_BENEFIT_ICONS,
@@ -39,9 +41,9 @@ type PublicationState = 'borrador' | 'publicado';
 // Roles que pueden gestionar (config base + editorial + asignaciones de
 // asesoras). El asesor entra a /admin/empaques vía asesor_storefronts y sólo
 // ve las pestañas de pricing.
-const MANAGE_ROLES = new Set(['super_admin', 'direccion']);
-const PRICING_ROLES = new Set(['super_admin', 'direccion', 'asesor']);
-const EDITORIAL_ROLES = new Set(['super_admin', 'direccion', 'editor_contenido']);
+const MANAGE_ROLES: readonly UserRole[] = ['super_admin', 'direccion'];
+const PRICING_ROLES: readonly UserRole[] = ['super_admin', 'direccion', 'asesor'];
+const EDITORIAL_ROLES: readonly UserRole[] = ['super_admin', 'direccion', 'editor_contenido'];
 
 interface StorefrontConfig {
   id: string;
@@ -283,10 +285,13 @@ async function parseJsonResponse<T>(response: Response): Promise<T> {
 
 export default function AdminEmpaquesPage() {
   const { user } = useAuth();
-  const userRol = user?.rol ?? null;
-  const canManage = userRol ? MANAGE_ROLES.has(userRol) : false;
-  const canEditorial = userRol ? EDITORIAL_ROLES.has(userRol) : false;
-  const canPricing = userRol ? PRICING_ROLES.has(userRol) : false;
+  // Capacidades calculadas con userHasAnyRole para que también se respeten
+  // los roles extra (multi-rol). Vanesa, por ejemplo, es asesor (primario)
+  // + editor_contenido (extra): entra a Editorial y Landing por el extra,
+  // y a Márgenes/Precios por el primario.
+  const canManage = userHasAnyRole(user, MANAGE_ROLES);
+  const canEditorial = userHasAnyRole(user, EDITORIAL_ROLES);
+  const canPricing = userHasAnyRole(user, PRICING_ROLES);
 
   // Pestaña inicial: si la actora no puede tocar configuración (caso asesor),
   // arrancamos directo en márgenes que es su flujo natural.

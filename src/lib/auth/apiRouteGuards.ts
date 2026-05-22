@@ -21,6 +21,11 @@ export type AuthorizedApiContext = {
     empresa_id: string | null;
     id: string;
     rol: ApiActorRole;
+    /**
+     * Roles extra activos del actor (multi-rol). Permite que un endpoint
+     * tome decisiones por capacidad sin volver a consultar la BD.
+     */
+    rolesExtra: ApiActorRole[];
   };
 };
 
@@ -70,13 +75,48 @@ export async function authorizeApiRoles(
     error ||
     !actorProfile ||
     !actorProfile.activo ||
-    !actorProfile.rol ||
-    !allowedRoles.includes(actorProfile.rol)
+    !actorProfile.rol
   ) {
     return NextResponse.json(
       {
         error: 'FORBIDDEN',
         details: error?.message ?? null,
+      },
+      { status: 403 }
+    );
+  }
+
+  // Carga roles extra activos del actor. Falla silenciosamente: si la
+  // tabla no existe (proyecto sin migración 044) tratamos como [].
+  let rolesExtra: ApiActorRole[] = [];
+  try {
+    const { data: extraRows } = await admin
+      .from('usuario_roles_extra')
+      .select('rol')
+      .eq('usuario_id', actorProfile.id)
+      .eq('activo', true);
+    if (Array.isArray(extraRows)) {
+      rolesExtra = extraRows
+        .map((row) => String((row as { rol: string }).rol))
+        .filter((r): r is ApiActorRole =>
+          ['super_admin', 'comprador', 'aprobador', 'asesor', 'direccion', 'editor_contenido'].includes(r),
+        ) as ApiActorRole[];
+    }
+  } catch {
+    rolesExtra = [];
+  }
+
+  // Autorización: el actor tiene el permiso si su rol primario O algún
+  // rol extra activo está en allowedRoles.
+  const hasAccess =
+    allowedRoles.includes(actorProfile.rol) ||
+    rolesExtra.some((extra) => allowedRoles.includes(extra));
+
+  if (!hasAccess) {
+    return NextResponse.json(
+      {
+        error: 'FORBIDDEN',
+        details: null,
       },
       { status: 403 }
     );
@@ -89,6 +129,7 @@ export async function authorizeApiRoles(
       empresa_id: actorProfile.empresa_id,
       id: actorProfile.id,
       rol: actorProfile.rol,
+      rolesExtra,
     },
   };
 }

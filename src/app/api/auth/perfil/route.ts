@@ -11,6 +11,28 @@ function getSupabaseAdmin() {
   );
 }
 
+/**
+ * Carga los roles extra activos para un usuario y los devuelve como array
+ * de strings. Falla silenciosamente: si la tabla no existe aún (proyecto
+ * sin migración 044) retorna [] sin tirar error.
+ */
+async function loadRolesExtra(
+  admin: ReturnType<typeof getSupabaseAdmin>,
+  usuarioId: string
+): Promise<string[]> {
+  try {
+    const { data, error } = await admin
+      .from('usuario_roles_extra')
+      .select('rol')
+      .eq('usuario_id', usuarioId)
+      .eq('activo', true);
+    if (error || !Array.isArray(data)) return [];
+    return data.map((row) => String((row as { rol: string }).rol)).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 export async function GET() {
   try {
     const supabase = await createServerSupabaseClient();
@@ -31,6 +53,7 @@ export async function GET() {
 
     const { data: rpcProfile } = await supabase.rpc('get_mi_perfil');
     if (rpcProfile) {
+      // La RPC post-044 ya incluye roles_extra; no hay que enriquecer.
       return NextResponse.json({ profile: rpcProfile });
     }
 
@@ -43,7 +66,8 @@ export async function GET() {
       .maybeSingle();
 
     if (profileByAuthId) {
-      return NextResponse.json({ profile: profileByAuthId });
+      const rolesExtra = await loadRolesExtra(admin, String(profileByAuthId.id));
+      return NextResponse.json({ profile: { ...profileByAuthId, roles_extra: rolesExtra } });
     }
 
     if (!user.email) {
@@ -105,7 +129,11 @@ export async function GET() {
       );
     }
 
-    return NextResponse.json({ profile: relinkedProfile, relinked: true });
+    const rolesExtra = await loadRolesExtra(admin, String(relinkedProfile.id));
+    return NextResponse.json({
+      profile: { ...relinkedProfile, roles_extra: rolesExtra },
+      relinked: true,
+    });
   } catch (error) {
     return NextResponse.json(
       {

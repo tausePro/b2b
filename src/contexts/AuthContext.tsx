@@ -17,6 +17,29 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// Roles válidos del sistema. Se usa para filtrar valores no esperados que
+// pudieran venir de roles_extra (p.ej. después de cambiar el set de roles
+// permitidos sin limpiar la tabla).
+const VALID_ROLES: ReadonlySet<UserRole> = new Set([
+  'super_admin',
+  'comprador',
+  'aprobador',
+  'asesor',
+  'direccion',
+  'editor_contenido',
+]);
+
+function normalizeRolesExtra(raw: unknown): UserRole[] {
+  if (!Array.isArray(raw)) return [];
+  const out: UserRole[] = [];
+  for (const item of raw) {
+    if (typeof item === 'string' && VALID_ROLES.has(item as UserRole)) {
+      out.push(item as UserRole);
+    }
+  }
+  return out;
+}
+
 function mapProfileToUser(data: Record<string, unknown>): User {
   return {
     id: data.id as string,
@@ -25,6 +48,7 @@ function mapProfileToUser(data: Record<string, unknown>): User {
     nombre: data.nombre as string,
     apellido: data.apellido as string,
     rol: data.rol as UserRole,
+    rolesExtra: normalizeRolesExtra(data.roles_extra),
     empresa_id: (data.empresa_id as string) || null,
     sede_id: (data.sede_id as string) || null,
     avatar: data.avatar as string | undefined,
@@ -92,7 +116,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           .maybeSingle();
 
         if (!error && data) {
-          return mapProfileToUser(data as Record<string, unknown>);
+          // El SELECT directo no incluye roles_extra (vienen de otra tabla).
+          // Hacemos un fetch adicional para no perder capacidades extra al
+          // caer en este fallback. Falla silenciosamente: en el peor caso
+          // el usuario solo ve su rol primario hasta el siguiente reload.
+          let rolesExtraRaw: unknown = [];
+          try {
+            const { data: extraRows } = await supabase
+              .from('usuario_roles_extra')
+              .select('rol')
+              .eq('usuario_id', (data as Record<string, unknown>).id as string)
+              .eq('activo', true);
+            if (Array.isArray(extraRows)) {
+              rolesExtraRaw = extraRows.map((row) => (row as { rol: string }).rol);
+            }
+          } catch (extraErr) {
+            console.warn('[Auth] No se pudieron cargar roles_extra (fallback directo):', extraErr);
+          }
+          return mapProfileToUser({
+            ...(data as Record<string, unknown>),
+            roles_extra: rolesExtraRaw,
+          });
         }
         console.warn('[Auth] Query directa falló:', error?.message);
       } catch (e) {

@@ -12,7 +12,8 @@ export interface User {
   email: string;
   nombre: string;
   apellido: string;
-  rol: UserRole;
+  rol: UserRole; // Rol primario: dashboard inicial, branding, RLS base.
+  rolesExtra?: UserRole[]; // Capacidades adicionales activas (multi-rol por composición). Cargadas desde usuario_roles_extra.
   empresa_id: string | null; // NULL para roles Imprima (asesor, direccion)
   sede_id?: string | null;
   avatar?: string;

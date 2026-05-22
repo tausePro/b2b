@@ -1,4 +1,6 @@
 import type { UserRole } from '@/types';
+import type { RoleAwareUser } from '@/lib/auth/roles';
+import { getEffectiveRoles } from '@/lib/auth/roles';
 
 const ROLE_PATH_PREFIXES: Record<UserRole, string[]> = {
   super_admin: ['/admin'],
@@ -50,18 +52,31 @@ function normalizePath(path: string): string {
   return path.endsWith('/') ? path.slice(0, -1) : path;
 }
 
-export function canAccessDashboardPath(role: UserRole, pathname: string): boolean {
+/**
+ * Acepta tanto un rol simple (legacy) como un objeto con rol + rolesExtra
+ * para soportar multi-rol por composición. Si recibe rol simple, se
+ * comporta exactamente como antes.
+ */
+export function canAccessDashboardPath(
+  roleOrUser: UserRole | RoleAwareUser,
+  pathname: string,
+): boolean {
+  const effectiveRoles: UserRole[] =
+    typeof roleOrUser === 'string' ? [roleOrUser] : getEffectiveRoles(roleOrUser);
+
   // super_admin tiene acceso total a todas las rutas (admin + dashboard)
-  if (role === 'super_admin') {
+  if (effectiveRoles.includes('super_admin')) {
     return true;
   }
 
   const normalizedPath = normalizePath(pathname);
-  const allowedPrefixes = ROLE_PATH_PREFIXES[role] ?? [];
 
   if (normalizedPath === '/dashboard') {
     return true;
   }
+
+  // Unión de prefijos permitidos para todos los roles efectivos.
+  const allowedPrefixes = effectiveRoles.flatMap((role) => ROLE_PATH_PREFIXES[role] ?? []);
 
   return allowedPrefixes.some((prefix) => {
     const normalizedPrefix = normalizePath(prefix);

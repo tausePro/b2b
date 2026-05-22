@@ -102,7 +102,10 @@ export default function DashboardLayout({
     );
   }
 
-  const routeAllowed = canAccessDashboardPath(user.rol, pathname);
+  const routeAllowed = canAccessDashboardPath(
+    { rol: user.rol, rolesExtra: user.rolesExtra },
+    pathname,
+  );
 
   if (!routeAllowed) {
     return (
