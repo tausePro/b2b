@@ -122,6 +122,57 @@ export async function getAccessibleEmpresaIds(
   return context.actor.empresa_id ? [context.actor.empresa_id] : [];
 }
 
+/**
+ * Devuelve los IDs (uuid) de storefront_configs a los que el actor puede
+ * acceder en modo gestión (no es el catálogo público anónimo).
+ *
+ * Reglas:
+ *   - super_admin, direccion, editor_contenido → todos los storefronts.
+ *     editor_contenido se incluye porque ya es EDITOR_ROLES en las rutas
+ *     de catálogo / categorías / productos del storefront.
+ *   - asesor → sólo los presentes en `asesor_storefronts` con activo=true.
+ *   - cualquier otro rol → vacío.
+ *
+ * No hace falta filtrar por `storefront_configs.activo` porque los actores
+ * internos pueden necesitar editar storefronts apagados (p. ej. para
+ * relanzarlos). El filtrado por activo se hace en la capa de presentación
+ * pública.
+ */
+export async function getAccessibleStorefrontIds(
+  context: AuthorizedApiContext
+): Promise<string[]> {
+  if (
+    context.actor.rol === 'super_admin' ||
+    context.actor.rol === 'direccion' ||
+    context.actor.rol === 'editor_contenido'
+  ) {
+    const { data, error } = await context.admin.from('storefront_configs').select('id');
+    if (error || !data) {
+      return [];
+    }
+
+    return Array.from(new Set(data.map((item) => String(item.id))));
+  }
+
+  if (context.actor.rol === 'asesor') {
+    const { data, error } = await context.admin
+      .from('asesor_storefronts')
+      .select('storefront_config_id')
+      .eq('usuario_id', context.actor.id)
+      .eq('activo', true);
+
+    if (error || !data) {
+      return [];
+    }
+
+    return Array.from(
+      new Set(data.map((item) => String((item as { storefront_config_id: string }).storefront_config_id)))
+    );
+  }
+
+  return [];
+}
+
 export async function getAccessibleOdooPartnerIds(
   context: AuthorizedApiContext
 ): Promise<Set<number>> {
