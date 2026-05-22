@@ -56,13 +56,27 @@ export async function updateSession(request: NextRequest) {
       return NextResponse.redirect(url);
     }
 
-    // 2. Passthrough sin reescritura: APIs, assets, archivos SEO/agents y
-    //    cualquier ruta ya prefijada con /empaques (evita doble prefijo).
-    const passthroughPrefixes = ['/api/', '/_next/', '/.well-known/', '/empaques'];
+    // 2. Passthrough sin reescritura: APIs, assets, archivos SEO/agents,
+    //    cualquier ruta ya prefijada con /empaques (evita doble prefijo) y
+    //    rutas públicas que se reutilizan tal cual desde la landing principal
+    //    (contacto, nosotros, faq, etc.). Estas viven en src/app/<ruta>/page.tsx
+    //    y no necesitan duplicarse bajo /empaques.
+    const passthroughPrefixes = [
+      '/api/',
+      '/_next/',
+      '/.well-known/',
+      '/empaques',
+      '/contacto',
+      '/nosotros',
+      '/faq',
+      '/terminos',
+      '/privacidad',
+      '/catalogo',
+    ];
     const passthroughExact = new Set(['/robots.txt', '/sitemap.xml', '/llms.txt', '/favicon.ico']);
     const isPassthrough =
       passthroughExact.has(pathname) ||
-      passthroughPrefixes.some((prefix) => pathname.startsWith(prefix));
+      passthroughPrefixes.some((prefix) => pathname === prefix || pathname.startsWith(prefix + '/'));
 
     // 3. Rewrite interno: / → /empaques; /algo → /empaques/algo.
     //    Mantenemos el host original para que el usuario nunca vea /empaques
