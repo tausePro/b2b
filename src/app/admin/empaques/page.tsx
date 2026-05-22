@@ -9,18 +9,31 @@ import {
   CheckCircle2,
   Layers,
   Loader2,
+  Lock,
   Package,
   Percent,
   Save,
   Search,
   Settings,
   Trash2,
+  UserCheck,
+  UserMinus,
+  UserPlus,
+  Users,
 } from 'lucide-react';
 import { formatMarkupPercent } from '@/lib/pricing/cost-staleness';
 import { VariantsModal } from '@/components/admin/VariantsModal';
+import { useAuth } from '@/contexts/AuthContext';
 
-type TabId = 'configuracion' | 'margenes' | 'precios' | 'editorial';
+type TabId = 'configuracion' | 'margenes' | 'precios' | 'editorial' | 'asesoras';
 type PublicationState = 'borrador' | 'publicado';
+
+// Roles que pueden gestionar (config base + editorial + asignaciones de
+// asesoras). El asesor entra a /admin/empaques vía asesor_storefronts y sólo
+// ve las pestañas de pricing.
+const MANAGE_ROLES = new Set(['super_admin', 'direccion']);
+const PRICING_ROLES = new Set(['super_admin', 'direccion', 'asesor']);
+const EDITORIAL_ROLES = new Set(['super_admin', 'direccion', 'editor_contenido']);
 
 interface StorefrontConfig {
   id: string;
@@ -121,6 +134,34 @@ interface ProductOverrideRow {
   seo_title: string | null;
   seo_description: string | null;
   estado_publicacion: PublicationState;
+}
+
+interface AsesoraUsuario {
+  id: string;
+  nombre: string;
+  apellido: string;
+  email: string;
+  rol: string;
+  activo: boolean;
+}
+
+interface AsesoraAsignacion {
+  id: string;
+  usuario_id: string;
+  storefront_config_id: string;
+  activo: boolean;
+  created_at: string;
+  updated_at: string;
+  usuario: AsesoraUsuario | null;
+}
+
+interface AsesoraDisponible {
+  id: string;
+  nombre: string;
+  apellido: string;
+  email: string;
+  activo: boolean;
+  asignada: boolean;
 }
 
 interface CategoryEditorialDraft {
@@ -230,12 +271,21 @@ async function parseJsonResponse<T>(response: Response): Promise<T> {
 }
 
 export default function AdminEmpaquesPage() {
-  const [activeTab, setActiveTab] = useState<TabId>('configuracion');
+  const { user } = useAuth();
+  const userRol = user?.rol ?? null;
+  const canManage = userRol ? MANAGE_ROLES.has(userRol) : false;
+  const canEditorial = userRol ? EDITORIAL_ROLES.has(userRol) : false;
+  const canPricing = userRol ? PRICING_ROLES.has(userRol) : false;
+
+  // Pestaña inicial: si la actora no puede tocar configuración (caso asesor),
+  // arrancamos directo en márgenes que es su flujo natural.
+  const [activeTab, setActiveTab] = useState<TabId>(canManage ? 'configuracion' : 'margenes');
   const [loading, setLoading] = useState(true);
   const [savingConfig, setSavingConfig] = useState(false);
   const [savingMargin, setSavingMargin] = useState(false);
   const [savingPriceId, setSavingPriceId] = useState<number | null>(null);
   const [savingEditorial, setSavingEditorial] = useState(false);
+  const [savingAsesoraId, setSavingAsesoraId] = useState<string | null>(null);
   const [variantsModal, setVariantsModal] = useState<{ templateId: number; productName: string; fallbackPrice?: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -246,6 +296,9 @@ export default function AdminEmpaquesPage() {
   const [precios, setPrecios] = useState<PrecioRow[]>([]);
   const [categoryOverrides, setCategoryOverrides] = useState<CategoryOverrideRow[]>([]);
   const [productOverrides, setProductOverrides] = useState<ProductOverrideRow[]>([]);
+  const [asesorasAsignadas, setAsesorasAsignadas] = useState<AsesoraAsignacion[]>([]);
+  const [asesorasDisponibles, setAsesorasDisponibles] = useState<AsesoraDisponible[]>([]);
+  const [asesoraSeleccionadaId, setAsesoraSeleccionadaId] = useState('');
 
   const [nombre, setNombre] = useState('');
   const [subdominio, setSubdominio] = useState('');
@@ -355,6 +408,17 @@ export default function AdminEmpaquesPage() {
     setProductOverrides(data.productos);
   }, []);
 
+  // Sub-recurso de asignaciones asesor ↔ storefront. Solo lo cargan los
+  // roles MANAGE (super_admin/direccion); para asesores, dejamos los arrays
+  // vacíos y la pestaña se oculta vía canManage.
+  const loadAsesoras = useCallback(async () => {
+    const data = await parseJsonResponse<{ asesoras: AsesoraAsignacion[]; disponibles: AsesoraDisponible[] }>(
+      await fetch('/api/admin/storefronts/empaques/asesoras')
+    );
+    setAsesorasAsignadas(data.asesoras ?? []);
+    setAsesorasDisponibles(data.disponibles ?? []);
+  }, []);
+
   const loadCatalog = useCallback(async () => {
     const params = new URLSearchParams({ limit: '12', page: String(productPage) });
     if (productSearch.trim()) params.set('search', productSearch.trim());
@@ -370,20 +434,41 @@ export default function AdminEmpaquesPage() {
     setLoading(true);
     setError(null);
     try {
-      await Promise.all([
+      // Mínimo común: config + márgenes + precios. Editorial / pricelists /
+      // asesoras se cargan condicionales según el rol para no disparar 403
+      // en endpoints que el actor no puede consumir.
+      const tasks: Promise<unknown>[] = [
         loadConfig(),
         loadMargenes(),
         loadPrecios(),
-        loadCategoryOverrides(),
-        loadProductOverrides(),
-        loadPricelists(),
-      ]);
+      ];
+
+      if (canEditorial) {
+        tasks.push(loadCategoryOverrides());
+        tasks.push(loadProductOverrides());
+      }
+      if (canManage) {
+        tasks.push(loadPricelists());
+        tasks.push(loadAsesoras());
+      }
+
+      await Promise.all(tasks);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'No se pudo cargar el panel de Empaques.');
     } finally {
       setLoading(false);
     }
-  }, [loadCategoryOverrides, loadConfig, loadMargenes, loadPrecios, loadPricelists, loadProductOverrides]);
+  }, [
+    canEditorial,
+    canManage,
+    loadAsesoras,
+    loadCategoryOverrides,
+    loadConfig,
+    loadMargenes,
+    loadPrecios,
+    loadPricelists,
+    loadProductOverrides,
+  ]);
 
   useEffect(() => {
     void loadAll();
@@ -396,6 +481,22 @@ export default function AdminEmpaquesPage() {
       });
     }
   }, [loadCatalog, loading]);
+
+  // Si la actora cambia de rol o entra a una pestaña que ya no le aplica,
+  // forzamos un fallback al primer tab visible. La construcción del array
+  // visible ocurre en el render abajo; aquí replicamos la condición mínima
+  // para evitar setState durante render.
+  useEffect(() => {
+    const allowed: TabId[] = [
+      ...(canManage ? (['configuracion'] as TabId[]) : []),
+      ...(canPricing ? (['margenes', 'precios'] as TabId[]) : []),
+      ...(canEditorial ? (['editorial'] as TabId[]) : []),
+      ...(canManage ? (['asesoras'] as TabId[]) : []),
+    ];
+    if (allowed.length > 0 && !allowed.includes(activeTab)) {
+      setActiveTab(allowed[0]);
+    }
+  }, [canManage, canPricing, canEditorial, activeTab]);
 
   useEffect(() => {
     const selectedCategory = categories.find((category) => String(category.id) === editorialCategoryId);
@@ -596,6 +697,79 @@ export default function AdminEmpaquesPage() {
     }
   };
 
+  // ----------------------------------------------------------------
+  // Asignaciones asesor ↔ storefront
+  //
+  // El UI se cierra a `canManage` (super_admin/direccion). Aún así, los
+  // endpoints validan rol en el servidor; este handler asume que sólo se
+  // llama desde la pestaña Asesoras.
+  // ----------------------------------------------------------------
+  const handleAssignAsesora = async () => {
+    if (!asesoraSeleccionadaId) return;
+    setSavingAsesoraId(asesoraSeleccionadaId);
+    setError(null);
+
+    try {
+      await parseJsonResponse<{ asesora: AsesoraAsignacion }>(
+        await fetch('/api/admin/storefronts/empaques/asesoras', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ usuario_id: asesoraSeleccionadaId, activo: true }),
+        })
+      );
+      await loadAsesoras();
+      setAsesoraSeleccionadaId('');
+      showToast('Asesora asignada al storefront.');
+    } catch (assignError) {
+      setError(assignError instanceof Error ? assignError.message : 'No se pudo asignar la asesora.');
+    } finally {
+      setSavingAsesoraId(null);
+    }
+  };
+
+  const handleUnassignAsesora = async (asignacion: AsesoraAsignacion) => {
+    setSavingAsesoraId(asignacion.usuario_id);
+    setError(null);
+
+    try {
+      await parseJsonResponse<{ ok: true }>(
+        await fetch(
+          `/api/admin/storefronts/empaques/asesoras?usuario_id=${encodeURIComponent(asignacion.usuario_id)}`,
+          { method: 'DELETE' }
+        )
+      );
+      await loadAsesoras();
+      showToast('Asesora desasignada.');
+    } catch (unassignError) {
+      setError(unassignError instanceof Error ? unassignError.message : 'No se pudo desasignar la asesora.');
+    } finally {
+      setSavingAsesoraId(null);
+    }
+  };
+
+  // Activar/desactivar manteniendo la fila (soft toggle). Útil cuando se
+  // quiere quitar acceso temporal sin perder histórico de la asignación.
+  const handleToggleAsesora = async (asignacion: AsesoraAsignacion) => {
+    setSavingAsesoraId(asignacion.usuario_id);
+    setError(null);
+
+    try {
+      await parseJsonResponse<{ asesora: AsesoraAsignacion }>(
+        await fetch('/api/admin/storefronts/empaques/asesoras', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ usuario_id: asignacion.usuario_id, activo: !asignacion.activo }),
+        })
+      );
+      await loadAsesoras();
+      showToast(asignacion.activo ? 'Asesora desactivada.' : 'Asesora reactivada.');
+    } catch (toggleError) {
+      setError(toggleError instanceof Error ? toggleError.message : 'No se pudo cambiar el estado.');
+    } finally {
+      setSavingAsesoraId(null);
+    }
+  };
+
   const handleSearchProducts = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setProductPage(1);
@@ -610,11 +784,25 @@ export default function AdminEmpaquesPage() {
     );
   }
 
+  // Tabs visibles por rol. La actora asesor sólo ve pricing (márgenes y
+  // precios manuales); MANAGE ve todo; editor_contenido pierde Configuración
+  // y Asesoras (no decide pricing ni asignaciones).
   const tabs: { id: TabId; label: string; icon: React.ReactNode }[] = [
-    { id: 'configuracion', label: 'Configuración', icon: <Settings className="h-4 w-4" /> },
-    { id: 'margenes', label: 'Márgenes', icon: <Percent className="h-4 w-4" /> },
-    { id: 'precios', label: 'Precios manuales', icon: <Package className="h-4 w-4" /> },
-    { id: 'editorial', label: 'Editorial', icon: <Package className="h-4 w-4" /> },
+    ...(canManage
+      ? [{ id: 'configuracion' as TabId, label: 'Configuración', icon: <Settings className="h-4 w-4" /> }]
+      : []),
+    ...(canPricing
+      ? [
+          { id: 'margenes' as TabId, label: 'Márgenes', icon: <Percent className="h-4 w-4" /> },
+          { id: 'precios' as TabId, label: 'Precios manuales', icon: <Package className="h-4 w-4" /> },
+        ]
+      : []),
+    ...(canEditorial
+      ? [{ id: 'editorial' as TabId, label: 'Editorial', icon: <Package className="h-4 w-4" /> }]
+      : []),
+    ...(canManage
+      ? [{ id: 'asesoras' as TabId, label: 'Asesoras', icon: <Users className="h-4 w-4" /> }]
+      : []),
   ];
 
   return (
@@ -1289,6 +1477,123 @@ export default function AdminEmpaquesPage() {
               )}
             </div>
           </form>
+        </div>
+      )}
+
+      {activeTab === 'asesoras' && canManage && (
+        <div className="space-y-6">
+          <div className="rounded-2xl border border-border bg-white p-6 shadow-sm">
+            <div className="flex flex-col gap-1">
+              <h2 className="text-lg font-bold text-slate-900">Asignar asesora al storefront</h2>
+              <p className="text-sm text-slate-500">
+                Las asesoras asignadas pueden editar márgenes y overrides de precio del storefront <strong>empaques</strong>. No pueden cambiar la configuración base ni el modo de pricing.
+              </p>
+            </div>
+            <div className="mt-5 grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
+              <label className="space-y-2 block">
+                <span className="text-sm font-semibold text-slate-700">Asesora</span>
+                <select
+                  value={asesoraSeleccionadaId}
+                  onChange={(event) => setAsesoraSeleccionadaId(event.target.value)}
+                  className="w-full rounded-lg border border-border px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                >
+                  <option value="">Selecciona una asesora activa</option>
+                  {asesorasDisponibles
+                    .filter((asesora) => !asesora.asignada)
+                    .map((asesora) => (
+                      <option key={asesora.id} value={asesora.id}>
+                        {asesora.nombre} {asesora.apellido} · {asesora.email}
+                      </option>
+                    ))}
+                </select>
+                {asesorasDisponibles.length === 0 && (
+                  <span className="text-xs text-slate-500">No hay asesoras activas en el sistema. Crea una en Administradores antes de asignar.</span>
+                )}
+                {asesorasDisponibles.length > 0 && asesorasDisponibles.every((a) => a.asignada) && (
+                  <span className="text-xs text-slate-500">Todas las asesoras activas ya están asignadas.</span>
+                )}
+              </label>
+              <button
+                type="button"
+                onClick={() => void handleAssignAsesora()}
+                disabled={!asesoraSeleccionadaId || savingAsesoraId !== null}
+                className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {savingAsesoraId ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
+                Asignar
+              </button>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-border bg-white shadow-sm overflow-hidden">
+            <div className="border-b border-border px-6 py-4">
+              <h2 className="text-lg font-bold text-slate-900">Asesoras asignadas</h2>
+              <p className="text-sm text-slate-500">{asesorasAsignadas.length} asignación{asesorasAsignadas.length === 1 ? '' : 'es'}</p>
+            </div>
+            <div className="divide-y divide-border">
+              {asesorasAsignadas.map((asignacion) => {
+                const usuario = asignacion.usuario;
+                const saving = savingAsesoraId === asignacion.usuario_id;
+                const userInactive = usuario ? !usuario.activo : false;
+                return (
+                  <div key={asignacion.id} className="flex flex-col gap-2 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <p className="font-semibold text-slate-900 truncate">
+                        {usuario ? `${usuario.nombre} ${usuario.apellido}` : 'Usuario eliminado'}
+                      </p>
+                      <p className="text-xs text-slate-500 truncate">
+                        {usuario?.email ?? '—'}
+                      </p>
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        <span
+                          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                            asignacion.activo
+                              ? 'bg-emerald-50 text-emerald-700'
+                              : 'bg-slate-100 text-slate-600'
+                          }`}
+                        >
+                          {asignacion.activo ? 'Activa' : 'Desactivada'}
+                        </span>
+                        {userInactive && (
+                          <span
+                            className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700"
+                            title="El usuario está marcado como inactivo en Administradores. Aunque la asignación exista, no podrá entrar al panel."
+                          >
+                            <Lock className="h-2.5 w-2.5" />
+                            Usuario inactivo
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void handleToggleAsesora(asignacion)}
+                        disabled={saving}
+                        className="inline-flex items-center gap-2 rounded-lg border border-border bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                        title={asignacion.activo ? 'Desactivar (mantiene la fila para reactivar luego)' : 'Reactivar acceso'}
+                      >
+                        {asignacion.activo ? <UserMinus className="h-4 w-4" /> : <UserCheck className="h-4 w-4" />}
+                        {asignacion.activo ? 'Desactivar' : 'Reactivar'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleUnassignAsesora(asignacion)}
+                        disabled={saving}
+                        className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-60"
+                        title="Eliminar asignación (irreversible salvo reasignar)"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+              {asesorasAsignadas.length === 0 && (
+                <div className="px-6 py-8 text-sm text-slate-500">No hay asesoras asignadas. Selecciona una arriba para empezar.</div>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>

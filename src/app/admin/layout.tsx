@@ -34,7 +34,11 @@ interface MenuSection {
   items: MenuItem[];
 }
 
-const ADMIN_ROLES = ['super_admin', 'direccion', 'editor_contenido'];
+// Roles que pueden ENTRAR al panel /admin. asesor entra solo para gestionar
+// pricing del storefront empaques cuando esté asignado en asesor_storefronts.
+// El backend igualmente valida acceso por slug, así que si entra y no está
+// asignado verá un 403 al cargar /admin/empaques.
+const ADMIN_ROLES = ['super_admin', 'direccion', 'editor_contenido', 'asesor'];
 
 const allMenuSections: (MenuSection & { roles?: string[] })[] = [
   {
@@ -49,10 +53,20 @@ const allMenuSections: (MenuSection & { roles?: string[] })[] = [
   },
   {
     label: 'Contenido',
+    roles: ['super_admin', 'direccion', 'editor_contenido'],
     items: [
       { href: '/admin/cms', label: 'CMS Landing', icon: FileText },
       { href: '/admin/empaques', label: 'Empaques', icon: Package },
       { href: '/admin/leads', label: 'Leads', icon: UserPlus },
+    ],
+  },
+  {
+    // Sección dedicada al asesor: sólo Empaques (pricing del storefront).
+    // El acceso real lo restringe el backend vía asesor_storefronts.
+    label: 'Mi pricing',
+    roles: ['asesor'],
+    items: [
+      { href: '/admin/empaques', label: 'Empaques', icon: Package },
     ],
   },
   {
@@ -69,6 +83,7 @@ const ROLE_LABELS: Record<string, string> = {
   super_admin: 'Super Admin',
   direccion: 'Dirección',
   editor_contenido: 'Editor Contenido',
+  asesor: 'Asesor',
 };
 
 export default function AdminLayout({
@@ -94,9 +109,14 @@ export default function AdminLayout({
       } else if (!ADMIN_ROLES.includes(user.rol)) {
         console.warn('[AdminLayout] Rol no autorizado:', user.rol);
         router.replace('/dashboard');
+      } else if (user.rol === 'asesor' && (pathname === '/admin' || pathname === '/admin/')) {
+        // Asesor no tiene panel de resumen; lo mandamos directo a su único
+        // espacio (Empaques). Si en el futuro aparece más de un storefront,
+        // este redirect debería convertirse en un selector.
+        router.replace('/admin/empaques');
       }
     }
-  }, [loading, user, supabaseUser, router]);
+  }, [loading, user, supabaseUser, router, pathname]);
 
   if (loading) {
     return (

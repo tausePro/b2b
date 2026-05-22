@@ -26,7 +26,23 @@ async function resolveStorefrontIdBySlug(
   return { storefrontId: String(data.id) };
 }
 
-// GET — Listar asesoras asignadas al storefront
+// GET — Listar asesoras asignadas al storefront + asesoras disponibles para asignar.
+//
+// Respuesta:
+//   {
+//     asesoras: Array<{
+//       id, usuario_id, storefront_config_id, activo,
+//       created_at, updated_at,
+//       usuario: { id, nombre, apellido, email, rol, activo } | null
+//     }>,
+//     disponibles: Array<{
+//       id, nombre, apellido, email, activo,
+//       asignada: boolean   // true si ya está en `asesoras` con activo=true
+//     }>
+//   }
+//
+// La razón de incluir `disponibles` en el mismo endpoint es evitar exponer un
+// /api/admin/usuarios?rol=asesor genérico y mantener una sola llamada del UI.
 export async function GET(
   _request: NextRequest,
   context: { params: Promise<{ slug: string }> }
@@ -38,8 +54,7 @@ export async function GET(
   const resolved = await resolveStorefrontIdBySlug(auth, slug);
   if (resolved instanceof NextResponse) return resolved;
 
-  // Traemos asignaciones con info básica del usuario para que la UI pueda
-  // pintar nombre, email y rol sin un segundo round-trip.
+  // 1. Asignaciones del storefront.
   const { data: asignaciones, error } = await auth.admin
     .from('asesor_storefronts')
     .select('id, usuario_id, storefront_config_id, activo, created_at, updated_at')
@@ -53,7 +68,25 @@ export async function GET(
   const rows = Array.isArray(asignaciones) ? asignaciones : [];
   const usuarioIds = Array.from(new Set(rows.map((row) => String(row.usuario_id))));
 
-  let usuariosById: Record<string, { id: string; nombre: string; apellido: string; email: string; rol: string; activo: boolean }> = {};
+  // 2. Todas las asesoras activas (para buscador de asignación).
+  const { data: asesoresActivos, error: asesoresError } = await auth.admin
+    .from('usuarios')
+    .select('id, nombre, apellido, email, rol, activo')
+    .eq('rol', 'asesor')
+    .eq('activo', true)
+    .order('nombre', { ascending: true });
+
+  if (asesoresError) {
+    return NextResponse.json({ error: asesoresError.message }, { status: 500 });
+  }
+
+  // 3. Asesoras asignadas que pueden ya no ser activas (e.g. fueron desactivadas
+  //    pero se mantiene la asignación). Las mergeamos para no perder la info.
+  let usuariosAsignadosById: Record<
+    string,
+    { id: string; nombre: string; apellido: string; email: string; rol: string; activo: boolean }
+  > = {};
+
   if (usuarioIds.length > 0) {
     const { data: usuarios, error: usuariosError } = await auth.admin
       .from('usuarios')
@@ -64,7 +97,7 @@ export async function GET(
       return NextResponse.json({ error: usuariosError.message }, { status: 500 });
     }
 
-    usuariosById = Object.fromEntries(
+    usuariosAsignadosById = Object.fromEntries(
       (usuarios ?? []).map((u) => [
         String(u.id),
         {
@@ -79,6 +112,10 @@ export async function GET(
     );
   }
 
+  const asignadasActivasIds = new Set(
+    rows.filter((row) => row.activo === true).map((row) => String(row.usuario_id))
+  );
+
   const asesoras = rows.map((row) => ({
     id: String(row.id),
     usuario_id: String(row.usuario_id),
@@ -86,10 +123,19 @@ export async function GET(
     activo: Boolean(row.activo),
     created_at: row.created_at,
     updated_at: row.updated_at,
-    usuario: usuariosById[String(row.usuario_id)] ?? null,
+    usuario: usuariosAsignadosById[String(row.usuario_id)] ?? null,
   }));
 
-  return NextResponse.json({ asesoras });
+  const disponibles = (asesoresActivos ?? []).map((u) => ({
+    id: String(u.id),
+    nombre: String(u.nombre ?? ''),
+    apellido: String(u.apellido ?? ''),
+    email: String(u.email ?? ''),
+    activo: Boolean(u.activo),
+    asignada: asignadasActivasIds.has(String(u.id)),
+  }));
+
+  return NextResponse.json({ asesoras, disponibles });
 }
 
 // POST — Asignar una asesora al storefront
