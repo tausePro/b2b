@@ -34,6 +34,46 @@ export async function updateSession(request: NextRequest) {
     }
   }
 
+  // ── Subdominio público de Empaques ──
+  // empaques.imprima.com.co (prod) / empaques.localhost (dev) sirve el
+  // storefront público de Empaques. Reescribimos toda ruta a /empaques/* y
+  // bloqueamos paneles internos. No consultamos sesión Supabase para
+  // visitantes anónimos: el storefront es público y la mayoría de tráfico no
+  // necesita la cookie. Si en el futuro se requiere auth (e.g. carrito de
+  // un comprador logueado) se mueve este bloque después del createServerClient.
+  const isEmpaquesSubdomain = hostname.startsWith('empaques.');
+  if (isEmpaquesSubdomain) {
+    // 1. Rutas internas que NO deben verse desde el subdominio público.
+    //    Redirigimos a la home del subdominio en vez de 404 para que el
+    //    visitante caiga siempre en una página utilizable.
+    const blockedPrefixes = ['/admin', '/dashboard', '/login', '/auth'];
+    const isBlocked = blockedPrefixes.some(
+      (prefix) => pathname === prefix || pathname.startsWith(prefix + '/')
+    );
+    if (isBlocked) {
+      const url = request.nextUrl.clone();
+      url.pathname = '/';
+      return NextResponse.redirect(url);
+    }
+
+    // 2. Passthrough sin reescritura: APIs, assets, archivos SEO/agents y
+    //    cualquier ruta ya prefijada con /empaques (evita doble prefijo).
+    const passthroughPrefixes = ['/api/', '/_next/', '/.well-known/', '/empaques'];
+    const passthroughExact = new Set(['/robots.txt', '/sitemap.xml', '/llms.txt', '/favicon.ico']);
+    const isPassthrough =
+      passthroughExact.has(pathname) ||
+      passthroughPrefixes.some((prefix) => pathname.startsWith(prefix));
+
+    // 3. Rewrite interno: / → /empaques; /algo → /empaques/algo.
+    //    Mantenemos el host original para que el usuario nunca vea /empaques
+    //    en la URL.
+    if (!isPassthrough) {
+      const url = request.nextUrl.clone();
+      url.pathname = pathname === '/' ? '/empaques' : `/empaques${pathname}`;
+      return NextResponse.rewrite(url);
+    }
+  }
+
   let supabaseResponse = NextResponse.next({ request });
 
   const supabase = createServerClient(
