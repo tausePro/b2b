@@ -5,6 +5,7 @@ import {
   ArrowRight,
   Box,
   Building2,
+  FileText,
   Leaf,
   Package,
   Route,
@@ -359,6 +360,17 @@ function ProductCard({ product }: { product: EmpaquesCatalogProduct }) {
             {product.requiere_precio_manual ? 'Cotizar' : 'Disponible'}
           </span>
         </div>
+        {product.ficha_tecnica_url && (
+          <a
+            href={product.ficha_tecnica_url}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-600 transition-colors hover:text-slate-950"
+          >
+            <FileText className="h-3.5 w-3.5 text-rose-600" />
+            Ficha técnica (PDF)
+          </a>
+        )}
       </div>
     </article>
   );

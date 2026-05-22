@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { authorizeApiRoles } from '@/lib/auth/apiRouteGuards';
 
 const EDITOR_ROLES = ['super_admin', 'direccion', 'editor_contenido'] as const;
-const SELECT_FIELDS = 'id, storefront_config_id, odoo_product_id, nombre_publico, slug, descripcion_corta, descripcion_larga, imagen_url, galeria, beneficios, usos_recomendados, especificaciones, faqs, orden, visible, destacado, seo_title, seo_description, contenido_extra, estado_publicacion, creado_por, actualizado_por, publicado_at, created_at, updated_at';
+const SELECT_FIELDS = 'id, storefront_config_id, odoo_product_id, nombre_publico, slug, descripcion_corta, descripcion_larga, imagen_url, ficha_tecnica_url, galeria, beneficios, usos_recomendados, especificaciones, faqs, orden, visible, destacado, seo_title, seo_description, contenido_extra, estado_publicacion, creado_por, actualizado_por, publicado_at, created_at, updated_at';
 
 async function getStorefrontContext(slug: string) {
   const auth = await authorizeApiRoles(EDITOR_ROLES);
@@ -109,6 +109,7 @@ export async function POST(
         descripcion_corta: cleanText(body.descripcion_corta),
         descripcion_larga: cleanText(body.descripcion_larga),
         imagen_url: cleanText(body.imagen_url),
+        ficha_tecnica_url: cleanText(body.ficha_tecnica_url),
         galeria: cleanArray(body.galeria),
         beneficios: cleanArray(body.beneficios),
         usos_recomendados: cleanArray(body.usos_recomendados),

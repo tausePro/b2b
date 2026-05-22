@@ -24,6 +24,7 @@ import {
 import { formatMarkupPercent } from '@/lib/pricing/cost-staleness';
 import { VariantsModal } from '@/components/admin/VariantsModal';
 import { useAuth } from '@/contexts/AuthContext';
+import { MediaUpload } from '@/components/admin/MediaUpload';
 
 type TabId = 'configuracion' | 'margenes' | 'precios' | 'editorial' | 'asesoras';
 type PublicationState = 'borrador' | 'publicado';
@@ -128,6 +129,7 @@ interface ProductOverrideRow {
   descripcion_corta: string | null;
   descripcion_larga: string | null;
   imagen_url: string | null;
+  ficha_tecnica_url: string | null;
   orden: number;
   visible: boolean;
   destacado: boolean;
@@ -181,6 +183,7 @@ interface ProductEditorialDraft {
   descripcion_corta: string;
   descripcion_larga: string;
   imagen_url: string;
+  ficha_tecnica_url: string;
   orden: string;
   visible: boolean;
   destacado: boolean;
@@ -253,6 +256,7 @@ function buildProductDraft(product: CatalogProduct, override?: ProductOverrideRo
     descripcion_corta: override?.descripcion_corta ?? '',
     descripcion_larga: override?.descripcion_larga ?? '',
     imagen_url: override?.imagen_url ?? '',
+    ficha_tecnica_url: override?.ficha_tecnica_url ?? '',
     orden: String(override?.orden ?? 0),
     visible: override?.visible ?? true,
     destacado: override?.destacado ?? false,
@@ -679,6 +683,7 @@ export default function AdminEmpaquesPage() {
             descripcion_corta: productDraft.descripcion_corta,
             descripcion_larga: productDraft.descripcion_larga,
             imagen_url: productDraft.imagen_url,
+            ficha_tecnica_url: productDraft.ficha_tecnica_url,
             orden: Number(productDraft.orden),
             visible: productDraft.visible,
             destacado: productDraft.destacado,
@@ -1278,14 +1283,16 @@ export default function AdminEmpaquesPage() {
                     />
                   </label>
                   <div className="grid gap-4 md:grid-cols-[1fr_120px]">
-                    <label className="space-y-2 block">
-                      <span className="text-sm font-semibold text-slate-700">Imagen URL</span>
-                      <input
-                        value={categoryDraft.imagen_url}
-                        onChange={(event) => setCategoryDraft((current) => current ? { ...current, imagen_url: event.target.value } : current)}
-                        className="w-full rounded-lg border border-border px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
-                      />
-                    </label>
+                    <MediaUpload
+                      label="Imagen de la categoría"
+                      value={categoryDraft.imagen_url || null}
+                      onChange={(url) => setCategoryDraft((current) => current ? { ...current, imagen_url: url } : current)}
+                      uploadUrl="/api/admin/storefronts/empaques/upload"
+                      kind="imagen"
+                      folder="categorias"
+                      helpText="PNG, JPG, SVG, WEBP o GIF. Máximo 5 MB."
+                      disabled={savingEditorial}
+                    />
                     <label className="space-y-2 block">
                       <span className="text-sm font-semibold text-slate-700">Orden</span>
                       <input
@@ -1401,14 +1408,16 @@ export default function AdminEmpaquesPage() {
                     />
                   </label>
                   <div className="grid gap-4 md:grid-cols-[1fr_120px]">
-                    <label className="space-y-2 block">
-                      <span className="text-sm font-semibold text-slate-700">Imagen URL</span>
-                      <input
-                        value={productDraft.imagen_url}
-                        onChange={(event) => setProductDraft((current) => current ? { ...current, imagen_url: event.target.value } : current)}
-                        className="w-full rounded-lg border border-border px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
-                      />
-                    </label>
+                    <MediaUpload
+                      label="Imagen del producto"
+                      value={productDraft.imagen_url || null}
+                      onChange={(url) => setProductDraft((current) => current ? { ...current, imagen_url: url } : current)}
+                      uploadUrl="/api/admin/storefronts/empaques/upload"
+                      kind="imagen"
+                      folder="productos"
+                      helpText="PNG, JPG, SVG, WEBP o GIF. Máximo 5 MB."
+                      disabled={savingEditorial}
+                    />
                     <label className="space-y-2 block">
                       <span className="text-sm font-semibold text-slate-700">Orden</span>
                       <input
@@ -1419,6 +1428,16 @@ export default function AdminEmpaquesPage() {
                       />
                     </label>
                   </div>
+                  <MediaUpload
+                    label="Ficha técnica (PDF)"
+                    value={productDraft.ficha_tecnica_url || null}
+                    onChange={(url) => setProductDraft((current) => current ? { ...current, ficha_tecnica_url: url } : current)}
+                    uploadUrl="/api/admin/storefronts/empaques/upload"
+                    kind="pdf"
+                    folder="fichas"
+                    helpText="Solo PDF. Máximo 10 MB. Se mostrará como descarga en la ficha pública del producto."
+                    disabled={savingEditorial}
+                  />
                   <div className="grid gap-4 md:grid-cols-2">
                     <label className="space-y-2 block">
                       <span className="text-sm font-semibold text-slate-700">SEO title</span>
