@@ -14,6 +14,11 @@ export default function DashboardPage() {
   const router = useRouter();
 
   useEffect(() => {
+    // Si editor_contenido es el rol PRIMARIO, redirigimos a su espacio
+    // natural. Para usuarios que solo tienen editor_contenido como rol
+    // extra (p. ej. una asesora que también edita contenido) no
+    // redirigimos: dejamos que vean el dashboard de su rol primario y
+    // usen el sidebar para entrar al panel admin cuando quieran.
     if (!loading && user?.rol === 'editor_contenido') {
       router.replace('/admin/cms');
     }

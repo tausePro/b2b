@@ -4,6 +4,8 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
+import type { UserRole } from '@/types';
+import { getEffectiveRoles, userHasAnyRole } from '@/lib/auth/roles';
 import {
   Loader2,
   LayoutDashboard,
@@ -38,7 +40,7 @@ interface MenuSection {
 // pricing del storefront empaques cuando esté asignado en asesor_storefronts.
 // El backend igualmente valida acceso por slug, así que si entra y no está
 // asignado verá un 403 al cargar /admin/empaques.
-const ADMIN_ROLES = ['super_admin', 'direccion', 'editor_contenido', 'asesor'];
+const ADMIN_ROLES: readonly UserRole[] = ['super_admin', 'direccion', 'editor_contenido', 'asesor'];
 
 const allMenuSections: (MenuSection & { roles?: string[] })[] = [
   {
@@ -106,13 +108,18 @@ export default function AdminLayout({
           console.warn('[AdminLayout] Sin sesión activa. Redirigiendo a /login');
           router.replace('/login');
         }
-      } else if (!ADMIN_ROLES.includes(user.rol)) {
-        console.warn('[AdminLayout] Rol no autorizado:', user.rol);
+      } else if (!userHasAnyRole(user, ADMIN_ROLES)) {
+        console.warn('[AdminLayout] Rol no autorizado:', user.rol, 'extra:', user.rolesExtra);
         router.replace('/dashboard');
-      } else if (user.rol === 'asesor' && (pathname === '/admin' || pathname === '/admin/')) {
-        // Asesor no tiene panel de resumen; lo mandamos directo a su único
-        // espacio (Empaques). Si en el futuro aparece más de un storefront,
-        // este redirect debería convertirse en un selector.
+      } else if (
+        user.rol === 'asesor' &&
+        !userHasAnyRole(user, ['super_admin', 'direccion', 'editor_contenido']) &&
+        (pathname === '/admin' || pathname === '/admin/')
+      ) {
+        // Asesor SIN capacidades editoriales/admin extra no tiene panel
+        // de resumen; lo mandamos directo a su único espacio (Empaques).
+        // Si tiene editor_contenido como rol extra, lo dejamos en /admin
+        // para que vea el sidebar completo y elija.
         router.replace('/admin/empaques');
       }
     }
@@ -129,7 +136,7 @@ export default function AdminLayout({
     );
   }
 
-  if (!user || !ADMIN_ROLES.includes(user.rol)) {
+  if (!user || !userHasAnyRole(user, ADMIN_ROLES)) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background-light">
         <div className="flex flex-col items-center gap-4 max-w-md text-center px-4">
@@ -170,7 +177,15 @@ export default function AdminLayout({
 
       {/* Nav */}
       <div className="flex-1 overflow-y-auto py-6 px-3 space-y-1">
-        {allMenuSections.filter((s) => !s.roles || s.roles.includes(user.rol)).map((section) => (
+        {allMenuSections
+          .filter((s) => {
+            if (!s.roles) return true;
+            // Una sección es visible si CUALQUIER rol efectivo del usuario
+            // (primario o extra) está en la lista de roles permitidos.
+            const effective = getEffectiveRoles(user);
+            return effective.some((role) => s.roles!.includes(role));
+          })
+          .map((section) => (
           <div key={section.label}>
             <div className="px-3 mb-2 mt-4 first:mt-0 text-xs font-semibold uppercase tracking-wider text-slate-400">
               {section.label}

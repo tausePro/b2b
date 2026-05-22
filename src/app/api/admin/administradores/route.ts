@@ -65,7 +65,7 @@ export async function GET() {
       .filter((u) => u.rol === 'asesor')
       .map((u) => u.id);
 
-    let asignaciones: Record<string, { empresa_id: string; empresa_nombre: string }[]> = {};
+    const asignaciones: Record<string, { empresa_id: string; empresa_nombre: string }[]> = {};
 
     if (asesorIds.length > 0) {
       const { data: ae } = await admin
@@ -86,9 +86,34 @@ export async function GET() {
       }
     }
 
+    // Carga roles extra activos para todos los usuarios listados. Falla
+    // silenciosamente si la tabla no existe (proyecto sin migración 044).
+    const userIds = (usuarios ?? []).map((u) => u.id);
+    const rolesExtraByUserId: Record<string, string[]> = {};
+    if (userIds.length > 0) {
+      try {
+        const { data: extraRows } = await admin
+          .from('usuario_roles_extra')
+          .select('usuario_id, rol')
+          .in('usuario_id', userIds)
+          .eq('activo', true);
+        if (Array.isArray(extraRows)) {
+          for (const row of extraRows) {
+            const uid = String((row as { usuario_id: string }).usuario_id);
+            const rol = String((row as { rol: string }).rol);
+            if (!rolesExtraByUserId[uid]) rolesExtraByUserId[uid] = [];
+            rolesExtraByUserId[uid].push(rol);
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+
     const result = (usuarios ?? []).map((u) => ({
       ...u,
       empresas_asignadas: asignaciones[u.id] ?? [],
+      roles_extra_activos: rolesExtraByUserId[u.id] ?? [],
     }));
 
     return NextResponse.json({ usuarios: result });

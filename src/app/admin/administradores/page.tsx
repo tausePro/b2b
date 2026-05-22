@@ -6,6 +6,7 @@ import {
   Plus,
   Loader2,
   Shield,
+  ShieldPlus,
   Briefcase,
   Eye,
   X,
@@ -15,6 +16,7 @@ import {
   UserCheck,
   UserX,
   Building2,
+  Sparkles,
 } from 'lucide-react';
 
 type InternalRole = 'super_admin' | 'asesor' | 'direccion' | 'editor_contenido';
@@ -31,7 +33,34 @@ interface AdminUser {
   created_at: string;
   updated_at: string;
   empresas_asignadas: { empresa_id: string; empresa_nombre: string }[];
+  /**
+   * Roles extra activos del usuario (multi-rol por composición).
+   * Por ejemplo, una asesora con 'editor_contenido' también puede editar
+   * contenido editorial sin perder su rol primario.
+   */
+  roles_extra_activos: InternalRole[];
 }
+
+// Roles que tienen sentido como capacidad extra. Excluimos super_admin para
+// no permitir escalada accidental, y comprador/aprobador porque viven en
+// el dominio de clientes (no son roles internos Imprima).
+const ASSIGNABLE_EXTRA_ROLES: { value: InternalRole; label: string; description: string }[] = [
+  {
+    value: 'editor_contenido',
+    label: 'Editor de Contenido',
+    description: 'Puede editar CMS Landing, Empaques (Editorial + Landing) y Leads.',
+  },
+  {
+    value: 'direccion',
+    label: 'Dirección',
+    description: 'Acceso completo a módulos de gestión (analítica, equipo, configuración).',
+  },
+  {
+    value: 'asesor',
+    label: 'Asesor Comercial',
+    description: 'Acceso a gestión de pedidos y clientes asignados.',
+  },
+];
 
 const ROLE_LABELS: Record<InternalRole, { label: string; color: string; icon: React.ComponentType<{ className?: string }> }> = {
   super_admin: { label: 'Super Admin', color: 'bg-red-100 text-red-700', icon: Shield },
@@ -72,6 +101,12 @@ export default function AdministradoresPage() {
 
   // Toggle activo
   const [togglingId, setTogglingId] = useState<string | null>(null);
+
+  // Modal Capacidades extra (multi-rol)
+  const [extraUser, setExtraUser] = useState<AdminUser | null>(null);
+  const [extraSelected, setExtraSelected] = useState<Set<InternalRole>>(new Set());
+  const [savingExtra, setSavingExtra] = useState(false);
+  const [extraError, setExtraError] = useState<string | null>(null);
 
   const fetchUsuarios = useCallback(async () => {
     setLoading(true);
@@ -191,6 +226,36 @@ export default function AdministradoresPage() {
     setEditError(null);
   };
 
+  const openExtra = (u: AdminUser) => {
+    setExtraUser(u);
+    setExtraSelected(new Set(u.roles_extra_activos ?? []));
+    setExtraError(null);
+  };
+
+  const handleSaveExtra = async () => {
+    if (!extraUser) return;
+    setExtraError(null);
+    setSavingExtra(true);
+    try {
+      const res = await fetch(`/api/admin/administradores/${extraUser.id}/roles-extra`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roles: Array.from(extraSelected) }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Error guardando capacidades');
+      const activos: InternalRole[] = (data.roles_extra_activos ?? []) as InternalRole[];
+      setUsuarios((prev) =>
+        prev.map((u) => (u.id === extraUser.id ? { ...u, roles_extra_activos: activos } : u))
+      );
+      setExtraUser(null);
+    } catch (err) {
+      setExtraError(err instanceof Error ? err.message : 'Error desconocido');
+    } finally {
+      setSavingExtra(false);
+    }
+  };
+
   const stats = {
     total: usuarios.length,
     activos: usuarios.filter((u) => u.activo).length,
@@ -308,12 +373,32 @@ export default function AdministradoresPage() {
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <span
-                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${roleInfo.color}`}
-                        >
-                          <RoleIcon className="w-3 h-3" />
-                          {roleInfo.label}
-                        </span>
+                        <div className="flex flex-col gap-1">
+                          <span
+                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium w-fit ${roleInfo.color}`}
+                          >
+                            <RoleIcon className="w-3 h-3" />
+                            {roleInfo.label}
+                          </span>
+                          {(u.roles_extra_activos ?? []).length > 0 && (
+                            <div className="flex flex-wrap gap-1">
+                              {(u.roles_extra_activos ?? []).map((extraRol) => {
+                                const extraInfo = ROLE_LABELS[extraRol];
+                                if (!extraInfo) return null;
+                                return (
+                                  <span
+                                    key={extraRol}
+                                    title={`Capacidad extra: ${extraInfo.label}`}
+                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600 border border-slate-200"
+                                  >
+                                    <Sparkles className="w-2.5 h-2.5" />
+                                    +{extraInfo.label}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex items-center gap-2">
@@ -367,6 +452,13 @@ export default function AdministradoresPage() {
                             className="p-2 rounded-lg text-slate-400 hover:text-primary hover:bg-primary/10 transition-colors"
                           >
                             <Pencil className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => openExtra(u)}
+                            title="Capacidades extra (multi-rol)"
+                            className="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 transition-colors"
+                          >
+                            <ShieldPlus className="w-4 h-4" />
                           </button>
                           {u.auth_id && (
                             <button
@@ -574,6 +666,96 @@ export default function AdministradoresPage() {
               >
                 {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
                 Guardar Cambios
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Capacidades extra (multi-rol) */}
+      {extraUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setExtraUser(null)} />
+          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-lg p-6">
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-2">
+                <ShieldPlus className="w-5 h-5 text-emerald-600" />
+                <h2 className="text-lg font-bold text-slate-900">Capacidades extra</h2>
+              </div>
+              <button onClick={() => setExtraUser(null)} className="text-slate-400 hover:text-slate-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5">
+                <p>
+                  <strong className="text-slate-900">
+                    {extraUser.nombre} {extraUser.apellido}
+                  </strong>{' '}
+                  &middot; rol primario:{' '}
+                  <span className="font-medium">{ROLE_LABELS[extraUser.rol]?.label ?? extraUser.rol}</span>
+                </p>
+                <p className="mt-1 text-xs">
+                  El usuario conservará su rol primario y, además, podrá acceder a los módulos de las
+                  capacidades que marques aquí. Si desmarcas una, pierde el acceso sin afectar su rol
+                  primario.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                {ASSIGNABLE_EXTRA_ROLES.filter((r) => r.value !== extraUser.rol).map((opt) => {
+                  const checked = extraSelected.has(opt.value);
+                  return (
+                    <label
+                      key={opt.value}
+                      className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                        checked
+                          ? 'border-emerald-200 bg-emerald-50/50'
+                          : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(e) => {
+                          setExtraSelected((prev) => {
+                            const next = new Set(prev);
+                            if (e.target.checked) next.add(opt.value);
+                            else next.delete(opt.value);
+                            return next;
+                          });
+                        }}
+                        className="mt-0.5 w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                      />
+                      <div className="flex-1">
+                        <p className="text-sm font-medium text-slate-900">{opt.label}</p>
+                        <p className="text-xs text-slate-500 mt-0.5">{opt.description}</p>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+
+              {extraError && (
+                <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{extraError}</p>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                onClick={() => setExtraUser(null)}
+                className="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-900"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleSaveExtra}
+                disabled={savingExtra}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-50"
+              >
+                {savingExtra ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                Guardar capacidades
               </button>
             </div>
           </div>
