@@ -25,8 +25,15 @@ import { formatMarkupPercent } from '@/lib/pricing/cost-staleness';
 import { VariantsModal } from '@/components/admin/VariantsModal';
 import { useAuth } from '@/contexts/AuthContext';
 import { MediaUpload } from '@/components/admin/MediaUpload';
+import {
+  DEFAULT_LANDING_CONFIG,
+  LANDING_BENEFIT_ICONS,
+  normalizeLandingConfig,
+  type EmpaquesLandingConfig,
+  type LandingBenefitIcon,
+} from '@/lib/empaques/landing-config-shared';
 
-type TabId = 'configuracion' | 'margenes' | 'precios' | 'editorial' | 'asesoras';
+type TabId = 'configuracion' | 'margenes' | 'precios' | 'editorial' | 'landing' | 'asesoras';
 type PublicationState = 'borrador' | 'publicado';
 
 // Roles que pueden gestionar (config base + editorial + asignaciones de
@@ -284,6 +291,12 @@ export default function AdminEmpaquesPage() {
   // Pestaña inicial: si la actora no puede tocar configuración (caso asesor),
   // arrancamos directo en márgenes que es su flujo natural.
   const [activeTab, setActiveTab] = useState<TabId>(canManage ? 'configuracion' : 'margenes');
+
+  // Landing editorial: copia client-side normalizada; se hidrata desde el GET
+  // del endpoint dedicado y se persiste via PUT al mismo endpoint.
+  const [landing, setLanding] = useState<EmpaquesLandingConfig>(DEFAULT_LANDING_CONFIG);
+  const [savingLanding, setSavingLanding] = useState(false);
+  const [landingLoaded, setLandingLoaded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [savingConfig, setSavingConfig] = useState(false);
   const [savingMargin, setSavingMargin] = useState(false);
@@ -494,13 +507,41 @@ export default function AdminEmpaquesPage() {
     const allowed: TabId[] = [
       ...(canManage ? (['configuracion'] as TabId[]) : []),
       ...(canPricing ? (['margenes', 'precios'] as TabId[]) : []),
-      ...(canEditorial ? (['editorial'] as TabId[]) : []),
+      ...(canEditorial ? (['editorial', 'landing'] as TabId[]) : []),
       ...(canManage ? (['asesoras'] as TabId[]) : []),
     ];
     if (allowed.length > 0 && !allowed.includes(activeTab)) {
       setActiveTab(allowed[0]);
     }
   }, [canManage, canPricing, canEditorial, activeTab]);
+
+  // Carga la landing config cuando el actor puede editar y la pestaña se
+  // activa por primera vez. Evita pedirla en cada cambio de tab.
+  useEffect(() => {
+    if (!canEditorial || landingLoaded || activeTab !== 'landing') return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await parseJsonResponse<{ landing: EmpaquesLandingConfig }>(
+          await fetch('/api/admin/storefronts/empaques/landing'),
+        );
+        if (!cancelled) {
+          setLanding(normalizeLandingConfig({
+            descripcion: data.landing.descripcion,
+            landing: { hero: data.landing.hero, ventajas: data.landing.ventajas },
+          }));
+          setLandingLoaded(true);
+        }
+      } catch (loadError) {
+        if (!cancelled) {
+          setError(loadError instanceof Error ? loadError.message : 'No se pudo cargar la landing.');
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [canEditorial, landingLoaded, activeTab]);
 
   useEffect(() => {
     const selectedCategory = categories.find((category) => String(category.id) === editorialCategoryId);
@@ -803,7 +844,10 @@ export default function AdminEmpaquesPage() {
         ]
       : []),
     ...(canEditorial
-      ? [{ id: 'editorial' as TabId, label: 'Editorial', icon: <Package className="h-4 w-4" /> }]
+      ? [
+          { id: 'editorial' as TabId, label: 'Editorial', icon: <Package className="h-4 w-4" /> },
+          { id: 'landing' as TabId, label: 'Landing', icon: <Layers className="h-4 w-4" /> },
+        ]
       : []),
     ...(canManage
       ? [{ id: 'asesoras' as TabId, label: 'Asesoras', icon: <Users className="h-4 w-4" /> }]
@@ -1497,6 +1541,325 @@ export default function AdminEmpaquesPage() {
             </div>
           </form>
         </div>
+      )}
+
+      {activeTab === 'landing' && canEditorial && (
+        <form
+          onSubmit={async (event) => {
+            event.preventDefault();
+            setSavingLanding(true);
+            setError(null);
+            try {
+              const data = await parseJsonResponse<{ landing: EmpaquesLandingConfig }>(
+                await fetch('/api/admin/storefronts/empaques/landing', {
+                  method: 'PUT',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    descripcion: landing.descripcion,
+                    hero: landing.hero,
+                    ventajas: landing.ventajas,
+                  }),
+                }),
+              );
+              setLanding(data.landing);
+              showToast('Landing guardada.');
+            } catch (saveError) {
+              setError(saveError instanceof Error ? saveError.message : 'No se pudo guardar la landing.');
+            } finally {
+              setSavingLanding(false);
+            }
+          }}
+          className="space-y-6"
+        >
+          <div className="rounded-2xl border border-border bg-white p-6 shadow-sm">
+            <h2 className="text-lg font-bold text-slate-900">Banner principal</h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Textos e imagen del hero que ven los visitantes al entrar a Empaques.
+            </p>
+            <div className="mt-5 grid gap-5 md:grid-cols-2">
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-slate-700">Título (primera parte)</span>
+                <input
+                  type="text"
+                  value={landing.hero.titulo_pre}
+                  onChange={(event) =>
+                    setLanding((prev) => ({
+                      ...prev,
+                      hero: { ...prev.hero, titulo_pre: event.target.value },
+                    }))
+                  }
+                  className="h-11 w-full rounded-lg border border-border bg-white px-3 text-sm focus:border-primary focus:outline-none"
+                  placeholder="Soluciones de Empaque que"
+                />
+              </label>
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-slate-700">Título (parte destacada)</span>
+                <input
+                  type="text"
+                  value={landing.hero.titulo_destacado}
+                  onChange={(event) =>
+                    setLanding((prev) => ({
+                      ...prev,
+                      hero: { ...prev.hero, titulo_destacado: event.target.value },
+                    }))
+                  }
+                  className="h-11 w-full rounded-lg border border-border bg-white px-3 text-sm focus:border-primary focus:outline-none"
+                  placeholder="Impulsan tu Marca"
+                />
+              </label>
+              <label className="space-y-2 md:col-span-2">
+                <span className="text-sm font-medium text-slate-700">Subtítulo</span>
+                <textarea
+                  value={landing.hero.subtitulo}
+                  onChange={(event) =>
+                    setLanding((prev) => ({
+                      ...prev,
+                      hero: { ...prev.hero, subtitulo: event.target.value },
+                    }))
+                  }
+                  rows={3}
+                  className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm focus:border-primary focus:outline-none"
+                />
+              </label>
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-slate-700">CTA primario (texto)</span>
+                <input
+                  type="text"
+                  value={landing.hero.cta_primario_texto}
+                  onChange={(event) =>
+                    setLanding((prev) => ({
+                      ...prev,
+                      hero: { ...prev.hero, cta_primario_texto: event.target.value },
+                    }))
+                  }
+                  className="h-11 w-full rounded-lg border border-border bg-white px-3 text-sm focus:border-primary focus:outline-none"
+                />
+              </label>
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-slate-700">CTA secundario (texto)</span>
+                <input
+                  type="text"
+                  value={landing.hero.cta_secundario_texto}
+                  onChange={(event) =>
+                    setLanding((prev) => ({
+                      ...prev,
+                      hero: { ...prev.hero, cta_secundario_texto: event.target.value },
+                    }))
+                  }
+                  className="h-11 w-full rounded-lg border border-border bg-white px-3 text-sm focus:border-primary focus:outline-none"
+                />
+              </label>
+              <label className="space-y-2 md:col-span-2">
+                <span className="text-sm font-medium text-slate-700">Mensaje sugerido del formulario de leads</span>
+                <textarea
+                  value={landing.hero.mensaje_lead}
+                  onChange={(event) =>
+                    setLanding((prev) => ({
+                      ...prev,
+                      hero: { ...prev.hero, mensaje_lead: event.target.value },
+                    }))
+                  }
+                  rows={2}
+                  className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm focus:border-primary focus:outline-none"
+                  placeholder="Estoy interesado en soluciones de empaque para mi empresa."
+                />
+              </label>
+              <div className="space-y-2 md:col-span-2">
+                <span className="text-sm font-medium text-slate-700">Imagen del banner (opcional)</span>
+                <p className="text-xs text-slate-500">
+                  Si está vacío se usa el primer producto destacado del catálogo. Recomendado 800x800 px PNG transparente.
+                </p>
+                <MediaUpload
+                  uploadUrl="/api/admin/storefronts/empaques/upload"
+                  folder="landing"
+                  value={landing.hero.imagen_url}
+                  onChange={(url) =>
+                    setLanding((prev) => ({
+                      ...prev,
+                      hero: { ...prev.hero, imagen_url: url ? url : null },
+                    }))
+                  }
+                  label="Imagen del banner"
+                  helpText="Si está vacío se usa el primer producto destacado del catálogo. Recomendado 800x800 px PNG transparente."
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-border bg-white p-6 shadow-sm">
+            <h2 className="text-lg font-bold text-slate-900">Bloque “Por qué elegirnos”</h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Encabezado y las tres ventajas competitivas mostradas debajo del catálogo.
+            </p>
+            <div className="mt-5 grid gap-5 md:grid-cols-2">
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-slate-700">Eyebrow (texto pequeño superior)</span>
+                <input
+                  type="text"
+                  value={landing.ventajas.eyebrow}
+                  onChange={(event) =>
+                    setLanding((prev) => ({
+                      ...prev,
+                      ventajas: { ...prev.ventajas, eyebrow: event.target.value },
+                    }))
+                  }
+                  className="h-11 w-full rounded-lg border border-border bg-white px-3 text-sm focus:border-primary focus:outline-none"
+                />
+              </label>
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-slate-700">Título principal</span>
+                <input
+                  type="text"
+                  value={landing.ventajas.titulo}
+                  onChange={(event) =>
+                    setLanding((prev) => ({
+                      ...prev,
+                      ventajas: { ...prev.ventajas, titulo: event.target.value },
+                    }))
+                  }
+                  className="h-11 w-full rounded-lg border border-border bg-white px-3 text-sm focus:border-primary focus:outline-none"
+                />
+              </label>
+              <label className="space-y-2 md:col-span-2">
+                <span className="text-sm font-medium text-slate-700">Subtítulo</span>
+                <textarea
+                  value={landing.ventajas.subtitulo}
+                  onChange={(event) =>
+                    setLanding((prev) => ({
+                      ...prev,
+                      ventajas: { ...prev.ventajas, subtitulo: event.target.value },
+                    }))
+                  }
+                  rows={2}
+                  className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm focus:border-primary focus:outline-none"
+                />
+              </label>
+            </div>
+
+            <div className="mt-6 space-y-4">
+              {landing.ventajas.items.map((item, index) => (
+                <div
+                  key={index}
+                  className="rounded-xl border border-slate-200 bg-slate-50/60 p-4"
+                >
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-bold text-slate-800">Ventaja {index + 1}</h3>
+                    <select
+                      value={item.icon}
+                      onChange={(event) => {
+                        const nextIcon = event.target.value as LandingBenefitIcon;
+                        setLanding((prev) => ({
+                          ...prev,
+                          ventajas: {
+                            ...prev.ventajas,
+                            items: prev.ventajas.items.map((it, i) =>
+                              i === index ? { ...it, icon: nextIcon } : it,
+                            ),
+                          },
+                        }));
+                      }}
+                      className="h-9 rounded-lg border border-border bg-white px-2 text-xs font-medium text-slate-700 focus:border-primary focus:outline-none"
+                    >
+                      {LANDING_BENEFIT_ICONS.map((iconName) => (
+                        <option key={iconName} value={iconName}>
+                          {iconName}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="mt-3 grid gap-3 md:grid-cols-2">
+                    <label className="space-y-2">
+                      <span className="text-xs font-medium text-slate-600">Título</span>
+                      <input
+                        type="text"
+                        value={item.titulo}
+                        onChange={(event) => {
+                          const next = event.target.value;
+                          setLanding((prev) => ({
+                            ...prev,
+                            ventajas: {
+                              ...prev.ventajas,
+                              items: prev.ventajas.items.map((it, i) =>
+                                i === index ? { ...it, titulo: next } : it,
+                              ),
+                            },
+                          }));
+                        }}
+                        className="h-10 w-full rounded-lg border border-border bg-white px-3 text-sm focus:border-primary focus:outline-none"
+                      />
+                    </label>
+                    <label className="space-y-2">
+                      <span className="text-xs font-medium text-slate-600">Texto</span>
+                      <textarea
+                        value={item.texto}
+                        onChange={(event) => {
+                          const next = event.target.value;
+                          setLanding((prev) => ({
+                            ...prev,
+                            ventajas: {
+                              ...prev.ventajas,
+                              items: prev.ventajas.items.map((it, i) =>
+                                i === index ? { ...it, texto: next } : it,
+                              ),
+                            },
+                          }));
+                        }}
+                        rows={3}
+                        className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm focus:border-primary focus:outline-none"
+                      />
+                    </label>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-border bg-white p-6 shadow-sm">
+            <h2 className="text-lg font-bold text-slate-900">Información general</h2>
+            <label className="mt-4 block space-y-2">
+              <span className="text-sm font-medium text-slate-700">Descripción interna del storefront</span>
+              <p className="text-xs text-slate-500">
+                Texto utilizado internamente para identificar el storefront. No se muestra en la landing pública todavía.
+              </p>
+              <textarea
+                value={landing.descripcion}
+                onChange={(event) =>
+                  setLanding((prev) => ({ ...prev, descripcion: event.target.value }))
+                }
+                rows={2}
+                className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm focus:border-primary focus:outline-none"
+              />
+            </label>
+          </div>
+
+          <div className="flex items-center justify-end gap-3">
+            <button
+              type="button"
+              onClick={() => setLanding(DEFAULT_LANDING_CONFIG)}
+              className="inline-flex items-center gap-2 rounded-lg border border-border bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
+              disabled={savingLanding}
+            >
+              Restaurar defaults
+            </button>
+            <button
+              type="submit"
+              disabled={savingLanding}
+              className="inline-flex items-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-primary/90 disabled:opacity-60"
+            >
+              {savingLanding ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Guardando...
+                </>
+              ) : (
+                <>
+                  <Save className="h-4 w-4" />
+                  Guardar landing
+                </>
+              )}
+            </button>
+          </div>
+        </form>
       )}
 
       {activeTab === 'asesoras' && canManage && (
