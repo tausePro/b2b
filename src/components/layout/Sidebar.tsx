@@ -91,7 +91,19 @@ export default function Sidebar({ isOpen, onClose, portalBranding }: SidebarProp
 
   if (!user) return null;
 
-  const menuItems = MENU_BY_ROLE[user.rol];
+  // Unión deduplicada por href entre el menú del rol primario y los menús
+  // de cada rol extra activo. Permite que un usuario multi-rol vea todas
+  // las opciones que su composición de roles habilita.
+  const primaryMenu = MENU_BY_ROLE[user.rol] ?? [];
+  const extraMenus = (user.rolesExtra ?? []).flatMap((role) => MENU_BY_ROLE[role] ?? []);
+  const seenHrefs = new Set<string>();
+  const menuItems: SidebarItem[] = [];
+  for (const item of [...primaryMenu, ...extraMenus]) {
+    if (!seenHrefs.has(item.href)) {
+      seenHrefs.add(item.href);
+      menuItems.push(item);
+    }
+  }
   const isClientPortal = Boolean(
     portalBranding && (user.rol === 'comprador' || user.rol === 'aprobador')
   );
