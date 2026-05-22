@@ -92,6 +92,7 @@ export interface EmpaquesCatalogProduct {
   categ_id: [number, string] | false;
   image_128: string | false;
   image_url: string | null;
+  ficha_tecnica_url: string | null;
   default_code: string | false;
   uom_name: string;
   product_variant_count: number;
@@ -217,6 +218,7 @@ interface StorefrontProductOverrideRow {
   descripcion_corta: string | null;
   descripcion_larga: string | null;
   imagen_url: string | null;
+  ficha_tecnica_url: string | null;
   orden: number | null;
   visible: boolean | null;
   destacado: boolean | null;
@@ -671,6 +673,7 @@ function mapProduct(
     categ_id: mapCategoryValue(product.categ_id),
     image_128: typeof product.image_128 === 'string' ? product.image_128 : false,
     image_url: override?.imagen_url?.trim() || null,
+    ficha_tecnica_url: override?.ficha_tecnica_url?.trim() || null,
     default_code: typeof product.default_code === 'string' ? product.default_code : false,
     uom_name: typeof product.uom_name === 'string' ? product.uom_name : 'und',
     product_variant_count: Number(product.product_variant_count ?? 1),
@@ -814,7 +817,7 @@ async function loadStorefrontEditorialContext(storefrontId: string): Promise<Sto
       .eq('estado_publicacion', 'publicado'),
     admin
       .from('storefront_product_overrides')
-      .select('odoo_product_id, nombre_publico, slug, descripcion_corta, descripcion_larga, imagen_url, orden, visible, destacado, seo_title, seo_description')
+      .select('odoo_product_id, nombre_publico, slug, descripcion_corta, descripcion_larga, imagen_url, ficha_tecnica_url, orden, visible, destacado, seo_title, seo_description')
       .eq('storefront_config_id', storefrontId)
       .eq('estado_publicacion', 'publicado'),
   ]);
