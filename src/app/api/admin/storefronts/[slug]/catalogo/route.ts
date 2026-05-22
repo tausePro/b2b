@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { authorizeApiRoles } from '@/lib/auth/apiRouteGuards';
+import { authorizeApiRoles, getAccessibleStorefrontIds } from '@/lib/auth/apiRouteGuards';
 import {
   EMPAQUES_DEFAULT_LIMIT,
   EMPAQUES_MAX_LIMIT,
@@ -7,7 +7,12 @@ import {
   getEmpaquesCatalogData,
 } from '@/lib/empaques/catalogo';
 
-const EDITOR_ROLES = ['super_admin', 'direccion', 'editor_contenido'] as const;
+// Roles que pueden entrar a las rutas /admin de catálogo del storefront.
+// - super_admin / direccion / editor_contenido: acceso global (heredan
+//   permiso editorial sobre todos los storefronts).
+// - asesor: sólo si está en asesor_storefronts(storefront_config_id, activo=true);
+//   esto se valida más abajo contra el slug solicitado.
+const EDITOR_ROLES = ['super_admin', 'direccion', 'editor_contenido', 'asesor'] as const;
 
 function parsePositiveInteger(value: string | null) {
   const parsed = Number.parseInt(value || '', 10);
@@ -18,7 +23,11 @@ function parsePositiveInteger(value: string | null) {
   return parsed;
 }
 
-const COST_VISIBLE_ROLES = new Set(['super_admin', 'direccion']);
+// Roles a los que la API expone el costo, margen efectivo y antigüedad del
+// costo en cada producto. Asesores asignados al storefront entran porque
+// son los responsables de negociar pricing (mismo criterio que para
+// /api/admin/empresas/[id]/catalogo).
+const COST_VISIBLE_ROLES = new Set(['super_admin', 'direccion', 'asesor']);
 
 export async function GET(
   request: NextRequest,
@@ -30,6 +39,36 @@ export async function GET(
   const { slug } = await context.params;
   if (slug !== 'empaques') {
     return NextResponse.json({ error: 'STOREFRONT_NOT_SUPPORTED' }, { status: 404 });
+  }
+
+  // Validación adicional: si es asesor, debe estar asignado al storefront.
+  // Para super_admin / direccion / editor_contenido esto siempre pasa porque
+  // getAccessibleStorefrontIds devuelve todos los storefronts.
+  if (auth.actor.rol === 'asesor') {
+    const { data: storefrontRow, error: storefrontError } = await auth.admin
+      .from('storefront_configs')
+      .select('id')
+      .eq('slug', slug)
+      .maybeSingle();
+
+    if (storefrontError) {
+      return NextResponse.json({ error: storefrontError.message }, { status: 500 });
+    }
+
+    if (!storefrontRow?.id) {
+      return NextResponse.json({ error: 'STOREFRONT_NOT_FOUND' }, { status: 404 });
+    }
+
+    const accessibles = await getAccessibleStorefrontIds(auth);
+    if (!accessibles.includes(String(storefrontRow.id))) {
+      return NextResponse.json(
+        {
+          error: 'FORBIDDEN',
+          details: 'No tienes este storefront asignado.',
+        },
+        { status: 403 }
+      );
+    }
   }
 
   try {

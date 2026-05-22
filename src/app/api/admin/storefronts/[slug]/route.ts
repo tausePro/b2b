@@ -1,5 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authorizeAdmin } from '@/lib/admin/auth';
+import {
+  authorizeApiRoles,
+  getAccessibleStorefrontIds,
+} from '@/lib/auth/apiRouteGuards';
+
+const READ_ROLES = ['super_admin', 'direccion', 'editor_contenido', 'asesor'] as const;
+
+const STOREFRONT_SELECT =
+  'id, slug, nombre, subdominio, modo_pricing, activo, odoo_root_category_ids, odoo_excluded_category_ids, odoo_pricelist_id, configuracion_extra, created_at, updated_at';
 
 function parseIntegerArray(value: unknown) {
   if (!Array.isArray(value)) return [];
@@ -28,13 +37,19 @@ function normalizePricelistId(value: unknown): number | null {
   return Math.trunc(parsed);
 }
 
-async function resolveStorefront(slug: string) {
+/**
+ * Resolución usada por PATCH: requiere super_admin/direccion porque
+ * `authorizeAdmin` no permite asesor. La edición del storefront base
+ * (modo_pricing, pricelist, categorías raíz, subdominio, activo) sigue
+ * restringida.
+ */
+async function resolveStorefrontForAdmin(slug: string) {
   const auth = await authorizeAdmin();
   if (auth instanceof NextResponse) return auth;
 
   const { data, error } = await auth.admin
     .from('storefront_configs')
-    .select('id, slug, nombre, subdominio, modo_pricing, activo, odoo_root_category_ids, odoo_excluded_category_ids, odoo_pricelist_id, configuracion_extra, created_at, updated_at')
+    .select(STOREFRONT_SELECT)
     .eq('slug', slug)
     .maybeSingle();
 
@@ -53,11 +68,40 @@ export async function GET(
   _request: NextRequest,
   context: { params: Promise<{ slug: string }> }
 ) {
-  const { slug } = await context.params;
-  const resolved = await resolveStorefront(slug);
-  if (resolved instanceof NextResponse) return resolved;
+  const auth = await authorizeApiRoles(READ_ROLES);
+  if (auth instanceof NextResponse) return auth;
 
-  return NextResponse.json({ storefront: resolved.storefront });
+  const { slug } = await context.params;
+  const { data, error } = await auth.admin
+    .from('storefront_configs')
+    .select(STOREFRONT_SELECT)
+    .eq('slug', slug)
+    .maybeSingle();
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  if (!data) {
+    return NextResponse.json({ error: 'STOREFRONT_NOT_FOUND' }, { status: 404 });
+  }
+
+  // Asesor sólo puede leer storefronts asignados. super_admin / direccion /
+  // editor_contenido obtienen acceso global vía getAccessibleStorefrontIds.
+  if (auth.actor.rol === 'asesor') {
+    const accessibles = await getAccessibleStorefrontIds(auth);
+    if (!accessibles.includes(String(data.id))) {
+      return NextResponse.json(
+        {
+          error: 'FORBIDDEN',
+          details: 'No tienes este storefront asignado.',
+        },
+        { status: 403 }
+      );
+    }
+  }
+
+  return NextResponse.json({ storefront: data });
 }
 
 export async function PATCH(
@@ -65,7 +109,7 @@ export async function PATCH(
   context: { params: Promise<{ slug: string }> }
 ) {
   const { slug } = await context.params;
-  const resolved = await resolveStorefront(slug);
+  const resolved = await resolveStorefrontForAdmin(slug);
   if (resolved instanceof NextResponse) return resolved;
 
   const body = await request.json();
