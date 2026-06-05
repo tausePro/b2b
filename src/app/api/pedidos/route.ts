@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
-import { authenticate, createSaleOrderQuotation, read, searchRead } from '@/lib/odoo/client';
+import { authenticate, createSaleOrderQuotation, read } from '@/lib/odoo/client';
 import { mergePedidoNoteWithSpecialItems, normalizeTipoPedidoItem, partitionPedidoItems } from '@/lib/pedidoItems';
 import { getServerOdooConfig } from '@/lib/odoo/serverConfig';
 import { safeEnqueuePedidoNotifications } from '@/lib/notifications/pedidos';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
-import { loadPricingContext, resolveProductPrice } from '@/lib/pricing/margins';
+import { loadPricingContext, resolveProductPrice, type ModoPricing } from '@/lib/pricing/margins';
 import type { TipoPedidoItem } from '@/types';
 
 type PerfilActual = {
@@ -193,12 +193,14 @@ export async function POST(request: NextRequest) {
 
     // Recalcular precios de catálogo server-side con jerarquía: override > costo+margen > pricelist
     const catalogItemsToReprice = items.filter((i) => i.tipo_item === 'catalogo' && i.odoo_product_id);
+    let modoPricing: ModoPricing = 'costo_margen';
     if (!esBorrador && catalogItemsToReprice.length > 0 && perfil.empresa_id) {
       try {
+        const pricingCtx = await loadPricingContext(perfil.empresa_id);
+        modoPricing = pricingCtx.modoPricing;
         const odooConfig = await getServerOdooConfig();
         if (odooConfig) {
           const odooSession = await authenticate(odooConfig);
-          const pricingCtx = await loadPricingContext(perfil.empresa_id);
 
           const templateIds = [...new Set(catalogItemsToReprice.map((i) => i.odoo_product_id!))];
           const templates = await read(
@@ -395,6 +397,7 @@ export async function POST(request: NextRequest) {
             origin: pedido.numero,
             dateOrder: new Date().toISOString(),
             note: mergePedidoNoteWithSpecialItems(noteLines || null, specialItems),
+            enforceLinePrices: modoPricing === 'costo_margen',
             lines: catalogItems.map((item) => ({
               productTemplateId: Number(item.odoo_product_id),
               productId: item.odoo_variant_id ? Number(item.odoo_variant_id) : undefined,

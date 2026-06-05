@@ -416,6 +416,18 @@ export async function create(
   return result as number;
 }
 
+export async function write(
+  model: string,
+  ids: number[],
+  values: Record<string, unknown>,
+  session?: OdooSession,
+  cfg?: OdooConfig
+): Promise<boolean> {
+  const s = session || await authenticate(cfg);
+  const result = await executeKw(s, model, 'write', [ids, values]);
+  return result as boolean;
+}
+
 export async function fieldsGet(
   model: string,
   attributes: string[] = ['string', 'type', 'required'],
@@ -585,6 +597,7 @@ export async function createSaleOrderQuotation(
     salespersonId?: number | null;
     origin?: string | null;
     note?: string | null;
+    enforceLinePrices?: boolean;
   }
 ): Promise<OdooSaleOrderResult> {
   if (!params.lines.length && !params.note?.trim()) {
@@ -692,6 +705,23 @@ export async function createSaleOrderQuotation(
   }
 
   const saleOrderId = await create('sale.order', orderValues, session);
+
+  // En modo costo+margen, Odoo recalcula el price_unit de cada línea con la
+  // pricelist del partner y pisa el precio que enviamos; lo forzamos de vuelta.
+  if (params.enforceLinePrices && params.lines.length > 0) {
+    const desiredLines: EnforceSaleOrderLineInput[] = params.lines.map((line) => ({
+      templateId: line.productTemplateId,
+      variantId: line.productId ?? variantByTemplateId.get(line.productTemplateId) ?? null,
+      quantity: line.quantity,
+      priceUnit: line.priceUnit,
+    }));
+    try {
+      await enforceSaleOrderLinePrices(session, saleOrderId, desiredLines);
+    } catch (enforceError) {
+      console.warn('[Odoo] No se pudo forzar el precio costo+margen en las líneas de la cotización:', enforceError);
+    }
+  }
+
   const createdOrders = await read('sale.order', [saleOrderId], ['id', 'name', 'state'], session);
   const createdOrder = createdOrders[0];
 
@@ -701,6 +731,79 @@ export async function createSaleOrderQuotation(
     state: createdOrder && typeof createdOrder.state === 'string' ? createdOrder.state : null,
     existing: false,
   };
+}
+
+export interface EnforceSaleOrderLineInput {
+  templateId: number;
+  variantId?: number | null;
+  quantity: number;
+  priceUnit: number;
+}
+
+export interface EnforceSaleOrderLinesResult {
+  updatedLines: number;
+  amountUntaxedBefore: number;
+  amountUntaxedAfter: number;
+}
+
+/**
+ * Fuerza el price_unit (y discount=0) de cada línea de una sale.order para que
+ * coincida con el precio calculado por la plataforma (costo+margen). Necesario
+ * porque Odoo recalcula el price_unit desde la pricelist del partner al crear la
+ * orden y pisa el valor que enviamos. Empareja líneas por variante o template.
+ */
+export async function enforceSaleOrderLinePrices(
+  session: OdooSession,
+  saleOrderId: number,
+  desiredLines: EnforceSaleOrderLineInput[]
+): Promise<EnforceSaleOrderLinesResult> {
+  const beforeRows = await read('sale.order', [saleOrderId], ['order_line', 'amount_untaxed'], session);
+  const orderRow = beforeRows[0];
+  const amountUntaxedBefore = Number(orderRow?.amount_untaxed ?? 0);
+  const lineIds = Array.isArray(orderRow?.order_line)
+    ? (orderRow!.order_line as number[]).map(Number)
+    : [];
+
+  if (lineIds.length === 0 || desiredLines.length === 0) {
+    return { updatedLines: 0, amountUntaxedBefore, amountUntaxedAfter: amountUntaxedBefore };
+  }
+
+  const lines = await read(
+    'sale.order.line',
+    lineIds,
+    ['id', 'product_id', 'product_template_id', 'product_uom_qty', 'price_unit', 'display_type'],
+    session
+  );
+
+  const pending = desiredLines.map((line) => ({ ...line, used: false }));
+  let updatedLines = 0;
+
+  for (const line of lines) {
+    if (line.display_type) continue; // secciones / notas, no son productos
+    const variantId = Array.isArray(line.product_id) ? Number(line.product_id[0]) : null;
+    const templateId = Array.isArray(line.product_template_id) ? Number(line.product_template_id[0]) : null;
+    const qty = Number(line.product_uom_qty ?? 0);
+
+    const match =
+      pending.find((d) => !d.used && d.variantId != null && d.variantId === variantId && d.quantity === qty) ||
+      pending.find((d) => !d.used && d.variantId != null && d.variantId === variantId) ||
+      pending.find((d) => !d.used && templateId != null && d.templateId === templateId && d.quantity === qty) ||
+      pending.find((d) => !d.used && templateId != null && d.templateId === templateId);
+
+    if (!match) continue;
+    match.used = true;
+
+    const currentPrice = Number(line.price_unit ?? 0);
+    if (Math.abs(currentPrice - match.priceUnit) > 0.009) {
+      await write('sale.order.line', [Number(line.id)], { price_unit: match.priceUnit, discount: 0 }, session);
+      updatedLines += 1;
+    }
+  }
+
+  const afterRows = await read('sale.order', [saleOrderId], ['amount_untaxed'], session);
+  const amountUntaxedAfter = Number(afterRows[0]?.amount_untaxed ?? amountUntaxedBefore);
+
+  return { updatedLines, amountUntaxedBefore, amountUntaxedAfter };
 }
 
 export async function getSaleOrderSummary(
