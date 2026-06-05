@@ -5,7 +5,7 @@ import { mergePedidoNoteWithSpecialItems, partitionPedidoItems } from '@/lib/ped
 import { getServerOdooConfig } from '@/lib/odoo/serverConfig';
 import { safeEnqueuePedidoNotifications } from '@/lib/notifications/pedidos';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
-import { loadPricingContext, resolveProductPrice } from '@/lib/pricing/margins';
+import { loadPricingContext, resolveProductPrice, type ModoPricing } from '@/lib/pricing/margins';
 import type { TipoPedidoItem } from '@/types';
 
 function getSupabaseAdmin() {
@@ -246,12 +246,14 @@ export async function POST(
 
     // Recalcular precios server-side con jerarquía: override > costo+margen > pricelist
     const empresaId = pedido.empresa_id ?? pedido.empresa?.id;
+    let modoPricing: ModoPricing = 'costo_margen';
     if (empresaId && catalogItems.length > 0) {
       try {
+        const pricingCtx = await loadPricingContext(empresaId);
+        modoPricing = pricingCtx.modoPricing;
         const odooConfigReprice = await getServerOdooConfig();
         if (odooConfigReprice) {
           const repriceSession = await authenticate(odooConfigReprice);
-          const pricingCtx = await loadPricingContext(empresaId);
 
           const templateIds = [...new Set(catalogItems.map((i) => Number(i.odoo_product_id)))];
           const templates = await read(
@@ -342,6 +344,7 @@ export async function POST(
       origin: pedido.numero,
       dateOrder: pedido.fecha_creacion,
       note: mergePedidoNoteWithSpecialItems(buildQuotationNote(pedido), specialItems),
+      enforceLinePrices: modoPricing === 'costo_margen',
       lines: catalogItems.map((item) => ({
         productTemplateId: Number(item.odoo_product_id),
         productId: item.odoo_variant_id ? Number(item.odoo_variant_id) : undefined,
