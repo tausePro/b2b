@@ -147,6 +147,20 @@ function EmpaquesHeader() {
   );
 }
 
+function getHeroOverlay(color: string, opacity: number) {
+  const match = /^#?([0-9a-fA-F]{6})$/.exec(color);
+  const base = match?.[1] ?? '0f172a';
+  const red = Number.parseInt(base.slice(0, 2), 16);
+  const green = Number.parseInt(base.slice(2, 4), 16);
+  const blue = Number.parseInt(base.slice(4, 6), 16);
+  const alpha = Math.max(0, Math.min(100, opacity)) / 100;
+  const startAlpha = Math.min(1, alpha + 0.2);
+  const middleAlpha = Math.min(1, alpha * 0.88);
+  const endAlpha = alpha * 0.38;
+
+  return `linear-gradient(90deg, rgba(${red}, ${green}, ${blue}, ${startAlpha}) 0%, rgba(${red}, ${green}, ${blue}, ${middleAlpha}) 52%, rgba(${red}, ${green}, ${blue}, ${endAlpha}) 100%)`;
+}
+
 function HeroSection({
   data,
   highlights,
@@ -160,40 +174,58 @@ function HeroSection({
   const featuredProduct = getFeaturedProduct(highlightedProducts);
   const heroImageOverride = config.imagen_url;
   const fallbackImageSrc = featuredProduct ? getProductImageSrc(featuredProduct) : null;
-  const imageSrc = heroImageOverride ?? fallbackImageSrc;
-  const imageAlt = heroImageOverride
-    ? config.titulo_destacado
-    : featuredProduct?.name ?? 'Producto de Empaques Imprima';
+  const fallbackImageAlt = featuredProduct?.name ?? 'Producto de Empaques Imprima';
+  const hasBackgroundImage = Boolean(heroImageOverride);
 
   return (
-    <section className="relative flex min-h-[760px] items-center overflow-hidden bg-white">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_80%_40%,rgba(255,255,255,0.92),rgba(255,255,255,0.12)_32%,transparent_50%),linear-gradient(105deg,#F8F8F5_0%,#F8F8F5_42%,#fecaca_68%,#ef4444_100%)]" />
-      <div className="absolute inset-0 bg-gradient-to-r from-[#F8F8F5]/95 via-[#F8F8F5]/80 to-transparent" />
-      {imageSrc && (
-        <div className="absolute right-[-8%] top-24 hidden h-[560px] w-[560px] items-center justify-center rounded-full bg-white/30 p-16 backdrop-blur-sm lg:flex">
+    <section className="relative flex min-h-[620px] items-center overflow-hidden bg-slate-950 sm:min-h-[680px] lg:min-h-[760px]">
+      {heroImageOverride ? (
+        <>
           <Image
-            src={imageSrc}
-            alt={imageAlt}
-            width={460}
-            height={460}
+            src={heroImageOverride}
+            alt=""
+            fill
+            sizes="100vw"
             unoptimized
             priority
-            className="max-h-full w-auto object-contain drop-shadow-2xl"
+            className="object-cover object-center"
           />
-        </div>
+          <div
+            className="absolute inset-0"
+            style={{ background: getHeroOverlay(config.overlay_color, config.overlay_opacity) }}
+          />
+        </>
+      ) : (
+        <>
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_80%_40%,rgba(255,255,255,0.92),rgba(255,255,255,0.12)_32%,transparent_50%),linear-gradient(105deg,#F8F8F5_0%,#F8F8F5_42%,#fecaca_68%,#ef4444_100%)]" />
+          <div className="absolute inset-0 bg-gradient-to-r from-[#F8F8F5]/95 via-[#F8F8F5]/80 to-transparent" />
+          {fallbackImageSrc && (
+            <div className="absolute right-[-8%] top-24 hidden h-[560px] w-[560px] items-center justify-center rounded-full bg-white/30 p-16 backdrop-blur-sm lg:flex">
+              <Image
+                src={fallbackImageSrc}
+                alt={fallbackImageAlt}
+                width={460}
+                height={460}
+                unoptimized
+                priority
+                className="max-h-full w-auto object-contain drop-shadow-2xl"
+              />
+            </div>
+          )}
+        </>
       )}
-      <div className="relative z-10 mx-auto grid w-full max-w-7xl grid-cols-1 items-center gap-12 px-4 py-24 sm:px-6 lg:grid-cols-2 lg:px-8">
+      <div className="relative z-10 mx-auto w-full max-w-7xl px-4 py-20 sm:px-6 sm:py-24 lg:px-8">
         <div className="max-w-2xl space-y-8">
-          <h1 className="text-5xl font-black leading-[1.05] tracking-tight text-slate-950 md:text-7xl">
+          <h1 className={`break-words text-4xl font-black leading-[1.05] tracking-tight sm:text-5xl md:text-7xl ${hasBackgroundImage ? 'text-white [text-shadow:0_2px_18px_rgba(0,0,0,0.28)]' : 'text-slate-950'}`}>
             {config.titulo_pre} <span className="text-[#9CBB06]">{config.titulo_destacado}</span>
           </h1>
-          <p className="max-w-xl text-xl font-bold leading-relaxed text-slate-600">
+          <p className={`max-w-xl text-lg font-bold leading-relaxed sm:text-xl ${hasBackgroundImage ? 'text-white/90 [text-shadow:0_1px_10px_rgba(0,0,0,0.35)]' : 'text-slate-600'}`}>
             {config.subtitulo}
           </p>
-          <div className="flex flex-col gap-4 pt-2 sm:flex-row">
+          <div className="flex min-w-0 flex-col gap-4 pt-2 sm:flex-row">
             <Link
               href="#catalogo"
-              className="inline-flex items-center justify-center gap-2 rounded-full bg-[#9CBB06] px-8 py-4 text-lg font-black text-slate-950 shadow-lg shadow-[#9CBB06]/20 transition hover:bg-[#8cab05]"
+              className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-[#9CBB06] px-5 py-4 text-base font-black text-slate-950 shadow-lg shadow-black/20 transition hover:bg-[#8cab05] sm:w-auto sm:px-8 sm:text-lg"
             >
               {config.cta_primario_texto}
               <ArrowRight className="h-5 w-5" />
@@ -203,7 +235,7 @@ function HeroSection({
               texto={config.cta_secundario_texto}
               variant="outline"
               hideIcon
-              className="justify-center rounded-full border border-slate-300 bg-white px-8 py-4 text-lg font-black text-slate-950 hover:bg-slate-50"
+              className={`w-full justify-center rounded-full px-5 py-4 text-base font-black sm:w-auto sm:px-8 sm:text-lg ${hasBackgroundImage ? 'border border-white/60 bg-white/10 text-white backdrop-blur-sm hover:bg-white hover:text-slate-950' : 'border border-slate-300 bg-white text-slate-950 hover:bg-slate-50'}`}
               mensajePrefill={config.mensaje_lead}
             />
           </div>

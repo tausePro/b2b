@@ -1670,9 +1670,9 @@ export default function AdminEmpaquesPage() {
                 />
               </label>
               <div className="space-y-2 md:col-span-2">
-                <span className="text-sm font-medium text-slate-700">Imagen del banner (opcional)</span>
+                <span className="text-sm font-medium text-slate-700">Imagen de fondo del banner (opcional)</span>
                 <p className="text-xs text-slate-500">
-                  Si está vacío se usa el primer producto destacado del catálogo. Recomendado 800x800 px PNG transparente.
+                  La imagen cubre todo el banner y puede recortarse según la pantalla. Usa una composición panorámica con el foco visual hacia el centro o la derecha.
                 </p>
                 <MediaUpload
                   uploadUrl="/api/admin/storefronts/empaques/upload"
@@ -1685,8 +1685,67 @@ export default function AdminEmpaquesPage() {
                     }))
                   }
                   label="Imagen del banner"
-                  helpText="Si está vacío se usa el primer producto destacado del catálogo. Recomendado 800x800 px PNG transparente."
+                  helpText="Recomendado: JPG o WEBP panorámico, mínimo 1920×800 px. Máximo 5 MB."
                 />
+              </div>
+              <div className="space-y-4 rounded-xl border border-slate-200 bg-slate-50/60 p-4 md:col-span-2">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <span className="text-sm font-medium text-slate-700">Capa de contraste sobre la imagen</span>
+                    <p className="mt-1 text-xs text-slate-500">
+                      El degradado es más intenso detrás del texto para mejorar la lectura del título, descripción y botones.
+                    </p>
+                  </div>
+                  <div
+                    className="h-11 w-20 shrink-0 rounded-lg border border-slate-200 shadow-inner"
+                    style={{
+                      backgroundColor: landing.hero.overlay_color,
+                      opacity: landing.hero.overlay_opacity / 100,
+                    }}
+                    aria-label="Vista previa de la capa de contraste"
+                  />
+                </div>
+                <div className="grid gap-4 sm:grid-cols-[180px_1fr] sm:items-end">
+                  <label className="space-y-2">
+                    <span className="block text-xs font-medium text-slate-600">Color</span>
+                    <div className="flex h-11 items-center gap-3 rounded-lg border border-border bg-white px-3">
+                      <input
+                        type="color"
+                        value={landing.hero.overlay_color}
+                        onChange={(event) =>
+                          setLanding((prev) => ({
+                            ...prev,
+                            hero: { ...prev.hero, overlay_color: event.target.value },
+                          }))
+                        }
+                        className="h-7 w-9 cursor-pointer border-0 bg-transparent p-0"
+                        aria-label="Color de la capa de contraste"
+                      />
+                      <span className="font-mono text-sm text-slate-700">{landing.hero.overlay_color}</span>
+                    </div>
+                  </label>
+                  <label className="space-y-2">
+                    <span className="flex items-center justify-between text-xs font-medium text-slate-600">
+                      <span>Intensidad</span>
+                      <span className="font-mono">{landing.hero.overlay_opacity}%</span>
+                    </span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      step={5}
+                      value={landing.hero.overlay_opacity}
+                      onChange={(event) =>
+                        setLanding((prev) => ({
+                          ...prev,
+                          hero: { ...prev.hero, overlay_opacity: Number.parseInt(event.target.value, 10) },
+                        }))
+                      }
+                      className="h-11 w-full cursor-pointer accent-primary"
+                      aria-label="Intensidad de la capa de contraste"
+                    />
+                  </label>
+                </div>
               </div>
             </div>
           </div>
