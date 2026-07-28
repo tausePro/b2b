@@ -12,6 +12,7 @@ import {
   Search,
   Sparkles,
 } from 'lucide-react';
+import { EmpaquesFooter, EmpaquesHeader } from '@/components/public/EmpaquesChrome';
 import EmpaquesQuoteForm from '@/components/public/EmpaquesQuoteForm';
 import LeadButton from '@/components/public/LeadButton';
 import {
@@ -29,6 +30,10 @@ import {
   type LandingBenefitIcon,
   getEmpaquesLandingConfig,
 } from '@/lib/empaques/landing-config';
+import {
+  getEmpaquesProductImageSrc,
+  hasEmpaquesEditorialImage,
+} from '@/lib/empaques/product-images';
 
 const BENEFIT_ICON_MAP: Record<LandingBenefitIcon, typeof Sparkles> = {
   sparkles: Sparkles,
@@ -79,18 +84,8 @@ function buildCategoryHref(categoryId: number | null, search: string) {
   return query ? `/empaques?${query}` : '/empaques';
 }
 
-function getProductImageSrc(product: EmpaquesCatalogProduct) {
-  if (typeof product.image_url === 'string' && product.image_url.length > 0) {
-    return product.image_url;
-  }
-
-  return typeof product.image_128 === 'string' && product.image_128.length > 0
-    ? `data:image/png;base64,${product.image_128}`
-    : null;
-}
-
 function getFeaturedProduct(products: EmpaquesCatalogProduct[], index = 0) {
-  const productsWithImage = products.filter((product) => getProductImageSrc(product));
+  const productsWithImage = products.filter((product) => getEmpaquesProductImageSrc(product));
   return productsWithImage[index] ?? products[index] ?? null;
 }
 
@@ -99,52 +94,6 @@ function getCategoryProduct(products: EmpaquesCatalogProduct[], category: Empaqu
     if (!product.categ_id) return false;
     return product.categ_id[1].toLowerCase().includes(category.name.toLowerCase());
   }) ?? getFeaturedProduct(products);
-}
-
-function EmpaquesHeader() {
-  return (
-    <header className="sticky top-0 z-50 border-b border-zinc-200 bg-white/90 text-[#9CBB06] shadow-sm backdrop-blur-md">
-      <div className="mx-auto flex h-20 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center gap-8">
-          <Link href="/" className="flex items-center">
-            <Image
-              src="/logo-imprima-horizontal.png"
-              alt="Imprima"
-              width={198}
-              height={79}
-              priority
-              className="h-10 w-auto"
-            />
-          </Link>
-          <nav className="hidden items-center gap-6 md:flex">
-            <Link className="rounded px-3 py-2 font-bold text-zinc-600 transition hover:bg-zinc-50 hover:text-[#9CBB06]" href="/#categorias">Soluciones</Link>
-            <Link className="border-b-2 border-[#9CBB06] px-3 py-2 font-black text-[#9CBB06]" href="/empaques">Empaques</Link>
-            <Link className="rounded px-3 py-2 font-bold text-zinc-600 transition hover:bg-zinc-50 hover:text-[#9CBB06]" href="#ventajas">Sostenibilidad</Link>
-            <Link className="rounded px-3 py-2 font-bold text-zinc-600 transition hover:bg-zinc-50 hover:text-[#9CBB06]" href="#cotizar">Servicios</Link>
-            <Link className="rounded px-3 py-2 font-bold text-zinc-600 transition hover:bg-zinc-50 hover:text-[#9CBB06]" href="/contacto">Contacto</Link>
-          </nav>
-        </div>
-        <div className="flex items-center gap-3">
-          <Link href="#catalogo" aria-label="Buscar en catálogo" className="hidden text-zinc-600 transition hover:text-[#9CBB06] sm:inline-flex">
-            <Search className="h-5 w-5" />
-          </Link>
-          <Link
-            href="#cotizar"
-            className="hidden rounded-full bg-[#9CBB06] px-6 py-2.5 text-sm font-black text-slate-950 shadow-sm transition hover:bg-[#8cab05] md:inline-flex"
-          >
-            Cotizar Ahora
-          </Link>
-          <Link
-            href="/login"
-            className="inline-flex items-center gap-2 rounded-full border border-zinc-200 px-4 py-2.5 text-sm font-black text-zinc-700 transition hover:border-[#9CBB06] hover:text-slate-950"
-          >
-            <Building2 className="h-4 w-4" />
-            B2B
-          </Link>
-        </div>
-      </div>
-    </header>
-  );
 }
 
 function getHeroOverlay(color: string, opacity: number) {
@@ -173,7 +122,7 @@ function HeroSection({
   const highlightedProducts = highlights?.productos.length ? highlights.productos : data.productos;
   const featuredProduct = getFeaturedProduct(highlightedProducts);
   const heroImageOverride = config.imagen_url;
-  const fallbackImageSrc = featuredProduct ? getProductImageSrc(featuredProduct) : null;
+  const fallbackImageSrc = featuredProduct ? getEmpaquesProductImageSrc(featuredProduct) : null;
   const fallbackImageAlt = featuredProduct?.name ?? 'Producto de Empaques Imprima';
   const hasBackgroundImage = Boolean(heroImageOverride);
 
@@ -254,7 +203,7 @@ function CategoryCard({
   product: EmpaquesCatalogProduct | null;
   variant: 'wide' | 'tall' | 'dark';
 }) {
-  const imageSrc = category.imagen_url ?? (product ? getProductImageSrc(product) : null);
+  const imageSrc = category.imagen_url ?? (product ? getEmpaquesProductImageSrc(product) : null);
   const isTall = variant === 'tall';
   const isDark = variant === 'dark';
 
@@ -359,50 +308,61 @@ function BenefitsSection({ config }: { config: EmpaquesLandingConfig['ventajas']
 }
 
 function ProductCard({ product }: { product: EmpaquesCatalogProduct }) {
-  const imageSrc = getProductImageSrc(product);
+  const imageSrc = getEmpaquesProductImageSrc(product);
+  const editorialImage = hasEmpaquesEditorialImage(product);
 
   return (
     <article className="group overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:-translate-y-1 hover:shadow-xl hover:shadow-slate-900/10">
-      <div className="relative flex aspect-square items-center justify-center bg-[#F1F1EE] p-6">
-        {imageSrc ? (
-          <Image
-            src={imageSrc}
-            alt={product.name}
-            width={180}
-            height={180}
-            unoptimized
-            className="max-h-full w-auto object-contain transition duration-500 group-hover:scale-105"
-          />
-        ) : (
-          <div className="flex h-24 w-24 items-center justify-center rounded-3xl bg-[#D9E997] text-slate-800">
-            <Package className="h-10 w-10" />
-          </div>
-        )}
-      </div>
-      <div className="space-y-4 p-5">
-        <div className="space-y-2">
-          {product.default_code && (
-            <p className="text-xs font-black uppercase tracking-wide text-slate-400">{product.default_code}</p>
+      <Link href={`/empaques/${product.id}`} className="block focus:outline-none focus-visible:ring-2 focus-visible:ring-[#9CBB06] focus-visible:ring-inset">
+        <div className="relative aspect-square overflow-hidden bg-[#F1F1EE]">
+          {imageSrc ? (
+            <Image
+              src={imageSrc}
+              alt={product.name}
+              fill
+              sizes="(max-width: 639px) 100vw, (max-width: 1023px) 50vw, (max-width: 1279px) 33vw, 25vw"
+              unoptimized
+              className={`${editorialImage ? 'object-contain p-4' : 'object-cover'} transition duration-500 group-hover:scale-105`}
+            />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center">
+              <div className="flex h-24 w-24 items-center justify-center rounded-3xl bg-[#D9E997] text-slate-800">
+                <Package className="h-10 w-10" />
+              </div>
+            </div>
           )}
-          <h3 className="line-clamp-2 min-h-14 text-base font-black leading-tight text-slate-950">{product.name}</h3>
-          {product.categ_id && (
-            <p className="line-clamp-1 text-xs font-bold text-slate-500">{product.categ_id[1]}</p>
-          )}
-        </div>
-        <div className="flex items-end justify-between gap-3 border-t border-slate-100 pt-4">
-          <div>
-            <p className="text-xs font-black uppercase tracking-wide text-slate-400">Precio</p>
-            {product.price === null ? (
-              <p className="text-sm font-black text-amber-700">Pendiente manual</p>
-            ) : (
-              <p className="text-xl font-black text-slate-950">{currencyFormatter.format(product.price)}</p>
-            )}
-          </div>
-          <span className="rounded-full bg-[#D9E997] px-3 py-1 text-xs font-black text-slate-950">
-            {product.requiere_precio_manual ? 'Cotizar' : 'Disponible'}
+          <span className="absolute bottom-4 right-4 inline-flex translate-y-2 items-center gap-1.5 rounded-full bg-slate-950/85 px-3 py-2 text-xs font-black text-white opacity-0 shadow-lg backdrop-blur-sm transition duration-300 group-hover:translate-y-0 group-hover:opacity-100">
+            Ver producto
+            <ArrowRight className="h-3.5 w-3.5" />
           </span>
         </div>
-        {product.ficha_tecnica_url && (
+        <div className="space-y-4 p-5">
+          <div className="space-y-2">
+            {product.default_code && (
+              <p className="text-xs font-black uppercase tracking-wide text-slate-400">{product.default_code}</p>
+            )}
+            <h3 className="line-clamp-2 min-h-14 text-base font-black leading-tight text-slate-950">{product.name}</h3>
+            {product.categ_id && (
+              <p className="line-clamp-1 text-xs font-bold text-slate-500">{product.categ_id[1]}</p>
+            )}
+          </div>
+          <div className="flex items-end justify-between gap-3 border-t border-slate-100 pt-4">
+            <div>
+              <p className="text-xs font-black uppercase tracking-wide text-slate-400">Precio</p>
+              {product.price === null ? (
+                <p className="text-sm font-black text-amber-700">Pendiente manual</p>
+              ) : (
+                <p className="text-xl font-black text-slate-950">{currencyFormatter.format(product.price)}</p>
+              )}
+            </div>
+            <span className="rounded-full bg-[#D9E997] px-3 py-1 text-xs font-black text-slate-950">
+              {product.requiere_precio_manual ? 'Cotizar' : 'Disponible'}
+            </span>
+          </div>
+        </div>
+      </Link>
+      {product.ficha_tecnica_url && (
+        <div className="px-5 pb-5">
           <a
             href={product.ficha_tecnica_url}
             target="_blank"
@@ -412,8 +372,8 @@ function ProductCard({ product }: { product: EmpaquesCatalogProduct }) {
             <FileText className="h-3.5 w-3.5 text-rose-600" />
             Ficha técnica (PDF)
           </a>
-        )}
-      </div>
+        </div>
+      )}
     </article>
   );
 }
@@ -545,46 +505,6 @@ function QuoteSection({ data }: { data: EmpaquesCatalogData }) {
         </div>
       </div>
     </section>
-  );
-}
-
-function EmpaquesFooter() {
-  return (
-    <footer className="border-t border-zinc-200 bg-zinc-50 px-4 py-16 text-sm sm:px-6 lg:px-8">
-      <div className="mx-auto grid max-w-7xl grid-cols-1 gap-12 md:grid-cols-4">
-        <div className="space-y-4">
-          <Image src="/logo-imprima-horizontal.png" alt="Imprima" width={198} height={79} className="h-10 w-auto" />
-          <p className="font-semibold leading-7 text-zinc-500">
-            Soluciones integrales de empaque para empresas que buscan excelencia, sostenibilidad y eficiencia.
-          </p>
-        </div>
-        <div>
-          <h5 className="mb-4 text-xs font-black uppercase tracking-wider text-zinc-950">Divisiones</h5>
-          <ul className="space-y-3 font-semibold text-zinc-500">
-            <li><Link className="hover:text-[#9CBB06] hover:underline" href="#catalogo">Empaques Industriales</Link></li>
-            <li><Link className="hover:text-[#9CBB06] hover:underline" href="/catalogo">Catálogo corporativo</Link></li>
-            <li><Link className="hover:text-[#9CBB06] hover:underline" href="/contacto">Contacto comercial</Link></li>
-          </ul>
-        </div>
-        <div>
-          <h5 className="mb-4 text-xs font-black uppercase tracking-wider text-zinc-950">Legal</h5>
-          <ul className="space-y-3 font-semibold text-zinc-500">
-            <li><Link className="hover:text-[#9CBB06] hover:underline" href="/privacidad">Aviso de Privacidad</Link></li>
-            <li><Link className="hover:text-[#9CBB06] hover:underline" href="/terminos">Términos de Servicio</Link></li>
-          </ul>
-        </div>
-        <div>
-          <h5 className="mb-4 text-xs font-black uppercase tracking-wider text-zinc-950">Contacto</h5>
-          <ul className="space-y-3 font-semibold text-zinc-500">
-            <li><Link className="hover:text-[#9CBB06] hover:underline" href="#cotizar">Soporte Técnico</Link></li>
-            <li><Link className="hover:text-[#9CBB06] hover:underline" href="/contacto">Comerciales</Link></li>
-          </ul>
-        </div>
-        <div className="border-t border-slate-200 pt-8 text-zinc-500 md:col-span-4">
-          © 2026 Imprima. Líderes en soluciones de empaque B2B.
-        </div>
-      </div>
-    </footer>
   );
 }
 

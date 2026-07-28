@@ -472,6 +472,7 @@ export interface OdooProduct {
   active: boolean;
   sale_ok: boolean;
   image_128: string | false;
+  image_1920?: string | false;
   default_code: string | false;
   product_variant_count?: number;
   attribute_line_ids?: number[];
