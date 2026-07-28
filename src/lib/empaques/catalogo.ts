@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { cache } from 'react';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import {
   authenticate,
@@ -51,6 +52,8 @@ const PRODUCT_FIELDS = [
   'attribute_line_ids',
   'write_date',
 ];
+
+const PRODUCT_DETAIL_FIELDS = [...PRODUCT_FIELDS, 'image_1920'];
 
 interface EmpaquesStorefrontContext {
   id: string;
@@ -116,6 +119,16 @@ export interface EmpaquesCatalogProduct {
   markup_porcentaje?: number | null;
   variantes_divergentes?: boolean;
   variantes_consideradas?: number;
+}
+
+export interface EmpaquesProductDetail extends EmpaquesCatalogProduct {
+  image_1920: string | false;
+}
+
+export interface EmpaquesProductDetailData {
+  product: EmpaquesProductDetail;
+  related: EmpaquesCatalogProduct[];
+  category: EmpaquesCategoryNode;
 }
 
 export interface EmpaquesCatalogData {
@@ -975,3 +988,100 @@ export async function getEmpaquesCatalogData(input: EmpaquesCatalogInput = {}): 
     minSearchLength: EMPAQUES_MIN_SEARCH_LENGTH,
   };
 }
+
+export const getEmpaquesProductDetail = cache(async (
+  productId: number,
+): Promise<EmpaquesProductDetailData | null> => {
+  if (!Number.isFinite(productId) || productId <= 0) return null;
+
+  const normalizedProductId = Math.trunc(productId);
+  const storefront = await getEmpaquesStorefront();
+  const config = await getServerOdooConfig();
+  if (!config) {
+    throw new EmpaquesConfigurationError('Configuración de Odoo no encontrada.');
+  }
+
+  const session = await authenticate(config);
+  const [categories, editorialCtx, pricelistTemplateIdsSet, pricingCtx] = await Promise.all([
+    getCategoriasProducto(session),
+    loadStorefrontEditorialContext(storefront.id),
+    storefront.pricelistId
+      ? resolvePricelistTemplateIds(session, storefront.pricelistId)
+      : Promise.resolve<Set<number> | null>(null),
+    loadStorefrontPricingContext(storefront.id, storefront.modoPricing),
+  ]);
+
+  const usingPricelist = Boolean(storefront.pricelistId) && pricelistTemplateIdsSet !== null;
+  const pricelistTemplateIds = usingPricelist
+    ? Array.from(pricelistTemplateIdsSet as Set<number>)
+    : null;
+  const allowedCategoryIds = usingPricelist
+    ? await fetchTemplateCategoryIds(session, pricelistTemplateIds as number[])
+    : null;
+  const effectiveExcludedCategoryIds = [
+    ...storefront.excludedCategoryIds,
+    ...editorialCtx.hiddenCategoryIds,
+  ];
+  const categoryTree = buildCategoryTree(
+    categories,
+    {
+      allowedCategoryIds: allowedCategoryIds ?? undefined,
+      rootCategoryIds: storefront.rootCategoryIds,
+      excludedCategoryIds: storefront.excludedCategoryIds,
+    },
+    editorialCtx,
+  );
+
+  const productDomain = buildProductDomain({
+    search: '',
+    categoryId: null,
+    rootCategoryIds: storefront.rootCategoryIds,
+    excludedCategoryIds: effectiveExcludedCategoryIds,
+    hiddenProductIds: editorialCtx.hiddenProductIds,
+    pricelistTemplateIds: pricelistTemplateIds ?? undefined,
+  });
+  productDomain.push(['id', '=', normalizedProductId]);
+
+  const rows = await searchRead(
+    'product.template',
+    productDomain,
+    PRODUCT_DETAIL_FIELDS,
+    { limit: 1, session },
+  );
+  if (rows.length === 0) return null;
+
+  const productRow = rows[0] as unknown as OdooProduct;
+  const categoryId = Array.isArray(productRow.categ_id) ? productRow.categ_id[0] : null;
+  const category = categoryId ? categoryTree.categoryIndex[String(categoryId)] ?? null : null;
+  if (!category) return null;
+
+  const product: EmpaquesProductDetail = {
+    ...mapProduct(productRow, pricingCtx, editorialCtx),
+    image_1920: typeof productRow.image_1920 === 'string' ? productRow.image_1920 : false,
+  };
+
+  const relatedDomain = buildProductDomain({
+    search: '',
+    categoryId,
+    rootCategoryIds: storefront.rootCategoryIds,
+    excludedCategoryIds: effectiveExcludedCategoryIds,
+    hiddenProductIds: editorialCtx.hiddenProductIds,
+    pricelistTemplateIds: pricelistTemplateIds ?? undefined,
+  });
+  relatedDomain.push(['id', '!=', normalizedProductId]);
+
+  const relatedRows = await searchRead(
+    'product.template',
+    relatedDomain,
+    PRODUCT_FIELDS,
+    { limit: 4, order: 'name asc', session },
+  );
+
+  return {
+    product,
+    related: (relatedRows as unknown as OdooProduct[]).map((row) =>
+      mapProduct(row, pricingCtx, editorialCtx)
+    ),
+    category,
+  };
+});
