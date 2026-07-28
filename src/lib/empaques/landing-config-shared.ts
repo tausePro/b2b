@@ -15,6 +15,8 @@ export interface EmpaquesLandingHero {
   cta_secundario_texto: string;
   mensaje_lead: string;
   imagen_url: string | null;
+  overlay_color: string;
+  overlay_opacity: number;
 }
 
 export interface EmpaquesLandingBenefitItem {
@@ -47,6 +49,8 @@ export const DEFAULT_LANDING_CONFIG: EmpaquesLandingConfig = {
     cta_secundario_texto: 'Hablar con un Asesor',
     mensaje_lead: 'Estoy interesado en soluciones de empaque para mi empresa.',
     imagen_url: null,
+    overlay_color: '#0f172a',
+    overlay_opacity: 70,
   },
   ventajas: {
     eyebrow: 'Ventaja Competitiva',
@@ -88,6 +92,17 @@ function asNullableUrl(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function asHexColor(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback;
+  const match = /^#?([0-9a-fA-F]{6})$/.exec(value.trim());
+  return match ? `#${match[1].toLowerCase()}` : fallback;
+}
+
+function asPercentage(value: unknown, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
 function asIcon(value: unknown, fallback: LandingBenefitIcon): LandingBenefitIcon {
   if (typeof value !== 'string') return fallback;
   const normalized = value.trim().toLowerCase();
@@ -106,6 +121,8 @@ function normalizeHero(raw: unknown): EmpaquesLandingHero {
     cta_secundario_texto: asString(source.cta_secundario_texto, DEFAULT_LANDING_CONFIG.hero.cta_secundario_texto),
     mensaje_lead: asString(source.mensaje_lead, DEFAULT_LANDING_CONFIG.hero.mensaje_lead),
     imagen_url: asNullableUrl(source.imagen_url),
+    overlay_color: asHexColor(source.overlay_color, DEFAULT_LANDING_CONFIG.hero.overlay_color),
+    overlay_opacity: asPercentage(source.overlay_opacity, DEFAULT_LANDING_CONFIG.hero.overlay_opacity),
   };
 }
 
