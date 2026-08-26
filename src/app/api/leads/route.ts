@@ -1,11 +1,16 @@
 import { createClient } from '@supabase/supabase-js';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { NextRequest, NextResponse } from 'next/server';
+import type {
+  EmpaquesPersonalizadosArchivo,
+  EmpaquesPersonalizadosDetalle,
+} from '@/lib/empaques/personalizados-shared';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
+const EMPAQUES_SOLICITUDES_BUCKET = 'empaques-solicitudes';
 
 // Campos de atribución aceptados por el POST. Todos opcionales;
 // provienen de la cookie `lead_attr` escrita por
@@ -172,7 +177,53 @@ export async function GET(request: NextRequest) {
     const { data, error, count } = await query;
     if (error) throw error;
 
-    return NextResponse.json({ leads: data, total: count });
+    const leads = data ?? [];
+    const personalizedLeadIds = leads
+      .filter((lead) => lead.fuente === 'empaques_personalizados')
+      .map((lead) => lead.id);
+    const detailByLeadId = new Map<string, EmpaquesPersonalizadosDetalle>();
+
+    if (personalizedLeadIds.length > 0) {
+      const { data: detailRows, error: detailError } = await supabaseAdmin
+        .from('lead_empaques_personalizados')
+        .select('id, lead_id, tipo_empaque, uso_producto, medida_largo, medida_ancho, medida_alto, unidad_medida, material, impresion, cantidad, ciudad_entrega, fecha_requerida, comentarios, archivos, created_at')
+        .in('lead_id', personalizedLeadIds);
+      if (detailError) throw detailError;
+
+      const rows = (detailRows ?? []) as unknown as EmpaquesPersonalizadosDetalle[];
+      const paths = Array.from(new Set(rows.flatMap((row) =>
+        (Array.isArray(row.archivos) ? row.archivos : [])
+          .map((file) => file.path)
+          .filter(Boolean),
+      )));
+      const signedUrlByPath = new Map<string, string>();
+
+      if (paths.length > 0) {
+        const { data: signedRows, error: signedError } = await supabaseAdmin.storage
+          .from(EMPAQUES_SOLICITUDES_BUCKET)
+          .createSignedUrls(paths, 60 * 60);
+        if (signedError) throw signedError;
+        for (const signed of signedRows ?? []) {
+          if (signed.path && signed.signedUrl) signedUrlByPath.set(signed.path, signed.signedUrl);
+        }
+      }
+
+      for (const row of rows) {
+        const archivos = (Array.isArray(row.archivos) ? row.archivos : []).map((file: EmpaquesPersonalizadosArchivo) => ({
+          ...file,
+          signed_url: signedUrlByPath.get(file.path) ?? null,
+        }));
+        detailByLeadId.set(row.lead_id, { ...row, archivos });
+      }
+    }
+
+    return NextResponse.json({
+      leads: leads.map((lead) => ({
+        ...lead,
+        empaques_personalizado: detailByLeadId.get(lead.id) ?? null,
+      })),
+      total: count,
+    });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Error al listar leads';
     return NextResponse.json({ error: message }, { status: 500 });
@@ -276,6 +327,18 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: 'Se requiere al menos un ID valido' }, { status: 400 });
     }
 
+    const { data: personalizedRows, error: personalizedError } = await supabaseAdmin
+      .from('lead_empaques_personalizados')
+      .select('archivos')
+      .in('lead_id', idsValidos);
+    if (personalizedError) throw personalizedError;
+
+    const privatePaths = (personalizedRows ?? []).flatMap((row) => {
+      const archivos = Array.isArray(row.archivos) ? row.archivos as Array<{ path?: unknown }> : [];
+      return archivos
+        .map((file) => typeof file.path === 'string' ? file.path : null)
+        .filter((path): path is string => Boolean(path));
+    });
     const { error, count } = await supabaseAdmin
       .from('leads')
       .delete({ count: 'exact' })
@@ -283,7 +346,15 @@ export async function DELETE(request: NextRequest) {
 
     if (error) throw error;
 
-    return NextResponse.json({ eliminados: count ?? 0 });
+    let warning: string | null = null;
+    if (privatePaths.length > 0) {
+      const { error: storageError } = await supabaseAdmin.storage
+        .from(EMPAQUES_SOLICITUDES_BUCKET)
+        .remove(privatePaths);
+      warning = storageError?.message ?? null;
+    }
+
+    return NextResponse.json({ eliminados: count ?? 0, warning });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Error al eliminar lead';
     return NextResponse.json({ error: message }, { status: 500 });

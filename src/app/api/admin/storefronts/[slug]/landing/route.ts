@@ -64,13 +64,13 @@ export async function PUT(
 
   const incoming = (body && typeof body === 'object') ? body as Record<string, unknown> : {};
 
-  // El cliente puede mandar { descripcion, hero, ventajas } al raíz o anidados
+  // El cliente puede mandar { descripcion, hero, ventajas, personalizados } al raíz o anidados
   // bajo `landing`. Aceptamos ambas formas para resiliencia.
   const flattened: Record<string, unknown> = {
     descripcion: incoming.descripcion,
     landing: incoming.landing && typeof incoming.landing === 'object'
       ? incoming.landing
-      : { hero: incoming.hero, ventajas: incoming.ventajas },
+      : { hero: incoming.hero, ventajas: incoming.ventajas, personalizados: incoming.personalizados },
   };
 
   const normalized = normalizeLandingConfig(flattened);

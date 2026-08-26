@@ -545,7 +545,11 @@ export default function AdminEmpaquesPage() {
         if (!cancelled) {
           setLanding(normalizeLandingConfig({
             descripcion: data.landing.descripcion,
-            landing: { hero: data.landing.hero, ventajas: data.landing.ventajas },
+            landing: {
+              hero: data.landing.hero,
+              ventajas: data.landing.ventajas,
+              personalizados: data.landing.personalizados,
+            },
           }));
           setLandingLoaded(true);
         }
@@ -1566,6 +1570,7 @@ export default function AdminEmpaquesPage() {
                     descripcion: landing.descripcion,
                     hero: landing.hero,
                     ventajas: landing.ventajas,
+                    personalizados: landing.personalizados,
                   }),
                 }),
               );
@@ -1878,6 +1883,186 @@ export default function AdminEmpaquesPage() {
                   </div>
                 </div>
               ))}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-border bg-white p-6 shadow-sm">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">Empaques personalizados</h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Contenido público y opciones reales del configurador. Escribe una opción por línea.
+                </p>
+              </div>
+              <label className="inline-flex items-center gap-2 text-sm font-semibold text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={landing.personalizados.activo}
+                  onChange={(event) =>
+                    setLanding((prev) => ({
+                      ...prev,
+                      personalizados: { ...prev.personalizados, activo: event.target.checked },
+                    }))
+                  }
+                  className="h-4 w-4 rounded border-slate-300 accent-primary"
+                />
+                Vista activa
+              </label>
+            </div>
+            <div className="mt-5 grid gap-5 md:grid-cols-2">
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-slate-700">Eyebrow</span>
+                <input
+                  type="text"
+                  value={landing.personalizados.eyebrow}
+                  onChange={(event) =>
+                    setLanding((prev) => ({
+                      ...prev,
+                      personalizados: { ...prev.personalizados, eyebrow: event.target.value },
+                    }))
+                  }
+                  className="h-11 w-full rounded-lg border border-border bg-white px-3 text-sm focus:border-primary focus:outline-none"
+                />
+              </label>
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-slate-700">Título</span>
+                <input
+                  type="text"
+                  value={landing.personalizados.titulo}
+                  onChange={(event) =>
+                    setLanding((prev) => ({
+                      ...prev,
+                      personalizados: { ...prev.personalizados, titulo: event.target.value },
+                    }))
+                  }
+                  className="h-11 w-full rounded-lg border border-border bg-white px-3 text-sm focus:border-primary focus:outline-none"
+                />
+              </label>
+              <label className="space-y-2 md:col-span-2">
+                <span className="text-sm font-medium text-slate-700">Subtítulo</span>
+                <textarea
+                  rows={2}
+                  value={landing.personalizados.subtitulo}
+                  onChange={(event) =>
+                    setLanding((prev) => ({
+                      ...prev,
+                      personalizados: { ...prev.personalizados, subtitulo: event.target.value },
+                    }))
+                  }
+                  className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm focus:border-primary focus:outline-none"
+                />
+              </label>
+              <label className="space-y-2 md:col-span-2">
+                <span className="text-sm font-medium text-slate-700">Descripción del configurador</span>
+                <textarea
+                  rows={3}
+                  value={landing.personalizados.descripcion}
+                  onChange={(event) =>
+                    setLanding((prev) => ({
+                      ...prev,
+                      personalizados: { ...prev.personalizados, descripcion: event.target.value },
+                    }))
+                  }
+                  className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm focus:border-primary focus:outline-none"
+                />
+              </label>
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-slate-700">Texto del CTA</span>
+                <input
+                  type="text"
+                  value={landing.personalizados.cta_texto}
+                  onChange={(event) =>
+                    setLanding((prev) => ({
+                      ...prev,
+                      personalizados: { ...prev.personalizados, cta_texto: event.target.value },
+                    }))
+                  }
+                  className="h-11 w-full rounded-lg border border-border bg-white px-3 text-sm focus:border-primary focus:outline-none"
+                />
+              </label>
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-slate-700">Mensaje para WhatsApp</span>
+                <input
+                  type="text"
+                  value={landing.personalizados.mensaje_whatsapp}
+                  onChange={(event) =>
+                    setLanding((prev) => ({
+                      ...prev,
+                      personalizados: { ...prev.personalizados, mensaje_whatsapp: event.target.value },
+                    }))
+                  }
+                  className="h-11 w-full rounded-lg border border-border bg-white px-3 text-sm focus:border-primary focus:outline-none"
+                />
+              </label>
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-slate-700">Tipos de empaque</span>
+                <textarea
+                  rows={6}
+                  value={landing.personalizados.tipos_empaque.join('\n')}
+                  onChange={(event) =>
+                    setLanding((prev) => ({
+                      ...prev,
+                      personalizados: {
+                        ...prev.personalizados,
+                        tipos_empaque: event.target.value.split('\n').map((item) => item.trim()).filter(Boolean),
+                      },
+                    }))
+                  }
+                  placeholder="Una opción por línea"
+                  className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm focus:border-primary focus:outline-none"
+                />
+              </label>
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-slate-700">Materiales</span>
+                <textarea
+                  rows={6}
+                  value={landing.personalizados.materiales.join('\n')}
+                  onChange={(event) =>
+                    setLanding((prev) => ({
+                      ...prev,
+                      personalizados: {
+                        ...prev.personalizados,
+                        materiales: event.target.value.split('\n').map((item) => item.trim()).filter(Boolean),
+                      },
+                    }))
+                  }
+                  placeholder="Una opción por línea"
+                  className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm focus:border-primary focus:outline-none"
+                />
+              </label>
+              <label className="space-y-2 md:col-span-2">
+                <span className="text-sm font-medium text-slate-700">Tipos de impresión</span>
+                <textarea
+                  rows={5}
+                  value={landing.personalizados.impresiones.join('\n')}
+                  onChange={(event) =>
+                    setLanding((prev) => ({
+                      ...prev,
+                      personalizados: {
+                        ...prev.personalizados,
+                        impresiones: event.target.value.split('\n').map((item) => item.trim()).filter(Boolean),
+                      },
+                    }))
+                  }
+                  placeholder="Una opción por línea"
+                  className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm focus:border-primary focus:outline-none"
+                />
+              </label>
+              <div className="space-y-2 md:col-span-2">
+                <MediaUpload
+                  uploadUrl="/api/admin/storefronts/empaques/upload"
+                  folder="personalizados"
+                  value={landing.personalizados.imagen_url}
+                  onChange={(url) =>
+                    setLanding((prev) => ({
+                      ...prev,
+                      personalizados: { ...prev.personalizados, imagen_url: url || null },
+                    }))
+                  }
+                  label="Imagen de Empaques Personalizados"
+                  helpText="Se usa en la tarjeta de acceso y en la cabecera de la vista. Máximo 5 MB."
+                />
+              </div>
             </div>
           </div>
 

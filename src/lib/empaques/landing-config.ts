@@ -18,6 +18,7 @@ export type {
   EmpaquesLandingBenefits,
   EmpaquesLandingConfig,
   EmpaquesLandingHero,
+  EmpaquesPersonalizadosConfig,
   LandingBenefitIcon,
 } from '@/lib/empaques/landing-config-shared';
 

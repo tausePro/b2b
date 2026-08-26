@@ -4,8 +4,9 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Loader2, UserPlus, Filter, MessageCircle, Mail, Phone,
   Building2, Calendar, ChevronDown, Check, AlertCircle, Target,
-  Trash2,
+  Trash2, Package,
 } from 'lucide-react';
+import type { EmpaquesPersonalizadosDetalle } from '@/lib/empaques/personalizados-shared';
 
 interface Lead {
   id: string;
@@ -31,6 +32,7 @@ interface Lead {
   referrer: string | null;
   landing_url: string | null;
   click_at: string | null;
+  empaques_personalizado: EmpaquesPersonalizadosDetalle | null;
 }
 
 const ESTADOS = [
@@ -59,6 +61,7 @@ const FUENTES: Array<{ value: string; label: string; mode?: 'prefix' }> = [
   { value: 'producto_', label: 'Producto (detalle)', mode: 'prefix' },
   { value: 'contacto_formulario', label: 'Contacto — Formulario' },
   { value: 'contacto_whatsapp', label: 'Contacto — WhatsApp' },
+  { value: 'empaques_personalizados', label: 'Empaques — Personalizados' },
   // Prefix: matchea contacto_comercial_<slug> para cada comercial
   // del equipo configurado en CMS. Permite ver el total de leads que
   // entraron via tarjetas del equipo comercial en /contacto.
@@ -109,6 +112,11 @@ function formatHost(url: string | null): string | null {
   } catch {
     return url.slice(0, 40);
   }
+}
+
+function formatMeasures(detail: EmpaquesPersonalizadosDetalle) {
+  if (detail.medida_largo === null && detail.medida_ancho === null && detail.medida_alto === null) return 'Por definir';
+  return [detail.medida_largo ?? '—', detail.medida_ancho ?? '—', detail.medida_alto ?? '—'].join(' × ') + ` ${detail.unidad_medida}`;
 }
 
 export default function LeadsPage() {
@@ -444,6 +452,35 @@ export default function LeadsPage() {
                       </div>
                       {lead.mensaje && (
                         <p className="text-xs text-slate-400 mt-1 italic max-w-xs truncate">&ldquo;{lead.mensaje}&rdquo;</p>
+                      )}
+                      {lead.empaques_personalizado && (
+                        <details className="mt-2 max-w-md rounded-lg border border-lime-200 bg-lime-50/60 p-2 text-xs text-slate-700">
+                          <summary className="flex cursor-pointer list-none items-center gap-1.5 font-bold text-slate-800">
+                            <Package className="h-3.5 w-3.5 text-[#7f9b00]" />
+                            Ver configuración personalizada
+                          </summary>
+                          <div className="mt-3 grid gap-x-4 gap-y-2 sm:grid-cols-2">
+                            <div><span className="font-bold">Tipo:</span> {lead.empaques_personalizado.tipo_empaque}</div>
+                            <div><span className="font-bold">Cantidad:</span> {lead.empaques_personalizado.cantidad}</div>
+                            <div><span className="font-bold">Medidas:</span> {formatMeasures(lead.empaques_personalizado)}</div>
+                            <div><span className="font-bold">Material:</span> {lead.empaques_personalizado.material || 'Por definir'}</div>
+                            <div><span className="font-bold">Impresión:</span> {lead.empaques_personalizado.impresion || 'Por definir'}</div>
+                            <div><span className="font-bold">Entrega:</span> {lead.empaques_personalizado.ciudad_entrega || 'Por definir'}{lead.empaques_personalizado.fecha_requerida ? ` · ${lead.empaques_personalizado.fecha_requerida}` : ''}</div>
+                            <div className="sm:col-span-2"><span className="font-bold">Uso:</span> {lead.empaques_personalizado.uso_producto}</div>
+                            {lead.empaques_personalizado.comentarios && (
+                              <div className="sm:col-span-2"><span className="font-bold">Comentarios:</span> {lead.empaques_personalizado.comentarios}</div>
+                            )}
+                          </div>
+                          {lead.empaques_personalizado.archivos.length > 0 && (
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              {lead.empaques_personalizado.archivos.map((file) => file.signed_url ? (
+                                <a key={file.path} href={file.signed_url} target="_blank" rel="noreferrer" className="rounded-full border border-lime-300 bg-white px-3 py-1 font-bold text-slate-700 transition hover:border-[#9CBB06]">
+                                  {file.nombre}
+                                </a>
+                              ) : null)}
+                            </div>
+                          )}
+                        </details>
                       )}
                     </td>
                     <td className="px-4 py-3">
