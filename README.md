@@ -66,6 +66,17 @@ La antigüedad del costo se lee directamente desde Odoo mediante `last_purchase_
 
 ARIS MINING SEGOVIA usa `modo_pricing = 'pricelist'`; sus precios de venta provienen exclusivamente de la lista asignada en Odoo y no del esquema costo+margen.
 
+## Configurador de Empaques Personalizados
+
+La migración `supabase/migrations/046_empaques_personalizados.sql` debe aplicarse antes de desplegar el configurador. Crea el detalle estructurado de las solicitudes y el bucket privado `empaques-solicitudes`.
+
+- Vista pública: `/empaques/personalizados` y `/personalizados` desde el subdominio de Empaques.
+- Recopila tipo, uso, medidas, material, impresión, cantidad, entrega, comentarios y hasta tres archivos privados; no maneja acabados.
+- Crea un lead con fuente `empaques_personalizados` y ofrece continuidad por WhatsApp.
+- No crea productos ni cotizaciones en Odoo y no calcula precios automáticos.
+- Las opciones y textos se editan desde Admin > Empaques > Landing.
+- Los archivos se consultan desde Admin > Leads mediante URLs firmadas temporales.
+
 ## Recuperación automática de perfil Auth
 
 Se agregó una contingencia para el error **"Perfil no encontrado"** cuando el `auth.users.id` cambia pero `public.usuarios.auth_id` quedó desincronizado.

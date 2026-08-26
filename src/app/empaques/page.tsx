@@ -1,6 +1,7 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import type { Metadata } from 'next';
+import { headers } from 'next/headers';
 import {
   ArrowRight,
   Box,
@@ -273,6 +274,42 @@ function CategoriesSection({ data, highlights }: { data: EmpaquesCatalogData; hi
   );
 }
 
+function PersonalizedSection({
+  config,
+  href,
+}: {
+  config: EmpaquesLandingConfig['personalizados'];
+  href: string;
+}) {
+  if (!config.activo) return null;
+
+  return (
+    <section className="bg-white px-4 py-24 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-7xl">
+        <Link href={href} className="group grid min-h-[440px] overflow-hidden rounded-3xl bg-slate-950 shadow-xl shadow-slate-900/10 lg:grid-cols-2">
+          <div className="relative min-h-[320px] overflow-hidden">
+            {config.imagen_url ? (
+              <Image src={config.imagen_url} alt={config.titulo} fill sizes="(max-width: 1023px) 100vw, 50vw" unoptimized className="object-cover transition duration-700 group-hover:scale-105" />
+            ) : (
+              <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_30%,rgba(156,187,6,0.55),transparent_35%),linear-gradient(145deg,#172033,#020617)]" />
+            )}
+            <div className="absolute inset-0 bg-gradient-to-t from-slate-950/70 via-transparent to-transparent lg:bg-gradient-to-r" />
+          </div>
+          <div className="flex flex-col justify-center p-8 text-white sm:p-12 lg:p-16">
+            <p className="text-sm font-black uppercase tracking-[0.24em] text-[#C9DE70]">{config.eyebrow}</p>
+            <h2 className="mt-4 text-4xl font-black tracking-tight sm:text-5xl">{config.titulo}</h2>
+            <p className="mt-5 max-w-xl text-lg font-semibold leading-8 text-white/75">{config.subtitulo}</p>
+            <span className="mt-8 inline-flex min-h-14 w-fit items-center gap-2 rounded-full bg-[#9CBB06] px-7 py-4 font-black text-slate-950 transition group-hover:bg-[#C9DE70]">
+              {config.cta_texto}
+              <ArrowRight className="h-5 w-5 transition group-hover:translate-x-1" />
+            </span>
+          </div>
+        </Link>
+      </div>
+    </section>
+  );
+}
+
 function BenefitsSection({ config }: { config: EmpaquesLandingConfig['ventajas'] }) {
   return (
     <section id="ventajas" className="relative overflow-hidden bg-[#F1F1EE] px-4 py-28 sm:px-6 lg:px-8">
@@ -482,11 +519,20 @@ function CatalogProductsSection({ data, search, categoryId, page }: { data: Empa
   );
 }
 
-function QuoteSection({ data }: { data: EmpaquesCatalogData }) {
-  const categoryOptions = [
-    ...data.categories,
-    ...data.categories.flatMap((category) => category.children),
-  ].map((category) => category.name);
+function QuoteSection({
+  data,
+  personalized,
+}: {
+  data: EmpaquesCatalogData;
+  personalized: EmpaquesLandingConfig['personalizados'];
+}) {
+  const categoryOptions = Array.from(new Set([
+    ...(personalized.activo ? [personalized.titulo] : []),
+    ...[
+      ...data.categories,
+      ...data.categories.flatMap((category) => category.children),
+    ].map((category) => category.name),
+  ]));
 
   return (
     <section id="cotizar" className="bg-[#F8F8F5] px-4 py-28 sm:px-6 lg:px-8">
@@ -583,6 +629,7 @@ function EmpaquesContent({
   categoryId,
   page,
   landing,
+  personalizedHref,
 }: {
   data: EmpaquesCatalogData;
   highlights: EmpaquesCatalogData | null;
@@ -590,18 +637,20 @@ function EmpaquesContent({
   categoryId: number | null;
   page: number;
   landing: EmpaquesLandingConfig;
+  personalizedHref: string;
 }) {
   return (
     <div className="min-h-screen bg-[#F8F8F5] text-slate-950 antialiased">
-      <EmpaquesHeader />
+      <EmpaquesHeader personalizedHref={personalizedHref} />
       <main>
         <HeroSection data={data} highlights={highlights} config={landing.hero} />
         <CategoriesSection data={data} highlights={highlights} />
+        <PersonalizedSection config={landing.personalizados} href={personalizedHref} />
         <BenefitsSection config={landing.ventajas} />
         <CatalogProductsSection data={data} search={search} categoryId={categoryId} page={page} />
-        <QuoteSection data={data} />
+        <QuoteSection data={data} personalized={landing.personalizados} />
       </main>
-      <EmpaquesFooter />
+      <EmpaquesFooter personalizedHref={personalizedHref} />
     </div>
   );
 }
@@ -613,6 +662,9 @@ export default async function EmpaquesPage({ searchParams }: EmpaquesPageProps) 
     return <MaintenanceMode message="Estamos preparando el nuevo catálogo de Empaques. Pronto estará disponible." />;
   }
 
+  const requestHeaders = await headers();
+  const isEmpaquesSubdomain = (requestHeaders.get('host') || '').startsWith('empaques.');
+  const personalizedHref = isEmpaquesSubdomain ? '/personalizados' : '/empaques/personalizados';
   const resolvedSearchParams = searchParams ? await searchParams : undefined;
   const search = getSingleSearchParam(resolvedSearchParams?.q).trim();
   const categoryId = parsePositiveInteger(getSingleSearchParam(resolvedSearchParams?.categoria));
@@ -632,6 +684,7 @@ export default async function EmpaquesPage({ searchParams }: EmpaquesPageProps) 
         categoryId={categoryId}
         page={page}
         landing={landing}
+        personalizedHref={personalizedHref}
       />
     );
   }
