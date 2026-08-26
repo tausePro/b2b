@@ -9,10 +9,23 @@
  */
 
 /**
- * Días tras los cuales consideramos el costo "desactualizado" y mostramos
- * la alerta roja. < 30 días = fresco (verde), >= 30 días = stale (rojo).
+ * Umbral legado del cálculo basado en write_date. El semáforo vigente debe
+ * usar getOdooCostAgeStatus con los días autoritativos entregados por Odoo.
  */
 export const COST_STALE_THRESHOLD_DAYS = 30;
+
+export type OdooCostAgeStatus = 'success' | 'info' | 'warning' | 'danger' | 'none';
+
+export function getOdooCostAgeStatus(
+  lastPurchaseDate: string | false | null | undefined,
+  lastPurchaseDays: number | null | undefined
+): OdooCostAgeStatus {
+  if (!lastPurchaseDate || typeof lastPurchaseDays !== 'number' || lastPurchaseDays < 0) return 'none';
+  if (lastPurchaseDays <= 30) return 'success';
+  if (lastPurchaseDays <= 60) return 'info';
+  if (lastPurchaseDays <= 90) return 'warning';
+  return 'danger';
+}
 
 /**
  * Parsea una fecha ISO de Odoo (formato "YYYY-MM-DD HH:MM:SS" o

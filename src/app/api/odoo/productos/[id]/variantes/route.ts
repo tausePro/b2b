@@ -3,13 +3,14 @@ import {
   authenticate,
   getProductVariants,
   read,
-  getLastPurchaseCostByVariants,
-  type LastPurchaseCost,
+  resolvePricelistPrice,
+  type PricelistRuleSet,
 } from '@/lib/odoo/client';
 import { getServerOdooConfig } from '@/lib/odoo/serverConfig';
 import { authorizeApiRoles } from '@/lib/auth/apiRouteGuards';
 import { loadPricingContext, resolveProductPrice, type PricingContext } from '@/lib/pricing/margins';
-import { getCostStaleness, markupOnCost } from '@/lib/pricing/cost-staleness';
+import { loadEmpresaPricelistRules } from '@/lib/pricing/pricelist';
+import { getOdooCostAgeStatus, markupOnCost } from '@/lib/pricing/cost-staleness';
 import { loadStorefrontPricingContextById } from '@/lib/empaques/catalogo';
 
 const ALLOWED_ROLES = ['super_admin', 'direccion', 'asesor', 'comprador', 'aprobador'] as const;
@@ -92,24 +93,24 @@ export async function GET(
       templateListPrice = Number(templateRows[0]?.list_price ?? 0);
     }
 
-    const canSeeCost = COST_VISIBLE_ROLES.has(authorized.actor.rol);
-
-    // Cargar costo "real" desde la última compra (factura o orden). Solo si el
-    // rol puede ver costo — no hacer esta query para compradores.
-    let lastPurchaseByVariant: Map<number, LastPurchaseCost> = new Map();
-    if (canSeeCost && result.variants.length > 0) {
+    // En modo tarifa cada variante puede tener un precio negociado distinto.
+    // Este endpoint no consultaba la tarifa, así que todas las variantes
+    // heredaban el precio de la card y dos variantes con precios distintos se
+    // cobraban igual.
+    let pricelistRules: PricelistRuleSet | null = null;
+    const empresaIdForPricelist = queryEmpresaId ?? authorized.actor.empresa_id;
+    if (pricingCtx?.modoPricing === 'pricelist' && empresaIdForPricelist) {
       try {
-        lastPurchaseByVariant = await getLastPurchaseCostByVariants(
-          session,
-          result.variants.map((v) => v.id)
-        );
-      } catch (purchaseErr) {
+        pricelistRules = await loadEmpresaPricelistRules(empresaIdForPricelist, session);
+      } catch (pricelistErr) {
         console.warn(
-          '[API /odoo/productos/[id]/variantes] No se pudo cargar costo de última compra:',
-          purchaseErr
+          '[API /odoo/productos/[id]/variantes] No se pudo cargar la tarifa del cliente:',
+          pricelistErr
         );
       }
     }
+
+    const canSeeCost = COST_VISIBLE_ROLES.has(authorized.actor.rol);
 
     return NextResponse.json({
       template_id: templateId,
@@ -130,6 +131,20 @@ export async function GET(
         let finalPrice = variantOwnPrice > 0
           ? variantOwnPrice
           : (templateListPrice > 0 ? templateListPrice : fallbackPrice);
+
+        // Precio real de esta variante en la tarifa del cliente. Va antes de
+        // resolveProductPrice para que un override manual siga ganando.
+        if (pricelistRules) {
+          const tarifaPrice = resolvePricelistPrice(pricelistRules, {
+            templateId,
+            variantId: v.id,
+            categId: templateCategId,
+            basePrice: finalPrice,
+          });
+          if (tarifaPrice !== null) {
+            finalPrice = tarifaPrice;
+          }
+        }
 
         // Si hay pricingCtx, resolveProductPrice aplica override → margen sobre
         // costo → pricelist → fallback. Importante: pasamos el `standard_price`
@@ -158,20 +173,19 @@ export async function GET(
           image_128: string | null;
           lst_price: number;
           attribute_value_ids: number[];
-          // Costo "efectivo" mostrado al usuario. Prioriza última compra real,
-          // cae a standard_price si no hay historial.
+          // Costo autoritativo mostrado por Odoo en la variante.
+          // La fecha y los días provienen del módulo de última compra valorada.
           costo?: number;
-          costo_source?: 'invoice' | 'order' | 'standard_price' | null;
+          costo_source?: 'odoo' | null;
           costo_fecha?: string | null;
-          costo_proveedor?: string | null;
-          costo_documento?: string | null;
-          costo_moneda?: string | null;
-          // standard_price del producto en Odoo (AVCO/FIFO) — info auxiliar
-          // por si quieren comparar.
+          // standard_price del producto en Odoo, según el método de costo
+          // configurado en la categoría.
           standard_price?: number;
-          // Antigüedad y staleness referidos al costo efectivo (fecha de
-          // última compra si la hay; fallback write_date).
+          // Antigüedad y semáforo autoritativos del módulo de Odoo,
+          // basados en la última compra valorada.
           dias_desde_actualizacion?: number | null;
+          antiguedad_costo_label?: string | null;
+          antiguedad_costo_estado?: ReturnType<typeof getOdooCostAgeStatus>;
           costo_desactualizado?: boolean | null;
           markup_porcentaje?: number | null;
         } = {
@@ -184,36 +198,24 @@ export async function GET(
         };
 
         if (canSeeCost) {
-          const lastPurchase = lastPurchaseByVariant.get(v.id) ?? null;
-          base.standard_price = v.standard_price;
+          const lastPurchaseDate = typeof v.last_purchase_date === 'string' ? v.last_purchase_date : null;
+          const lastPurchaseDays = lastPurchaseDate && typeof v.last_purchase_days === 'number'
+            ? v.last_purchase_days
+            : null;
+          const lastPurchaseLabel = typeof v.last_purchase_days_label === 'string'
+            ? v.last_purchase_days_label
+            : null;
+          const costAgeStatus = getOdooCostAgeStatus(lastPurchaseDate, lastPurchaseDays);
 
-          if (lastPurchase) {
-            // Costo real de la última compra (factura u orden).
-            const staleness = getCostStaleness(lastPurchase.date);
-            base.costo = lastPurchase.price_unit;
-            base.costo_source = lastPurchase.source;
-            base.costo_fecha = lastPurchase.date;
-            base.costo_proveedor = lastPurchase.partner_name;
-            base.costo_documento = lastPurchase.document_ref;
-            base.costo_moneda = lastPurchase.currency;
-            base.dias_desde_actualizacion = staleness.dias;
-            base.costo_desactualizado = staleness.desactualizado;
-            base.markup_porcentaje = markupOnCost(finalPrice, lastPurchase.price_unit);
-          } else {
-            // Fallback: no hay compras en el lookback. Usamos standard_price
-            // y write_date como antes, pero marcamos la fuente.
-            const writeDate = typeof v.write_date === 'string' ? v.write_date : null;
-            const staleness = getCostStaleness(writeDate);
-            base.costo = v.standard_price;
-            base.costo_source = 'standard_price';
-            base.costo_fecha = writeDate;
-            base.costo_proveedor = null;
-            base.costo_documento = null;
-            base.costo_moneda = null;
-            base.dias_desde_actualizacion = staleness.dias;
-            base.costo_desactualizado = staleness.desactualizado;
-            base.markup_porcentaje = markupOnCost(finalPrice, v.standard_price);
-          }
+          base.costo = v.standard_price;
+          base.costo_source = 'odoo';
+          base.costo_fecha = lastPurchaseDate;
+          base.standard_price = v.standard_price;
+          base.dias_desde_actualizacion = lastPurchaseDays;
+          base.antiguedad_costo_label = lastPurchaseLabel;
+          base.antiguedad_costo_estado = costAgeStatus;
+          base.costo_desactualizado = costAgeStatus === 'danger';
+          base.markup_porcentaje = markupOnCost(finalPrice, v.standard_price);
         }
 
         return base;

@@ -65,7 +65,7 @@ interface VariantResponse {
    * (factura > orden); cae a standard_price si no hay historial.
    */
   costo?: number;
-  costo_source?: 'invoice' | 'order' | 'standard_price' | null;
+  costo_source?: 'odoo' | 'invoice' | 'order' | 'standard_price' | null;
   costo_fecha?: string | null;
   costo_proveedor?: string | null;
   costo_documento?: string | null;
@@ -73,6 +73,8 @@ interface VariantResponse {
   /** standard_price del producto en Odoo (AVCO/FIFO) — info auxiliar. */
   standard_price?: number;
   dias_desde_actualizacion?: number | null;
+  antiguedad_costo_label?: string | null;
+  antiguedad_costo_estado?: 'success' | 'info' | 'warning' | 'danger' | 'none';
   costo_desactualizado?: boolean | null;
   markup_porcentaje?: number | null;
 }
@@ -97,6 +99,14 @@ const dateFormatter = new Intl.DateTimeFormat('es-CO', {
   year: 'numeric',
 });
 
+function costAgeBadgeClass(status: VariantResponse['antiguedad_costo_estado']) {
+  if (status === 'success') return 'bg-emerald-50 text-emerald-700';
+  if (status === 'info') return 'bg-sky-100 text-sky-700';
+  if (status === 'warning') return 'bg-amber-100 text-amber-700';
+  if (status === 'danger') return 'bg-red-100 text-red-700';
+  return 'bg-slate-100 text-slate-500';
+}
+
 /**
  * Badge que indica la procedencia del costo mostrado:
  *   - invoice   → última factura de proveedor posted (la fuente más fiel).
@@ -112,7 +122,7 @@ function CostoSourceBadge({
   fecha,
   standardPrice,
 }: {
-  source: 'invoice' | 'order' | 'standard_price' | null;
+  source: 'odoo' | 'invoice' | 'order' | 'standard_price' | null;
   proveedor?: string | null;
   documento?: string | null;
   fecha?: string | null;
@@ -121,6 +131,17 @@ function CostoSourceBadge({
   if (!source) return null;
 
   const fechaFmt = fecha ? formatDateSafe(fecha) : null;
+
+  if (source === 'odoo') {
+    return (
+      <span
+        className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] font-semibold text-slate-700"
+        title={fechaFmt ? `Costo y fecha de última compra leídos directamente de Odoo. Última compra: ${fechaFmt}.` : 'Costo leído directamente de Odoo. Sin compras valoradas registradas.'}
+      >
+        Odoo {fechaFmt ? `· ${fechaFmt}` : ''}
+      </span>
+    );
+  }
 
   if (source === 'invoice') {
     const tooltip = [
@@ -342,7 +363,8 @@ export function VariantsModal({ templateId, productName, open, onClose, fallback
                   const attrs = v.attribute_value_ids
                     .map((id) => attrValueMap.get(id))
                     .filter((x): x is NonNullable<typeof x> => Boolean(x));
-                  const stale = v.costo_desactualizado === true;
+                  const costAgeStatus = v.antiguedad_costo_estado ?? 'none';
+                  const stale = costAgeStatus === 'danger';
                   const markup = v.markup_porcentaje;
                   const markupColor =
                     typeof markup !== 'number'
@@ -429,23 +451,15 @@ export function VariantsModal({ templateId, productName, open, onClose, fallback
                       )}
                       {canSeeCost && (
                         <td className="px-3 py-3 text-center whitespace-nowrap">
-                          {typeof v.dias_desde_actualizacion === 'number' ? (
-                            <span
-                              className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                                stale ? 'bg-red-100 text-red-700' : 'bg-emerald-50 text-emerald-700'
-                              }`}
-                              title={
-                                v.costo_source === 'standard_price'
-                                  ? 'Días desde la última modificación del producto en Odoo (sin historial de compras). Costo puede estar desactualizado.'
-                                  : `Días desde la última ${v.costo_source === 'invoice' ? 'factura' : 'orden'} registrada${v.costo_proveedor ? ` con ${v.costo_proveedor}` : ''}.`
-                              }
-                            >
-                              {stale && <AlertTriangle className="h-2.5 w-2.5" />}
-                              {v.dias_desde_actualizacion === 0 ? 'hoy' : `${v.dias_desde_actualizacion}d`}
-                            </span>
-                          ) : (
-                            <span className="text-slate-400">—</span>
-                          )}
+                          <span
+                            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${costAgeBadgeClass(costAgeStatus)}`}
+                            title={v.costo_fecha
+                              ? `Antigüedad calculada por Odoo desde la última compra valorada (${v.costo_fecha}).`
+                              : 'Odoo no registra una compra valorada para esta variante.'}
+                          >
+                            {stale && <AlertTriangle className="h-2.5 w-2.5" />}
+                            {v.antiguedad_costo_label ?? 'Sin compras'}
+                          </span>
                         </td>
                       )}
                     </tr>
@@ -459,15 +473,12 @@ export function VariantsModal({ templateId, productName, open, onClose, fallback
         {canSeeCost && !loading && !error && variantes.length > 0 && (
           <div className="border-t border-slate-200 bg-slate-50 px-6 py-3 text-[11px] text-slate-500 space-y-1">
             <div>
-              <strong>Costo</strong> = precio unitario de la última operación de compra
-              (factura de proveedor o orden confirmada, lo más reciente). Si no hay historial
-              de compras en los últimos 3 años, se muestra el campo &quot;Costo&quot; del producto en Odoo
-              (badge <em>Estimado</em>).
+              <strong>Costo</strong> y <strong>antigüedad</strong> se leen directamente de Odoo.
+              La antigüedad corresponde a la última compra que generó una capa de valoración de inventario.
             </div>
             <div>
               <strong>Markup</strong> = (precio − costo) / costo × 100.{' '}
-              <strong>Antigüedad</strong> = días desde la fecha del documento que dio origen al costo.
-              Una variante con &gt; 30 días probablemente tiene el costo desactualizado.
+              Semáforo Odoo: 0–30 días verde, 31–60 azul, 61–90 amarillo y más de 90 rojo.
             </div>
           </div>
         )}
