@@ -54,6 +54,18 @@ La política `pedido_items_insert` valida ahora la regla de catálogo restringid
 
 Migración: `supabase/migrations/012_blindaje_pedido_items_portal.sql`.
 
+## Idempotencia de pedidos y sincronización Odoo
+
+La migración `supabase/migrations/045_pedidos_idempotencia_odoo.sql` debe aplicarse antes de desplegar el código que la consume. Agrega:
+
+- Llave de idempotencia por usuario para impedir pedidos duplicados por doble envío o reintentos.
+- Claim atómico de sincronización para evitar dos `sale.order` concurrentes para el mismo pedido.
+- Unicidad de `odoo_sale_order_id` y serialización de la numeración `PED-AAAA-NNNN`.
+
+La antigüedad del costo se lee directamente desde Odoo mediante `last_purchase_date`, `last_purchase_days` y `last_purchase_days_label`. El semáforo replica los rangos de Odoo: 0–30 verde, 31–60 azul, 61–90 amarillo y más de 90 rojo.
+
+ARIS MINING SEGOVIA usa `modo_pricing = 'pricelist'`; sus precios de venta provienen exclusivamente de la lista asignada en Odoo y no del esquema costo+margen.
+
 ## Recuperación automática de perfil Auth
 
 Se agregó una contingencia para el error **"Perfil no encontrado"** cuando el `auth.users.id` cambia pero `public.usuarios.auth_id` quedó desincronizado.

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useCart } from '@/contexts/CartContext';
 import { createClient } from '@/lib/supabase/client';
@@ -25,6 +25,13 @@ export default function CarritoPage() {
   });
   const router = useRouter();
   const [supabase] = useState(() => createClient());
+  const submissionInFlightRef = useRef(false);
+  const idempotencyKeyRef = useRef<string | null>(null);
+
+  const getIdempotencyKey = () => {
+    idempotencyKeyRef.current ??= window.crypto.randomUUID();
+    return idempotencyKeyRef.current;
+  };
 
   useEffect(() => {
     const cargarConfigEmpresa = async () => {
@@ -106,7 +113,7 @@ export default function CarritoPage() {
   }));
 
   const handleEnviarAprobacion = async () => {
-    if (!user || items.length === 0) return;
+    if (!user || items.length === 0 || submissionInFlightRef.current) return;
 
     const usaSedes = empresaConfig?.usa_sedes ?? true;
     if (usaSedes && !user.sede_id) {
@@ -114,6 +121,7 @@ export default function CarritoPage() {
       return;
     }
 
+    submissionInFlightRef.current = true;
     setEnviando(true);
 
     try {
@@ -121,6 +129,7 @@ export default function CarritoPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          idempotency_key: getIdempotencyKey(),
           comentarios_sede: observaciones || null,
           items: buildItemsPayload(),
         }),
@@ -141,6 +150,7 @@ export default function CarritoPage() {
       console.error('Error:', err);
       alert('Error inesperado. Intenta de nuevo.');
     } finally {
+      submissionInFlightRef.current = false;
       setEnviando(false);
     }
   };
@@ -148,13 +158,15 @@ export default function CarritoPage() {
   const [guardandoBorrador, setGuardandoBorrador] = useState(false);
 
   const handleGuardarBorrador = async () => {
-    if (!user || items.length === 0) return;
+    if (!user || items.length === 0 || submissionInFlightRef.current) return;
+    submissionInFlightRef.current = true;
     setGuardandoBorrador(true);
     try {
       const response = await fetch('/api/pedidos', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          idempotency_key: getIdempotencyKey(),
           comentarios_sede: observaciones || null,
           items: buildItemsPayload(),
           guardar_como_borrador: true,
@@ -170,6 +182,7 @@ export default function CarritoPage() {
       console.error('Error:', err);
       alert('Error al guardar borrador. Intenta de nuevo.');
     } finally {
+      submissionInFlightRef.current = false;
       setGuardandoBorrador(false);
     }
   };

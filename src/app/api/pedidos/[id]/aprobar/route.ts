@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
-import { authenticate, createSaleOrderQuotation, read } from '@/lib/odoo/client';
+import { authenticate, createSaleOrderQuotation, read, resolvePricelistPrice } from '@/lib/odoo/client';
 import { mergePedidoNoteWithSpecialItems, partitionPedidoItems } from '@/lib/pedidoItems';
 import { getServerOdooConfig } from '@/lib/odoo/serverConfig';
 import { safeEnqueuePedidoNotifications } from '@/lib/notifications/pedidos';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { loadPricingContext, resolveProductPrice, type ModoPricing } from '@/lib/pricing/margins';
+import { loadEmpresaPricelistRules } from '@/lib/pricing/pricelist';
 import type { TipoPedidoItem } from '@/types';
 
 function getSupabaseAdmin() {
@@ -84,8 +85,10 @@ export async function POST(
   _request: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
+  const { id: pedidoId } = await context.params;
+  let odooSyncClaimed = false;
+
   try {
-    const { id: pedidoId } = await context.params;
     const supabase = await createServerSupabaseClient();
     const {
       data: { user },
@@ -244,6 +247,47 @@ export async function POST(
       );
     }
 
+    const { data: syncClaimed, error: syncClaimError } = await admin.rpc('claim_pedido_odoo_sync', {
+      p_pedido_id: pedidoId,
+    });
+
+    if (syncClaimError) {
+      return NextResponse.json(
+        { error: 'ODOO_SYNC_CLAIM_ERROR', details: syncClaimError.message },
+        { status: 500 }
+      );
+    }
+
+    if (!syncClaimed) {
+      const { data: currentPedido } = await admin
+        .from('pedidos')
+        .select('estado, odoo_sale_order_id, odoo_sync_status')
+        .eq('id', pedidoId)
+        .maybeSingle();
+
+      if (currentPedido?.odoo_sale_order_id) {
+        return NextResponse.json({
+          ok: true,
+          already_synced: true,
+          pedido: {
+            id: pedidoId,
+            estado: currentPedido.estado,
+            odoo_sale_order_id: currentPedido.odoo_sale_order_id,
+          },
+        });
+      }
+
+      return NextResponse.json(
+        {
+          error: 'ODOO_SYNC_IN_PROGRESS',
+          details: 'Este pedido ya está siendo sincronizado con Odoo. Espera unos segundos y actualiza la página.',
+        },
+        { status: 409 }
+      );
+    }
+
+    odooSyncClaimed = true;
+
     // Recalcular precios server-side con jerarquía: override > costo+margen > pricelist
     const empresaId = pedido.empresa_id ?? pedido.empresa?.id;
     let modoPricing: ModoPricing = 'costo_margen';
@@ -254,6 +298,14 @@ export async function POST(
         const odooConfigReprice = await getServerOdooConfig();
         if (odooConfigReprice) {
           const repriceSession = await authenticate(odooConfigReprice);
+
+          // En modo tarifa el precio autoritativo es el de la tarifa del cliente
+          // en Odoo, resuelto POR VARIANTE (ver comentario equivalente en
+          // POST /api/pedidos).
+          const pricelistRules =
+            pricingCtx.modoPricing === 'pricelist'
+              ? await loadEmpresaPricelistRules(empresaId, repriceSession)
+              : null;
 
           const templateIds = [...new Set(catalogItems.map((i) => Number(i.odoo_product_id)))];
           const templates = await read(
@@ -287,9 +339,28 @@ export async function POST(
             const tmpl = templateMap.get(Number(item.odoo_product_id));
             if (!tmpl) continue;
             const variantData = item.odoo_variant_id ? variantMap.get(Number(item.odoo_variant_id)) : null;
+            const categId = Array.isArray(tmpl.categ_id) ? Number(tmpl.categ_id[0]) : null;
+            let basePrice = variantData?.lst_price ?? Number(tmpl.list_price ?? 0);
+
+            if (pricelistRules) {
+              const tarifaPrice = resolvePricelistPrice(pricelistRules, {
+                templateId: Number(item.odoo_product_id),
+                variantId: item.odoo_variant_id ? Number(item.odoo_variant_id) : null,
+                categId,
+                basePrice,
+                quantity: Number(item.cantidad),
+              });
+
+              // Si la tarifa no da un precio que podamos calcular con fidelidad,
+              // conservamos el precio ya aprobado en vez de pisarlo con un
+              // list_price que no es de venta.
+              if (tarifaPrice === null) continue;
+              basePrice = tarifaPrice;
+            }
+
             const resolvedPrice = resolveProductPrice(pricingCtx, {
               id: Number(item.odoo_product_id),
-              list_price: variantData?.lst_price ?? Number(tmpl.list_price ?? 0),
+              list_price: basePrice,
               standard_price: variantData?.standard_price ?? Number(tmpl.standard_price ?? 0),
               categ_id: Array.isArray(tmpl.categ_id) ? tmpl.categ_id as [number, string] : false,
             });
@@ -312,6 +383,15 @@ export async function POST(
 
     const odooConfig = await getServerOdooConfig();
     if (!odooConfig) {
+      await admin
+        .from('pedidos')
+        .update({
+          odoo_sync_status: 'error',
+          odoo_sync_error: 'No hay configuración de Odoo disponible en el servidor.',
+        })
+        .eq('id', pedidoId);
+      odooSyncClaimed = false;
+
       return NextResponse.json(
         {
           error: 'ODOO_CONFIG_MISSING',
@@ -348,7 +428,6 @@ export async function POST(
       lines: catalogItems.map((item) => ({
         productTemplateId: Number(item.odoo_product_id),
         productId: item.odoo_variant_id ? Number(item.odoo_variant_id) : undefined,
-        name: item.nombre_producto,
         quantity: Number(item.cantidad),
         priceUnit: Number(item.precio_unitario_cop),
       })),
@@ -362,10 +441,21 @@ export async function POST(
         aprobado_por: pedido.aprobado_por ?? perfil.id,
         fecha_aprobacion: approvalTimestamp,
         odoo_sale_order_id: quotation.id,
+        odoo_sync_status: 'completado',
+        odoo_sync_error: null,
       })
       .eq('id', pedidoId);
 
     if (updateError) {
+      await admin
+        .from('pedidos')
+        .update({
+          odoo_sync_status: 'error',
+          odoo_sync_error: `La cotización ${quotation.name || quotation.id} se creó, pero no se pudo vincular: ${updateError.message}`,
+        })
+        .eq('id', pedidoId);
+      odooSyncClaimed = false;
+
       return NextResponse.json(
         {
           error: 'PEDIDO_UPDATE_ERROR',
@@ -375,6 +465,8 @@ export async function POST(
         { status: 500 }
       );
     }
+
+    odooSyncClaimed = false;
 
     const { error: logError } = await admin.from('logs_trazabilidad').insert({
       pedido_id: pedidoId,
@@ -412,10 +504,21 @@ export async function POST(
       warning,
     });
   } catch (error) {
+    const details = error instanceof Error ? error.message : 'Unknown error';
+    if (odooSyncClaimed) {
+      await getSupabaseAdmin()
+        .from('pedidos')
+        .update({
+          odoo_sync_status: 'error',
+          odoo_sync_error: details,
+        })
+        .eq('id', pedidoId);
+    }
+
     return NextResponse.json(
       {
         error: 'INTERNAL_ERROR',
-        details: error instanceof Error ? error.message : 'Unknown error',
+        details,
       },
       { status: 500 }
     );

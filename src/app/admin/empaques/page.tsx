@@ -86,8 +86,12 @@ interface CatalogProduct {
    */
   standard_price?: number;
   write_date?: string | null;
+  last_purchase_date?: string | null;
   dias_desde_actualizacion?: number | null;
+  antiguedad_costo_label?: string | null;
+  antiguedad_costo_estado?: 'success' | 'info' | 'warning' | 'danger' | 'none';
   costo_desactualizado?: boolean | null;
+  costo_requiere_variantes?: boolean;
   markup_porcentaje?: number | null;
   variantes_divergentes?: boolean;
   variantes_consideradas?: number;
@@ -206,6 +210,14 @@ const currencyFormatter = new Intl.NumberFormat('es-CO', {
   currency: 'COP',
   maximumFractionDigits: 0,
 });
+
+function costAgeBadgeClass(status: CatalogProduct['antiguedad_costo_estado']) {
+  if (status === 'success') return 'bg-emerald-50 text-emerald-700';
+  if (status === 'info') return 'bg-sky-100 text-sky-700';
+  if (status === 'warning') return 'bg-amber-100 text-amber-700';
+  if (status === 'danger') return 'bg-red-100 text-red-700';
+  return 'bg-slate-100 text-slate-500';
+}
 
 function parseIdList(value: string) {
   return Array.from(new Set(
@@ -1124,7 +1136,10 @@ export default function AdminEmpaquesPage() {
                 const saving = savingPriceId === product.id;
 
                 const canSeeCost = product.standard_price !== undefined;
-                const costStale = canSeeCost && product.costo_desactualizado === true;
+                const requiresVariantCost = product.costo_requiere_variantes === true;
+                const canShowDirectCost = canSeeCost && !requiresVariantCost;
+                const costAgeStatus = product.antiguedad_costo_estado ?? 'none';
+                const costStale = costAgeStatus === 'danger';
                 const markupValue = product.markup_porcentaje;
                 const markupColor =
                   typeof markupValue !== 'number'
@@ -1165,7 +1180,7 @@ export default function AdminEmpaquesPage() {
                     <div>
                       <div className="flex items-baseline gap-2 flex-wrap">
                         <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Precio</p>
-                        {canSeeCost && typeof markupValue === 'number' && (
+                        {canShowDirectCost && typeof markupValue === 'number' && (
                           <span
                             className={`text-xs font-bold ${markupColor}`}
                             title={
@@ -1183,40 +1198,28 @@ export default function AdminEmpaquesPage() {
                       <p className="text-xs text-slate-500">{product.pricing_source === 'override' ? 'Manual' : product.pricing_source === 'costo_margen' ? 'Costo + margen' : 'Pendiente manual'}</p>
                       {canSeeCost && (
                         <div className="mt-1.5 flex items-center gap-1.5 text-xs">
-                          <span
-                            className={costStale ? 'text-red-600 font-semibold' : 'text-slate-500'}
-                            title={
-                              costStale
-                                ? 'El producto no se actualiza en Odoo desde hace más de 30 días. El costo podría estar desactualizado.'
-                                : product.variantes_consideradas && product.variantes_consideradas > 1
-                                  ? `Costo más alto entre ${product.variantes_consideradas} variantes activas (proxy del costo real más reciente).`
-                                  : 'Costo registrado en Odoo (standard_price).'
-                            }
-                          >
-                            Costo: {currencyFormatter.format(product.standard_price ?? 0)}
-                          </span>
-                          {product.variantes_divergentes && (
-                            <span
-                              className="inline-flex items-center text-amber-600"
-                              title="Las variantes activas tienen costos muy distintos entre sí. Es posible que alguna variante tenga el costo desactualizado en Odoo. Revisa el producto."
-                            >
-                              <AlertTriangle className="h-3 w-3" />
+                          {requiresVariantCost ? (
+                            <span className="text-slate-500" title="Odoo registra costo y antigüedad por variante para este producto.">
+                              Costo por variante
                             </span>
-                          )}
-                          {typeof product.dias_desde_actualizacion === 'number' && (
-                            <span
-                              className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
-                                costStale
-                                  ? 'bg-red-100 text-red-700'
-                                  : 'bg-emerald-50 text-emerald-700'
-                              }`}
-                              title="Días desde la última escritura sobre cualquier variante activa del producto en Odoo. Es proxy de antigüedad del costo: si nadie movió la variante en mucho tiempo (compra, ajuste, recosteo), el costo podría estar viejo."
-                            >
-                              {costStale && <AlertTriangle className="h-2.5 w-2.5" />}
-                              {product.dias_desde_actualizacion === 0
-                                ? 'hoy'
-                                : `${product.dias_desde_actualizacion}d`}
-                            </span>
+                          ) : (
+                            <>
+                              <span
+                                className={costStale ? 'text-red-600 font-semibold' : 'text-slate-500'}
+                                title="Costo leído directamente del producto en Odoo."
+                              >
+                                Costo: {currencyFormatter.format(product.standard_price ?? 0)}
+                              </span>
+                              <span
+                                className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${costAgeBadgeClass(costAgeStatus)}`}
+                                title={product.last_purchase_date
+                                  ? `Antigüedad calculada por Odoo desde la última compra valorada (${product.last_purchase_date}).`
+                                  : 'Odoo no registra una compra valorada para este producto.'}
+                              >
+                                {costStale && <AlertTriangle className="h-2.5 w-2.5" />}
+                                {product.antiguedad_costo_label ?? 'Sin compras'}
+                              </span>
+                            </>
                           )}
                         </div>
                       )}

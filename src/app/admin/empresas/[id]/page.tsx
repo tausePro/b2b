@@ -107,8 +107,12 @@ interface ProductoEmpresaOdoo {
    */
   standard_price?: number;
   write_date?: string | false;
+  last_purchase_date?: string | false;
   dias_desde_actualizacion?: number | null;
+  antiguedad_costo_label?: string | null;
+  antiguedad_costo_estado?: 'success' | 'info' | 'warning' | 'danger' | 'none';
   costo_desactualizado?: boolean | null;
+  costo_requiere_variantes?: boolean;
   markup_porcentaje?: number | null;
   variantes_divergentes?: boolean;
   variantes_consideradas?: number;
@@ -190,6 +194,14 @@ const LOGO_ALLOWED_MIME_TYPES = new Set([
   'image/webp',
   'image/svg+xml',
 ]);
+
+function costAgeBadgeClass(status: ProductoEmpresaOdoo['antiguedad_costo_estado']) {
+  if (status === 'success') return 'bg-emerald-50 text-emerald-700';
+  if (status === 'info') return 'bg-sky-100 text-sky-700';
+  if (status === 'warning') return 'bg-amber-100 text-amber-700';
+  if (status === 'danger') return 'bg-red-100 text-red-700';
+  return 'bg-slate-100 text-slate-500';
+}
 
 function getLogoFileExtension(file: File) {
   const extensionFromName = file.name.split('.').pop()?.trim().toLowerCase();
@@ -1959,51 +1971,35 @@ export default function EmpresaConfigPage() {
                             </div>
                             {producto.standard_price !== undefined && (
                               <div className="flex items-center gap-1.5 text-[10px]">
-                                <span
-                                  className={
-                                    producto.costo_desactualizado === true
-                                      ? 'text-red-600 font-semibold'
-                                      : 'text-slate-500'
-                                  }
-                                  title={
-                                    producto.costo_desactualizado === true
-                                      ? 'El producto no se actualiza en Odoo desde hace más de 30 días. El costo podría estar desactualizado.'
-                                      : producto.variantes_consideradas && producto.variantes_consideradas > 1
-                                        ? `Costo más alto entre ${producto.variantes_consideradas} variantes activas (proxy del costo real más reciente).`
-                                        : 'Costo registrado en Odoo (standard_price).'
-                                  }
-                                >
-                                  Costo:{' '}
-                                  {new Intl.NumberFormat('es-CO', {
-                                    style: 'currency',
-                                    currency: 'COP',
-                                    maximumFractionDigits: 0,
-                                  }).format(producto.standard_price ?? 0)}
-                                </span>
-                                {producto.variantes_divergentes && (
-                                  <span
-                                    className="inline-flex items-center text-amber-600"
-                                    title="Las variantes activas tienen costos muy distintos entre sí. Es posible que alguna variante tenga el costo desactualizado en Odoo. Revisa el producto."
-                                  >
-                                    <AlertTriangle className="h-2.5 w-2.5" />
+                                {producto.costo_requiere_variantes ? (
+                                  <span className="text-slate-500" title="Odoo registra costo y antigüedad por variante para este producto.">
+                                    Costo por variante
                                   </span>
-                                )}
-                                {typeof producto.dias_desde_actualizacion === 'number' && (
-                                  <span
-                                    className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 font-semibold ${
-                                      producto.costo_desactualizado === true
-                                        ? 'bg-red-100 text-red-700'
-                                        : 'bg-emerald-50 text-emerald-700'
-                                    }`}
-                                    title="Días desde la última escritura sobre cualquier variante activa del producto en Odoo. Es proxy de antigüedad del costo: si nadie movió la variante en mucho tiempo (compra, ajuste, recosteo), el costo podría estar viejo."
-                                  >
-                                    {producto.costo_desactualizado === true && (
-                                      <AlertTriangle className="h-2.5 w-2.5" />
-                                    )}
-                                    {producto.dias_desde_actualizacion === 0
-                                      ? 'hoy'
-                                      : `${producto.dias_desde_actualizacion}d`}
-                                  </span>
+                                ) : (
+                                  <>
+                                    <span
+                                      className={producto.antiguedad_costo_estado === 'danger' ? 'text-red-600 font-semibold' : 'text-slate-500'}
+                                      title="Costo leído directamente del producto en Odoo."
+                                    >
+                                      Costo:{' '}
+                                      {new Intl.NumberFormat('es-CO', {
+                                        style: 'currency',
+                                        currency: 'COP',
+                                        maximumFractionDigits: 0,
+                                      }).format(producto.standard_price ?? 0)}
+                                    </span>
+                                    <span
+                                      className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 font-semibold ${costAgeBadgeClass(producto.antiguedad_costo_estado)}`}
+                                      title={producto.last_purchase_date
+                                        ? `Antigüedad calculada por Odoo desde la última compra valorada (${producto.last_purchase_date}).`
+                                        : 'Odoo no registra una compra valorada para este producto.'}
+                                    >
+                                      {producto.antiguedad_costo_estado === 'danger' && (
+                                        <AlertTriangle className="h-2.5 w-2.5" />
+                                      )}
+                                      {producto.antiguedad_costo_label ?? 'Sin compras'}
+                                    </span>
+                                  </>
                                 )}
                               </div>
                             )}
