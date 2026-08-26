@@ -32,10 +32,25 @@ export interface EmpaquesLandingBenefits {
   items: EmpaquesLandingBenefitItem[];
 }
 
+export interface EmpaquesPersonalizadosConfig {
+  activo: boolean;
+  eyebrow: string;
+  titulo: string;
+  subtitulo: string;
+  descripcion: string;
+  cta_texto: string;
+  mensaje_whatsapp: string;
+  imagen_url: string | null;
+  tipos_empaque: string[];
+  materiales: string[];
+  impresiones: string[];
+}
+
 export interface EmpaquesLandingConfig {
   descripcion: string;
   hero: EmpaquesLandingHero;
   ventajas: EmpaquesLandingBenefits;
+  personalizados: EmpaquesPersonalizadosConfig;
 }
 
 export const DEFAULT_LANDING_CONFIG: EmpaquesLandingConfig = {
@@ -78,6 +93,19 @@ export const DEFAULT_LANDING_CONFIG: EmpaquesLandingConfig = {
       },
     ],
   },
+  personalizados: {
+    activo: true,
+    eyebrow: 'Soluciones a medida',
+    titulo: 'Empaques Personalizados',
+    subtitulo: 'Diseño estructural y gráfico a medida para destacar tu producto y responder a las necesidades de tu operación.',
+    descripcion: 'Configura las especificaciones iniciales de tu proyecto para que nuestro equipo prepare una propuesta técnica y comercial.',
+    cta_texto: 'Configurar mi empaque',
+    mensaje_whatsapp: 'Hola, acabo de enviar una solicitud de empaque personalizado y quiero continuar con la asesoría.',
+    imagen_url: null,
+    tipos_empaque: [],
+    materiales: [],
+    impresiones: [],
+  },
 };
 
 function asString(value: unknown, fallback: string): string {
@@ -101,6 +129,20 @@ function asHexColor(value: unknown, fallback: string): string {
 function asPercentage(value: unknown, fallback: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
   return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function asBoolean(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback;
+}
+
+function asStringList(value: unknown, fallback: string[]): string[] {
+  if (!Array.isArray(value)) return fallback;
+  return Array.from(new Set(
+    value
+      .filter((item): item is string => typeof item === 'string')
+      .map((item) => item.trim().slice(0, 80))
+      .filter(Boolean),
+  )).slice(0, 30);
 }
 
 function asIcon(value: unknown, fallback: LandingBenefitIcon): LandingBenefitIcon {
@@ -150,6 +192,24 @@ function normalizeBenefits(raw: unknown): EmpaquesLandingBenefits {
   };
 }
 
+function normalizePersonalizados(raw: unknown): EmpaquesPersonalizadosConfig {
+  const source = (raw && typeof raw === 'object') ? raw as Record<string, unknown> : {};
+  const defaults = DEFAULT_LANDING_CONFIG.personalizados;
+  return {
+    activo: asBoolean(source.activo, defaults.activo),
+    eyebrow: asString(source.eyebrow, defaults.eyebrow),
+    titulo: asString(source.titulo, defaults.titulo),
+    subtitulo: asString(source.subtitulo, defaults.subtitulo),
+    descripcion: asString(source.descripcion, defaults.descripcion),
+    cta_texto: asString(source.cta_texto, defaults.cta_texto),
+    mensaje_whatsapp: asString(source.mensaje_whatsapp, defaults.mensaje_whatsapp),
+    imagen_url: asNullableUrl(source.imagen_url),
+    tipos_empaque: asStringList(source.tipos_empaque, defaults.tipos_empaque),
+    materiales: asStringList(source.materiales, defaults.materiales),
+    impresiones: asStringList(source.impresiones, defaults.impresiones),
+  };
+}
+
 /**
  * Normaliza la sección `landing` de `storefront_configs.configuracion_extra`.
  * Garantiza que todos los campos existan y tengan valores válidos. Si la
@@ -166,13 +226,16 @@ export function normalizeLandingConfig(extra: unknown): EmpaquesLandingConfig {
     ventajas: normalizeBenefits(source.landing && typeof source.landing === 'object'
       ? (source.landing as Record<string, unknown>).ventajas
       : undefined),
+    personalizados: normalizePersonalizados(source.landing && typeof source.landing === 'object'
+      ? (source.landing as Record<string, unknown>).personalizados
+      : undefined),
   };
 }
 
 /**
  * Forma serializable que se guarda en `configuracion_extra`. La descripción
  * vive en el nivel raíz por compatibilidad con el campo legacy (ver migración
- * 037). Hero y ventajas viven bajo `landing` para agrupar la edición visual.
+ * 037). Hero, ventajas y personalizados viven bajo `landing` para agrupar la edición visual.
  */
 export function landingConfigToExtra(config: EmpaquesLandingConfig, currentExtra: Record<string, unknown> = {}) {
   return {
@@ -181,6 +244,7 @@ export function landingConfigToExtra(config: EmpaquesLandingConfig, currentExtra
     landing: {
       hero: config.hero,
       ventajas: config.ventajas,
+      personalizados: config.personalizados,
     },
   };
 }

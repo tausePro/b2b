@@ -4,13 +4,14 @@ import { Building2, Search } from 'lucide-react';
 
 type EmpaquesChromeProps = {
   sectionBasePath?: string;
+  personalizedHref?: string;
 };
 
 function sectionHref(sectionBasePath: string, section: string) {
   return `${sectionBasePath}#${section}`;
 }
 
-export function EmpaquesHeader({ sectionBasePath = '' }: EmpaquesChromeProps) {
+export function EmpaquesHeader({ sectionBasePath = '', personalizedHref = '/empaques/personalizados' }: EmpaquesChromeProps) {
   return (
     <header className="sticky top-0 z-50 border-b border-zinc-200 bg-white/90 text-[#9CBB06] shadow-sm backdrop-blur-md">
       <div className="mx-auto flex h-20 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
@@ -29,7 +30,7 @@ export function EmpaquesHeader({ sectionBasePath = '' }: EmpaquesChromeProps) {
             <Link className="rounded px-3 py-2 font-bold text-zinc-600 transition hover:bg-zinc-50 hover:text-[#9CBB06]" href="/#categorias">Soluciones</Link>
             <Link className="border-b-2 border-[#9CBB06] px-3 py-2 font-black text-[#9CBB06]" href="/empaques">Empaques</Link>
             <Link className="rounded px-3 py-2 font-bold text-zinc-600 transition hover:bg-zinc-50 hover:text-[#9CBB06]" href={sectionHref(sectionBasePath, 'ventajas')}>Sostenibilidad</Link>
-            <Link className="rounded px-3 py-2 font-bold text-zinc-600 transition hover:bg-zinc-50 hover:text-[#9CBB06]" href={sectionHref(sectionBasePath, 'cotizar')}>Servicios</Link>
+            <Link className="rounded px-3 py-2 font-bold text-zinc-600 transition hover:bg-zinc-50 hover:text-[#9CBB06]" href={personalizedHref}>Personalizados</Link>
             <Link className="rounded px-3 py-2 font-bold text-zinc-600 transition hover:bg-zinc-50 hover:text-[#9CBB06]" href="/contacto">Contacto</Link>
           </nav>
         </div>
@@ -56,7 +57,7 @@ export function EmpaquesHeader({ sectionBasePath = '' }: EmpaquesChromeProps) {
   );
 }
 
-export function EmpaquesFooter({ sectionBasePath = '' }: EmpaquesChromeProps) {
+export function EmpaquesFooter({ sectionBasePath = '', personalizedHref = '/empaques/personalizados' }: EmpaquesChromeProps) {
   return (
     <footer className="border-t border-zinc-200 bg-zinc-50 px-4 py-16 text-sm sm:px-6 lg:px-8">
       <div className="mx-auto grid max-w-7xl grid-cols-1 gap-12 md:grid-cols-4">
@@ -70,6 +71,7 @@ export function EmpaquesFooter({ sectionBasePath = '' }: EmpaquesChromeProps) {
           <h5 className="mb-4 text-xs font-black uppercase tracking-wider text-zinc-950">Divisiones</h5>
           <ul className="space-y-3 font-semibold text-zinc-500">
             <li><Link className="hover:text-[#9CBB06] hover:underline" href={sectionHref(sectionBasePath, 'catalogo')}>Empaques Industriales</Link></li>
+            <li><Link className="hover:text-[#9CBB06] hover:underline" href={personalizedHref}>Empaques Personalizados</Link></li>
             <li><Link className="hover:text-[#9CBB06] hover:underline" href="/catalogo">Catálogo corporativo</Link></li>
             <li><Link className="hover:text-[#9CBB06] hover:underline" href="/contacto">Contacto comercial</Link></li>
           </ul>

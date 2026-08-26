@@ -36,6 +36,8 @@ const RUTAS_ESTATICAS: readonly { path: string; changeFrequency: SitemapEntry['c
   { path: '/contacto',    changeFrequency: 'monthly', priority: 0.7 },
   { path: '/faq',         changeFrequency: 'monthly', priority: 0.6 },
   { path: '/catalogo',    changeFrequency: 'weekly',  priority: 0.9 },
+  { path: '/empaques',    changeFrequency: 'weekly',  priority: 0.9 },
+  { path: '/empaques/personalizados', changeFrequency: 'monthly', priority: 0.8 },
   { path: '/terminos',    changeFrequency: 'yearly',  priority: 0.2 },
   { path: '/privacidad',  changeFrequency: 'yearly',  priority: 0.2 },
 ];
