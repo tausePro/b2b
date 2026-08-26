@@ -476,10 +476,13 @@ export interface OdooProduct {
   default_code: string | false;
   product_variant_count?: number;
   attribute_line_ids?: number[];
+  last_purchase_date?: string | false;
+  last_purchase_days?: number;
+  last_purchase_days_label?: string | false;
   /**
-   * Fecha ISO de la última escritura sobre el registro en Odoo
-   * (cualquier campo). Útil como proxy para detectar costos
-   * potencialmente desactualizados.
+   * Fecha ISO de la última escritura sobre el registro en Odoo.
+   * No se usa para la antigüedad del costo; esa información viene de
+   * last_purchase_date y last_purchase_days.
    */
   write_date?: string | false;
 }
@@ -494,6 +497,9 @@ export interface OdooProductVariant {
   standard_price: number;
   product_template_attribute_value_ids: number[];
   active: boolean;
+  last_purchase_date?: string | false;
+  last_purchase_days?: number;
+  last_purchase_days_label?: string | false;
   write_date?: string | false;
 }
 
@@ -552,7 +558,6 @@ export interface OdooPricelistItem {
 export interface OdooSaleOrderLineInput {
   productTemplateId: number;
   productId?: number;
-  name: string;
   quantity: number;
   priceUnit: number;
 }
@@ -672,7 +677,6 @@ export async function createSaleOrderQuotation(
       {
         product_id: variantId,
         product_template_id: line.productTemplateId,
-        name: line.name,
         product_uom_qty: line.quantity,
         price_unit: line.priceUnit,
         customer_lead: 0,
@@ -852,7 +856,8 @@ export async function getClientes(
 const PRODUCT_TEMPLATE_FIELDS = [
   'id', 'name', 'description_sale', 'list_price', 'standard_price', 'uom_name', 'categ_id',
   'product_tag_ids', 'active', 'sale_ok', 'image_128', 'default_code',
-  'product_variant_count', 'attribute_line_ids', 'write_date',
+  'product_variant_count', 'attribute_line_ids', 'last_purchase_date',
+  'last_purchase_days', 'last_purchase_days_label', 'write_date',
 ];
 
 export interface ProductVariantsResult {
@@ -920,7 +925,7 @@ export async function getProductVariants(
   const variants = await searchRead(
     'product.product',
     [['product_tmpl_id', '=', templateId], ['active', '=', true]],
-    ['id', 'name', 'product_tmpl_id', 'default_code', 'image_128', 'lst_price', 'standard_price', 'product_template_attribute_value_ids', 'active', 'write_date'],
+    ['id', 'name', 'product_tmpl_id', 'default_code', 'image_128', 'lst_price', 'standard_price', 'product_template_attribute_value_ids', 'active', 'last_purchase_date', 'last_purchase_days', 'last_purchase_days_label', 'write_date'],
     { order: 'name asc', session }
   ) as unknown as OdooProductVariant[];
 
@@ -1149,6 +1154,95 @@ export async function getTemplateCostInfoFromVariants(
       costos_variantes: costosUnicos,
       variantes_divergentes,
       variantes_consideradas: conCosto.length,
+    });
+  }
+
+  return result;
+}
+
+export interface OdooTemplateCostInfo {
+  costo_efectivo: number;
+  fecha_costo_efectivo: string | null;
+  dias_costo_efectivo: number | null;
+  label_costo_efectivo: string | null;
+  costos_variantes: number[];
+  variantes_divergentes: boolean;
+  variantes_consideradas: number;
+  requiere_desglose_variantes: boolean;
+}
+
+export async function getOdooTemplateCostInfoFromVariants(
+  session: OdooSession,
+  templateIds: number[]
+): Promise<Map<number, OdooTemplateCostInfo>> {
+  const result = new Map<number, OdooTemplateCostInfo>();
+  const uniqueIds = Array.from(new Set(templateIds));
+  if (uniqueIds.length === 0 || uniqueIds.length > MAX_ENRICH_TEMPLATES) return result;
+
+  type VariantRow = {
+    id: number;
+    product_tmpl_id: [number, string] | false;
+    standard_price: number;
+    last_purchase_date: string | false;
+    last_purchase_days: number;
+    last_purchase_days_label: string | false;
+  };
+
+  const variants: VariantRow[] = [];
+  for (let index = 0; index < uniqueIds.length; index += ENRICH_CHUNK_SIZE) {
+    const chunk = uniqueIds.slice(index, index + ENRICH_CHUNK_SIZE);
+    try {
+      const rows = await searchRead(
+        'product.product',
+        [['product_tmpl_id', 'in', chunk], ['active', '=', true]],
+        ['id', 'product_tmpl_id', 'standard_price', 'last_purchase_date', 'last_purchase_days', 'last_purchase_days_label'],
+        { session }
+      );
+      variants.push(...rows as unknown as VariantRow[]);
+    } catch (error) {
+      console.warn(
+        `[getOdooTemplateCostInfoFromVariants] Chunk falló (${chunk.length} ids):`,
+        error instanceof Error ? error.message : error
+      );
+    }
+  }
+
+  const byTemplate = new Map<number, VariantRow[]>();
+  for (const variant of variants) {
+    const templateId = Array.isArray(variant.product_tmpl_id) ? Number(variant.product_tmpl_id[0]) : null;
+    if (!templateId) continue;
+    const current = byTemplate.get(templateId) ?? [];
+    current.push(variant);
+    byTemplate.set(templateId, current);
+  }
+
+  for (const [templateId, rows] of byTemplate) {
+    const rowsWithCost = rows.filter((row) => Number(row.standard_price) > 0);
+    const candidates = rowsWithCost.length > 0 ? rowsWithCost : rows;
+    if (candidates.length === 0) continue;
+
+    const sorted = [...candidates].sort((a, b) => {
+      const dateDiff = String(b.last_purchase_date || '').localeCompare(String(a.last_purchase_date || ''));
+      return dateDiff !== 0 ? dateDiff : Number(b.id) - Number(a.id);
+    });
+    const selected = sorted[0];
+    const costs = rowsWithCost.map((row) => Number(row.standard_price));
+    const maxCost = costs.length > 0 ? Math.max(...costs) : 0;
+    const minCost = costs.length > 0 ? Math.min(...costs) : 0;
+
+    result.set(templateId, {
+      costo_efectivo: Number(selected.standard_price ?? 0),
+      fecha_costo_efectivo: typeof selected.last_purchase_date === 'string' ? selected.last_purchase_date : null,
+      dias_costo_efectivo: typeof selected.last_purchase_days === 'number' && selected.last_purchase_date
+        ? selected.last_purchase_days
+        : null,
+      label_costo_efectivo: typeof selected.last_purchase_days_label === 'string'
+        ? selected.last_purchase_days_label
+        : null,
+      costos_variantes: Array.from(new Set(costs)).sort((a, b) => b - a),
+      variantes_divergentes: costs.length > 1 && minCost > 0 && maxCost / minCost > 1.5,
+      variantes_consideradas: rows.length,
+      requiere_desglose_variantes: rows.length > 1,
     });
   }
 
@@ -1435,6 +1529,181 @@ function applyPricelistRule(basePrice: number, rule: OdooPricelistItem | null | 
   return basePrice;
 }
 
+/**
+ * Reglas de una tarifa, indexadas para poder resolver el precio de un producto
+ * o de una variante concreta.
+ *
+ * Odoo 18 no expone ningún campo ni método público que devuelva el precio de
+ * tarifa (`product.product.price` desapareció y `product.pricelist` no tiene
+ * campos de precio), así que la resolución se hace aquí replicando el orden de
+ * Odoo: `applied_on, min_quantity desc, id desc`.
+ */
+export interface PricelistRuleSet {
+  pricelistId: number;
+  byVariant: Map<number, OdooPricelistItem[]>;
+  byTemplate: Map<number, OdooPricelistItem[]>;
+  byCategory: Map<number, OdooPricelistItem[]>;
+  global: OdooPricelistItem[];
+  /** Variantes con regla propia, agrupadas por template. */
+  variantsByTemplate: Map<number, number[]>;
+}
+
+const PRICELIST_ITEM_FIELDS = [
+  'id',
+  'pricelist_id',
+  'applied_on',
+  'product_tmpl_id',
+  'product_id',
+  'categ_id',
+  'compute_price',
+  'fixed_price',
+  'percent_price',
+  'base',
+  'min_quantity',
+];
+
+function pushRule(map: Map<number, OdooPricelistItem[]>, key: number, rule: OdooPricelistItem) {
+  const current = map.get(key);
+  if (current) current.push(rule);
+  else map.set(key, [rule]);
+}
+
+export async function loadPricelistRuleSet(
+  session: OdooSession,
+  pricelistId: number
+): Promise<PricelistRuleSet> {
+  const items = (await searchRead(
+    'product.pricelist.item',
+    [['pricelist_id', '=', pricelistId]],
+    PRICELIST_ITEM_FIELDS,
+    { order: 'applied_on asc,id asc', session }
+  )) as unknown as OdooPricelistItem[];
+
+  const ruleSet: PricelistRuleSet = {
+    pricelistId,
+    byVariant: new Map(),
+    byTemplate: new Map(),
+    byCategory: new Map(),
+    global: [],
+    variantsByTemplate: new Map(),
+  };
+
+  const variantIds = new Set<number>();
+
+  for (const item of items) {
+    if (item.applied_on === '3_global') {
+      ruleSet.global.push(item);
+      continue;
+    }
+    if (item.applied_on === '2_product_category' && Array.isArray(item.categ_id)) {
+      pushRule(ruleSet.byCategory, item.categ_id[0], item);
+      continue;
+    }
+    if (item.applied_on === '0_product_variant' && Array.isArray(item.product_id)) {
+      const variantId = item.product_id[0];
+      pushRule(ruleSet.byVariant, variantId, item);
+      variantIds.add(variantId);
+      continue;
+    }
+    if (item.applied_on === '1_product' && Array.isArray(item.product_tmpl_id)) {
+      pushRule(ruleSet.byTemplate, item.product_tmpl_id[0], item);
+    }
+  }
+
+  if (variantIds.size > 0) {
+    const variantRows = await read(
+      'product.product',
+      Array.from(variantIds),
+      ['id', 'product_tmpl_id'],
+      session
+    );
+    for (const row of variantRows) {
+      if (!Array.isArray(row.product_tmpl_id)) continue;
+      const templateId = Number(row.product_tmpl_id[0]);
+      const variantId = Number(row.id);
+      const current = ruleSet.variantsByTemplate.get(templateId);
+      if (current) current.push(variantId);
+      else ruleSet.variantsByTemplate.set(templateId, [variantId]);
+    }
+  }
+
+  return ruleSet;
+}
+
+/**
+ * Elige la regla que Odoo aplicaría, replicando su orden:
+ * `applied_on, min_quantity desc, id desc`.
+ *
+ * El desempate por `id desc` no es cosmético: hay tarifas reales con dos reglas
+ * distintas sobre la misma variante y precios diferentes. Sin este criterio se
+ * cobra un precio que Odoo no reconoce.
+ */
+function pickPricelistRule(
+  candidates: OdooPricelistItem[],
+  quantity: number
+): OdooPricelistItem | null {
+  const applicable = candidates.filter((rule) => {
+    const min = Number(rule.min_quantity ?? 0);
+    return !Number.isFinite(min) || min <= 0 || quantity >= min;
+  });
+  if (applicable.length === 0) return null;
+
+  return [...applicable].sort((a, b) => {
+    const minDiff = Number(b.min_quantity ?? 0) - Number(a.min_quantity ?? 0);
+    if (minDiff !== 0) return minDiff;
+    return Number(b.id) - Number(a.id);
+  })[0];
+}
+
+/**
+ * Precio de tarifa para un producto o variante concreta.
+ *
+ * Devuelve `null` cuando la tarifa no aplica o cuando la regla ganadora usa un
+ * `compute_price` que no sabemos calcular con fidelidad (por ejemplo
+ * `formula`). En ese caso el llamador debe conservar su comportamiento actual
+ * en vez de inventar un precio.
+ *
+ * Limitación conocida y deliberada: las reglas por categoría solo se buscan en
+ * la categoría directa del producto, no en categorías padre.
+ */
+export function resolvePricelistPrice(
+  rules: PricelistRuleSet,
+  input: {
+    templateId: number;
+    variantId?: number | null;
+    categId?: number | null;
+    basePrice: number;
+    quantity?: number;
+  }
+): number | null {
+  const quantity = input.quantity && input.quantity > 0 ? input.quantity : 1;
+
+  const levels: OdooPricelistItem[][] = [];
+  if (input.variantId) {
+    levels.push(rules.byVariant.get(input.variantId) ?? []);
+  }
+  levels.push(rules.byTemplate.get(input.templateId) ?? []);
+  if (input.categId) {
+    levels.push(rules.byCategory.get(input.categId) ?? []);
+  }
+  levels.push(rules.global);
+
+  for (const candidates of levels) {
+    const rule = pickPricelistRule(candidates, quantity);
+    if (!rule) continue;
+
+    const computable =
+      (rule.compute_price === 'fixed' && typeof rule.fixed_price === 'number') ||
+      (rule.compute_price === 'percentage' && typeof rule.percent_price === 'number');
+    if (!computable) return null;
+
+    const price = applyPricelistRule(input.basePrice, rule);
+    return Number.isFinite(price) && price > 0 ? price : null;
+  }
+
+  return null;
+}
+
 function sortAndSliceProductos(
   productos: OdooProduct[],
   options: { limit?: number; offset?: number } = {}
@@ -1453,74 +1722,24 @@ export async function getProductosByPricelist(
   pricelistId: number,
   options: { limit?: number; offset?: number; categIds?: number[]; search?: string } = {}
 ): Promise<OdooProduct[]> {
-  const pricelistItems = await searchRead(
-    'product.pricelist.item',
-    [['pricelist_id', '=', pricelistId]],
-    ['id', 'pricelist_id', 'applied_on', 'product_tmpl_id', 'product_id', 'categ_id', 'compute_price', 'fixed_price', 'percent_price', 'base', 'min_quantity'],
-    { order: 'applied_on asc,id asc', session }
-  ) as unknown as OdooPricelistItem[];
+  const rules = await loadPricelistRuleSet(session, pricelistId);
 
-  if (!pricelistItems.length) {
+  const hasRules =
+    rules.byTemplate.size > 0 ||
+    rules.byVariant.size > 0 ||
+    rules.byCategory.size > 0 ||
+    rules.global.length > 0;
+
+  if (!hasRules) {
     return [];
   }
 
-  const explicitTemplateIds = new Set<number>();
-  const variantIds = new Set<number>();
-  const categoryIds = new Set<number>();
-  const explicitRules = new Map<number, OdooPricelistItem>();
-  const categoryRules = new Map<number, OdooPricelistItem>();
-  let globalRule: OdooPricelistItem | null = null;
-
-  for (const item of pricelistItems) {
-    if (item.applied_on === '3_global') {
-      globalRule = item;
-      continue;
-    }
-
-    if (item.applied_on === '2_product_category' && Array.isArray(item.categ_id)) {
-      const categoryId = item.categ_id[0];
-      categoryIds.add(categoryId);
-      categoryRules.set(categoryId, item);
-      continue;
-    }
-
-    if (item.applied_on === '1_product' && Array.isArray(item.product_tmpl_id)) {
-      const templateId = item.product_tmpl_id[0];
-      explicitTemplateIds.add(templateId);
-      explicitRules.set(templateId, item);
-      continue;
-    }
-
-    if (item.applied_on === '0_product_variant' && Array.isArray(item.product_id)) {
-      variantIds.add(item.product_id[0]);
-    }
-  }
-
-  if (variantIds.size > 0) {
-    const variantRows = await read(
-      'product.product',
-      Array.from(variantIds),
-      ['id', 'product_tmpl_id'],
-      session
-    );
-
-    const variantItemMap = new Map(
-      pricelistItems
-        .filter((item) => item.applied_on === '0_product_variant' && Array.isArray(item.product_id))
-        .map((item) => [Array.isArray(item.product_id) ? item.product_id[0] : 0, item])
-    );
-
-    for (const variant of variantRows) {
-      if (!Array.isArray(variant.product_tmpl_id)) continue;
-      const templateId = variant.product_tmpl_id[0] as number;
-      explicitTemplateIds.add(templateId);
-      const variantId = typeof variant.id === 'number' ? variant.id : 0;
-      const variantRule = variantItemMap.get(variantId);
-      if (variantRule) {
-        explicitRules.set(templateId, variantRule);
-      }
-    }
-  }
+  const explicitTemplateIds = new Set<number>([
+    ...rules.byTemplate.keys(),
+    ...rules.variantsByTemplate.keys(),
+  ]);
+  const categoryIds = new Set<number>(rules.byCategory.keys());
+  const globalRule = rules.global.length > 0;
 
   let productos: OdooProduct[] = [];
 
@@ -1590,19 +1809,43 @@ export async function getProductosByPricelist(
 
   return productos.map((producto) => {
     const categoryId = Array.isArray(producto.categ_id) ? producto.categ_id[0] : null;
-    const appliedRule =
-      explicitRules.get(producto.id) ||
-      (categoryId ? categoryRules.get(categoryId) : undefined) ||
-      globalRule;
 
-    if (!appliedRule) {
-      return producto;
+    // Precio del producto en la tarifa (regla de producto, categoría o global).
+    const templatePrice = resolvePricelistPrice(rules, {
+      templateId: producto.id,
+      categId: categoryId,
+      basePrice: producto.list_price,
+    });
+
+    if (templatePrice !== null) {
+      return { ...producto, list_price: templatePrice };
     }
 
-    return {
-      ...producto,
-      list_price: applyPricelistRule(producto.list_price, appliedRule),
-    };
+    // Si la tarifa solo negoció variantes, la tarjeta no puede mostrar "la"
+    // regla: cada variante tiene su precio. Antes se pegaba sobre el producto
+    // la regla de una variante cualquiera, así que la tarjeta mostraba el
+    // precio de una variante y el cliente compraba otra a ese precio. Ahora se
+    // muestra el más bajo, que sí es un precio real, y el modal de variantes da
+    // el exacto de la que se elija.
+    const variantIdsForTemplate = rules.variantsByTemplate.get(producto.id);
+    if (variantIdsForTemplate && variantIdsForTemplate.length > 0) {
+      const variantPrices = variantIdsForTemplate
+        .map((variantId) =>
+          resolvePricelistPrice(rules, {
+            templateId: producto.id,
+            variantId,
+            categId: categoryId,
+            basePrice: producto.list_price,
+          })
+        )
+        .filter((price): price is number => price !== null);
+
+      if (variantPrices.length > 0) {
+        return { ...producto, list_price: Math.min(...variantPrices) };
+      }
+    }
+
+    return producto;
   });
 }
 

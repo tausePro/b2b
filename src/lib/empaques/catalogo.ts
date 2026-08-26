@@ -5,14 +5,14 @@ import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import {
   authenticate,
   getCategoriasProducto,
-  getTemplateCostInfoFromVariants,
+  getOdooTemplateCostInfoFromVariants,
   read,
   searchCount,
   searchRead,
   type OdooCategory,
   type OdooProduct,
   type OdooSession,
-  type TemplateCostInfo,
+  type OdooTemplateCostInfo,
 } from '@/lib/odoo/client';
 import { getServerOdooConfig } from '@/lib/odoo/serverConfig';
 import {
@@ -21,8 +21,9 @@ import {
   type PricingContext,
 } from '@/lib/pricing/margins';
 import {
-  getCostStaleness,
+  getOdooCostAgeStatus,
   markupOnCost,
+  type OdooCostAgeStatus,
 } from '@/lib/pricing/cost-staleness';
 
 export const EMPAQUES_DEFAULT_LIMIT = 24;
@@ -50,6 +51,9 @@ const PRODUCT_FIELDS = [
   'default_code',
   'product_variant_count',
   'attribute_line_ids',
+  'last_purchase_date',
+  'last_purchase_days',
+  'last_purchase_days_label',
   'write_date',
 ];
 
@@ -114,8 +118,12 @@ export interface EmpaquesCatalogProduct {
    */
   standard_price?: number;
   write_date?: string | null;
+  last_purchase_date?: string | null;
   dias_desde_actualizacion?: number | null;
+  antiguedad_costo_label?: string | null;
+  antiguedad_costo_estado?: OdooCostAgeStatus;
   costo_desactualizado?: boolean | null;
+  costo_requiere_variantes?: boolean;
   markup_porcentaje?: number | null;
   variantes_divergentes?: boolean;
   variantes_consideradas?: number;
@@ -670,7 +678,7 @@ function mapProduct(
   product: OdooProduct,
   pricingCtx: PricingContext,
   editorialCtx: StorefrontEditorialContext,
-  options: { includeCostInfo?: boolean; variantInfo?: TemplateCostInfo } = {}
+  options: { includeCostInfo?: boolean; variantInfo?: OdooTemplateCostInfo } = {}
 ): EmpaquesCatalogProduct {
   const pricing = resolveEmpaquesPrice(pricingCtx, product);
   const override = editorialCtx.products.get(product.id);
@@ -698,21 +706,36 @@ function mapProduct(
   };
 
   if (options.includeCostInfo) {
-    // Preferir datos de variantes cuando estén disponibles. El write_date del
-    // product.template se contamina con barridos masivos de Odoo y por eso no
-    // sirve como proxy de "antigüedad real del costo".
+    // Preferir los campos autoritativos de última compra de las variantes.
+    // En templates multivariante Odoo no define una antigüedad agregada, por
+    // eso la UI exige abrir el desglose por variante.
     const variantInfo = options.variantInfo;
     const costoEfectivo = variantInfo?.costo_efectivo
       ?? (typeof product.standard_price === 'number' ? product.standard_price : 0);
-    const fechaEfectiva = variantInfo?.fecha_costo_efectivo
-      ?? (typeof product.write_date === 'string' ? product.write_date : null);
-    const staleness = getCostStaleness(fechaEfectiva);
+    const requiereVariantes = variantInfo?.requiere_desglose_variantes
+      ?? Number(product.product_variant_count ?? 1) > 1;
+    const fechaEfectiva = requiereVariantes
+      ? null
+      : variantInfo?.fecha_costo_efectivo
+        ?? (typeof product.last_purchase_date === 'string' ? product.last_purchase_date : null);
+    const diasEfectivos = requiereVariantes
+      ? null
+      : variantInfo?.dias_costo_efectivo
+        ?? (fechaEfectiva && typeof product.last_purchase_days === 'number' ? product.last_purchase_days : null);
+    const labelEfectivo = requiereVariantes
+      ? null
+      : variantInfo?.label_costo_efectivo
+        ?? (typeof product.last_purchase_days_label === 'string' ? product.last_purchase_days_label : null);
+    const estadoAntiguedad = getOdooCostAgeStatus(fechaEfectiva, diasEfectivos);
 
     base.standard_price = costoEfectivo;
-    base.write_date = fechaEfectiva;
-    base.dias_desde_actualizacion = staleness.dias;
-    base.costo_desactualizado = staleness.desactualizado;
-    base.markup_porcentaje = markupOnCost(base.price, costoEfectivo);
+    base.last_purchase_date = fechaEfectiva;
+    base.dias_desde_actualizacion = diasEfectivos;
+    base.antiguedad_costo_label = labelEfectivo;
+    base.antiguedad_costo_estado = estadoAntiguedad;
+    base.costo_desactualizado = estadoAntiguedad === 'danger';
+    base.costo_requiere_variantes = requiereVariantes;
+    base.markup_porcentaje = requiereVariantes ? null : markupOnCost(base.price, costoEfectivo);
     base.variantes_divergentes = variantInfo?.variantes_divergentes ?? false;
     base.variantes_consideradas = variantInfo?.variantes_consideradas ?? 0;
   }
@@ -942,21 +965,20 @@ export async function getEmpaquesCatalogData(input: EmpaquesCatalogInput = {}): 
   const productosTyped = productos as unknown as OdooProduct[];
   const includeCostInfo = input.includeCostInfo === true;
 
-  // Cargar info real de costo desde variantes (un solo searchRead por página)
-  // únicamente cuando el caller pidió info sensible. Esto evita el sesgo del
-  // write_date masivo de product.template y permite detectar variantes con
-  // costos divergentes (señal de variante desactualizada).
+  // Cargar costo y antigüedad autoritativos desde product.product únicamente
+  // cuando el caller pidió información sensible. Los templates con variantes
+  // no tienen un único costo ni una única antigüedad en Odoo.
   //
   // OPTIMIZACIÓN: solo enriquecemos templates con product_variant_count > 1
   // para no sobrecargar Odoo en páginas con muchos productos sin variantes.
-  let costInfoByTemplate: Map<number, TemplateCostInfo> | null = null;
+  let costInfoByTemplate: Map<number, OdooTemplateCostInfo> | null = null;
   if (includeCostInfo && productosTyped.length > 0) {
     const templateIdsConVariantes = productosTyped
       .filter((p) => Number(p.product_variant_count ?? 1) > 1)
       .map((p) => p.id);
     if (templateIdsConVariantes.length > 0) {
       try {
-        costInfoByTemplate = await getTemplateCostInfoFromVariants(
+        costInfoByTemplate = await getOdooTemplateCostInfoFromVariants(
           session,
           templateIdsConVariantes
         );

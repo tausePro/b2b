@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
-import { authenticate, createSaleOrderQuotation, read } from '@/lib/odoo/client';
+import { authenticate, createSaleOrderQuotation, read, resolvePricelistPrice } from '@/lib/odoo/client';
 import { mergePedidoNoteWithSpecialItems, normalizeTipoPedidoItem, partitionPedidoItems } from '@/lib/pedidoItems';
 import { getServerOdooConfig } from '@/lib/odoo/serverConfig';
 import { safeEnqueuePedidoNotifications } from '@/lib/notifications/pedidos';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { loadPricingContext, resolveProductPrice, type ModoPricing } from '@/lib/pricing/margins';
+import { loadEmpresaPricelistRules } from '@/lib/pricing/pricelist';
 import type { TipoPedidoItem } from '@/types';
 
 type PerfilActual = {
@@ -30,10 +31,13 @@ type CreatePedidoItemInput = {
 };
 
 type CreatePedidoRequest = {
+  idempotency_key?: string | null;
   comentarios_sede?: string | null;
   items: CreatePedidoItemInput[];
   guardar_como_borrador?: boolean;
 };
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function getSupabaseAdmin() {
   return createSupabaseClient(
@@ -129,6 +133,16 @@ export async function POST(request: NextRequest) {
     }
 
     const body = (await request.json()) as CreatePedidoRequest;
+    const idempotencyKey = typeof body.idempotency_key === 'string'
+      ? body.idempotency_key.trim()
+      : null;
+    if (idempotencyKey && !UUID_PATTERN.test(idempotencyKey)) {
+      return NextResponse.json(
+        { error: 'INVALID_IDEMPOTENCY_KEY', details: 'La llave de idempotencia no es un UUID válido.' },
+        { status: 422 }
+      );
+    }
+
     const items = Array.isArray(body.items)
       ? body.items.map((item) => normalizeCreatePedidoItemInput(item))
       : [];
@@ -202,6 +216,16 @@ export async function POST(request: NextRequest) {
         if (odooConfig) {
           const odooSession = await authenticate(odooConfig);
 
+          // En modo tarifa el precio autoritativo es el de la tarifa del cliente
+          // en Odoo, resuelto POR VARIANTE. Sin esto el precio se validaba
+          // contra el list_price crudo del template, que en este catálogo suele
+          // ser 0 (y a veces 1), y dos variantes de un mismo producto con
+          // precios negociados distintos terminaban cobrándose igual.
+          const pricelistRules =
+            pricingCtx.modoPricing === 'pricelist' && perfil.empresa_id
+              ? await loadEmpresaPricelistRules(perfil.empresa_id, odooSession)
+              : null;
+
           const templateIds = [...new Set(catalogItemsToReprice.map((i) => i.odoo_product_id!))];
           const templates = await read(
             'product.template',
@@ -237,9 +261,28 @@ export async function POST(request: NextRequest) {
             if (!tmpl) continue;
 
             const variantData = item.odoo_variant_id ? variantMap.get(item.odoo_variant_id) : null;
+            const categId = Array.isArray(tmpl.categ_id) ? Number(tmpl.categ_id[0]) : null;
+            let basePrice = variantData?.lst_price ?? Number(tmpl.list_price ?? 0);
+
+            if (pricelistRules) {
+              const tarifaPrice = resolvePricelistPrice(pricelistRules, {
+                templateId: item.odoo_product_id,
+                variantId: item.odoo_variant_id ?? null,
+                categId,
+                basePrice,
+                quantity: item.cantidad,
+              });
+
+              // Si la tarifa no da un precio que podamos calcular con fidelidad,
+              // no lo inventamos: conservamos el precio con el que se armó el
+              // carrito en vez de pisarlo con un list_price que no es de venta.
+              if (tarifaPrice === null) continue;
+              basePrice = tarifaPrice;
+            }
+
             const resolvedPrice = resolveProductPrice(pricingCtx, {
               id: item.odoo_product_id,
-              list_price: variantData?.lst_price ?? Number(tmpl.list_price ?? 0),
+              list_price: basePrice,
               standard_price: variantData?.standard_price ?? Number(tmpl.standard_price ?? 0),
               categ_id: Array.isArray(tmpl.categ_id) ? tmpl.categ_id as [number, string] : false,
             });
@@ -263,6 +306,7 @@ export async function POST(request: NextRequest) {
       empresa_id: perfil.empresa_id,
       sede_id: sedeId,
       usuario_creador_id: perfil.id,
+      idempotency_key: idempotencyKey,
       comentarios_sede: body.comentarios_sede?.trim() || null,
       valor_total_cop: valorTotal,
       total_items: totalItems,
@@ -274,6 +318,24 @@ export async function POST(request: NextRequest) {
       .insert(insertData)
       .select('id, numero, estado, fecha_aprobacion')
       .single();
+
+    if (pedidoError && idempotencyKey && pedidoError.code === '23505') {
+      const { data: existingPedido } = await admin
+        .from('pedidos')
+        .select('id, numero, estado, fecha_aprobacion, odoo_sale_order_id')
+        .eq('usuario_creador_id', perfil.id)
+        .eq('idempotency_key', idempotencyKey)
+        .maybeSingle();
+
+      if (existingPedido) {
+        return NextResponse.json({
+          ok: true,
+          idempotent_replay: true,
+          pedido: existingPedido,
+          warning: null,
+        });
+      }
+    }
 
     if (pedidoError || !pedido) {
       return NextResponse.json(
@@ -401,21 +463,27 @@ export async function POST(request: NextRequest) {
             lines: catalogItems.map((item) => ({
               productTemplateId: Number(item.odoo_product_id),
               productId: item.odoo_variant_id ? Number(item.odoo_variant_id) : undefined,
-              name: item.nombre_producto.trim(),
               quantity: Number(item.cantidad),
               priceUnit: Number(item.precio_unitario_cop),
             })),
           });
 
-          odooSyncResult.odoo_sale_order_id = quotation.id;
-
-          await admin
+          const { error: syncUpdateError } = await admin
             .from('pedidos')
             .update({
               estado: 'procesado_odoo',
               odoo_sale_order_id: quotation.id,
+              odoo_sync_status: 'completado',
+              odoo_sync_started_at: new Date().toISOString(),
+              odoo_sync_error: null,
             })
             .eq('id', pedido.id);
+
+          if (syncUpdateError) {
+            throw new Error(`La cotización ${quotation.name || quotation.id} se creó, pero no se pudo vincular al pedido: ${syncUpdateError.message}`);
+          }
+
+          odooSyncResult.odoo_sale_order_id = quotation.id;
 
           await admin.from('logs_trazabilidad').insert({
             pedido_id: pedido.id,
@@ -444,6 +512,16 @@ export async function POST(request: NextRequest) {
         odooSyncResult.odoo_warning = odooError instanceof Error ? odooError.message : 'Error al sincronizar con Odoo';
         console.error('[Pedido Auto-Aprobado] Error Odoo:', odooError);
       }
+    }
+
+    if (!flujoEsAprobacion && empresa.odoo_partner_id && !odooSyncResult.odoo_sale_order_id && odooSyncResult.odoo_warning) {
+      await admin
+        .from('pedidos')
+        .update({
+          odoo_sync_status: 'error',
+          odoo_sync_error: odooSyncResult.odoo_warning,
+        })
+        .eq('id', pedido.id);
     }
 
     const warning = [logError?.message, notificationResult.error, odooSyncResult.odoo_warning].filter(Boolean).join(' | ') || null;
