@@ -62,9 +62,9 @@ export async function updateSession(request: NextRequest) {
     //    (contacto, nosotros, faq, etc.). Estas viven en src/app/<ruta>/page.tsx
     //    y no necesitan duplicarse bajo /empaques.
     const passthroughPrefixes = [
-      '/api/',
-      '/_next/',
-      '/.well-known/',
+      '/api',
+      '/_next',
+      '/.well-known',
       '/empaques',
       '/contacto',
       '/nosotros',
