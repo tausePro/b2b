@@ -10,11 +10,12 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
 export default function CarritoPage() {
-  const { user, showPrices } = useAuth();
+  const { user, showPrices, activeCompany } = useAuth();
   const { items, totalItems, updateQuantity, removeItem, clearCart, addSpecialItem } = useCart();
   const [observaciones, setObservaciones] = useState('');
   const [enviando, setEnviando] = useState(false);
   const [empresaConfig, setEmpresaConfig] = useState<{ requiere_aprobacion: boolean; usa_sedes: boolean } | null>(null);
+  const [selectedSedeId, setSelectedSedeId] = useState<string | null>(null);
   const [showSpecialForm, setShowSpecialForm] = useState(false);
   const [specialDraft, setSpecialDraft] = useState({
     nombre_producto: '',
@@ -53,6 +54,16 @@ export default function CarritoPage() {
 
     cargarConfigEmpresa();
   }, [supabase, user?.empresa_id]);
+
+  useEffect(() => {
+    if (!activeCompany) {
+      setSelectedSedeId(user?.sede_id ?? null);
+      return;
+    }
+    const defaultSite = activeCompany.sedes.find((site) => site.es_predeterminada)?.id
+      ?? (activeCompany.sede_ids.length === 1 ? activeCompany.sede_ids[0] : null);
+    setSelectedSedeId(defaultSite);
+  }, [activeCompany, user?.sede_id]);
 
   const totalPrecio = items.reduce(
     (sum, item) => sum + (item.tipo_item === 'catalogo' ? item.precio_unitario_cop * item.cantidad : 0),
@@ -116,8 +127,8 @@ export default function CarritoPage() {
     if (!user || items.length === 0 || submissionInFlightRef.current) return;
 
     const usaSedes = empresaConfig?.usa_sedes ?? true;
-    if (usaSedes && !user.sede_id) {
-      alert('Tu empresa opera con sedes y tu usuario no tiene una sede asignada. Contacta al administrador.');
+    if (usaSedes && !selectedSedeId) {
+      alert('Selecciona una sede autorizada para este pedido.');
       return;
     }
 
@@ -130,6 +141,8 @@ export default function CarritoPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           idempotency_key: getIdempotencyKey(),
+          empresa_id: user.empresa_id,
+          sede_id: selectedSedeId,
           comentarios_sede: observaciones || null,
           items: buildItemsPayload(),
         }),
@@ -167,6 +180,8 @@ export default function CarritoPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           idempotency_key: getIdempotencyKey(),
+          empresa_id: user.empresa_id,
+          sede_id: selectedSedeId,
           comentarios_sede: observaciones || null,
           items: buildItemsPayload(),
           guardar_como_borrador: true,
@@ -470,6 +485,30 @@ export default function CarritoPage() {
                 className="w-full px-3 py-2 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 resize-none"
               />
             </div>
+
+            {(empresaConfig?.usa_sedes ?? true) && (
+              <div className="mb-4">
+                <label htmlFor="pedido-sede" className="mb-1.5 block text-sm font-medium text-foreground">
+                  Sede de entrega
+                </label>
+                <select
+                  id="pedido-sede"
+                  value={selectedSedeId ?? ''}
+                  onChange={(event) => setSelectedSedeId(event.target.value || null)}
+                  className="h-12 w-full rounded-lg border border-border bg-white px-3 text-base focus:outline-none focus:ring-2 focus:ring-primary/20"
+                >
+                  <option value="">Selecciona una sede</option>
+                  {(activeCompany?.sedes ?? []).map((site) => (
+                    <option key={site.id} value={site.id}>
+                      {site.nombre}{site.ciudad ? ` · ${site.ciudad}` : ''}
+                    </option>
+                  ))}
+                </select>
+                {activeCompany && activeCompany.sedes.length === 0 && (
+                  <p className="mt-2 text-xs font-medium text-danger">No tienes sedes habilitadas para esta empresa.</p>
+                )}
+              </div>
+            )}
 
             {/* Botón enviar */}
             <button

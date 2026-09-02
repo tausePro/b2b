@@ -77,6 +77,26 @@ La migración `supabase/migrations/046_empaques_personalizados.sql` debe aplicar
 - Las opciones y textos se editan desde Admin > Empaques > Landing.
 - Los archivos se consultan desde Admin > Leads mediante URLs firmadas temporales.
 
+## Usuarios cliente multiempresa
+
+La migración `supabase/migrations/047_usuarios_multiempresa.sql` debe aplicarse antes del código. Mantiene la empresa principal existente y agrega asociaciones con rol y sedes por empresa.
+
+- Un mismo correo puede operar como comprador o aprobador en distintas empresas.
+- Cada asociación define varias sedes autorizadas y una sede predeterminada opcional.
+- El header permite cambiar la empresa activa y actualiza rol, branding, catálogo y visibilidad de precios.
+- El carrito se almacena por usuario y empresa para impedir cruces de productos o tarifas.
+- Pedidos, aprobaciones, presupuestos y notificaciones validan empresa, rol y sede en backend y RLS.
+- Al asociar un correo existente no se crea una segunda cuenta de autenticación.
+- Retirar una empresa no desactiva al usuario mientras conserve otras asociaciones activas.
+
+Validación:
+
+```bash
+npm test
+npm run test:multiempresa:integration
+npm run build
+```
+
 ## Recuperación automática de perfil Auth
 
 Se agregó una contingencia para el error **"Perfil no encontrado"** cuando el `auth.users.id` cambia pero `public.usuarios.auth_id` quedó desincronizado.

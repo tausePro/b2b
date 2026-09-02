@@ -63,7 +63,10 @@ interface Usuario {
   email: string;
   rol: string;
   activo: boolean;
+  asociacion_id?: string;
+  es_principal?: boolean;
   sede_id?: string | null;
+  sede_ids?: string[];
 }
 
 interface Sede {
@@ -147,7 +150,7 @@ interface UserFormState {
   apellido: string;
   email: string;
   rol: UserRoleCliente;
-  sede_id: string;
+  sede_ids: string[];
   password: string;
 }
 
@@ -156,7 +159,7 @@ interface EditUserFormState {
   apellido: string;
   email: string;
   rol: UserRoleCliente;
-  sede_id: string;
+  sede_ids: string[];
   activo: boolean;
 }
 
@@ -169,7 +172,7 @@ const initialUserFormState: UserFormState = {
   apellido: '',
   email: '',
   rol: 'comprador',
-  sede_id: '',
+  sede_ids: [],
   password: '',
 };
 
@@ -178,7 +181,7 @@ const initialEditUserFormState: EditUserFormState = {
   apellido: '',
   email: '',
   rol: 'comprador',
-  sede_id: '',
+  sede_ids: [],
   activo: true,
 };
 
@@ -405,7 +408,10 @@ export default function EmpresaConfigPage() {
     const [empresaRes, configRes, usuariosRes, sedesRes, asesoresRes, asignacionesRes, productosAuthRes] = await Promise.allSettled([
       supabase.from('empresas').select('*').eq('id', empresaId).single(),
       supabase.from('empresa_configs').select('*').eq('empresa_id', empresaId).single(),
-      supabase.from('usuarios').select('id, nombre, apellido, email, rol, activo, sede_id').eq('empresa_id', empresaId),
+      fetch(`/api/admin/empresas/${empresaId}/usuarios`, { cache: 'no-store' }).then(async (response) => {
+        const payload = await response.json();
+        return { data: response.ok ? payload.usuarios : null, error: response.ok ? null : payload.error };
+      }),
       supabase.from('sedes').select('id, nombre_sede, ciudad').eq('empresa_id', empresaId),
       supabase
         .from('usuarios')
@@ -609,7 +615,7 @@ export default function EmpresaConfigPage() {
       apellido: usuario.apellido,
       email: usuario.email,
       rol: usuario.rol as UserRoleCliente,
-      sede_id: usuario.sede_id || '',
+      sede_ids: usuario.sede_ids ?? (usuario.sede_id ? [usuario.sede_id] : []),
       activo: usuario.activo,
     });
     setEditUserError(null);
@@ -629,15 +635,15 @@ export default function EmpresaConfigPage() {
     const nombre = editUserForm.nombre.trim();
     const apellido = editUserForm.apellido.trim();
     const email = editUserForm.email.trim().toLowerCase();
-    const requiereSede = editUserForm.rol === 'comprador' && empresa.usa_sedes;
+    const requiereSede = empresa.usa_sedes;
 
     if (!nombre || !apellido || !email) {
       setEditUserError('Completa nombre, apellido y email.');
       return;
     }
 
-    if (requiereSede && !editUserForm.sede_id) {
-      setEditUserError('Debes asignar una sede al usuario comprador.');
+    if (requiereSede && editUserForm.sede_ids.length === 0) {
+      setEditUserError('Debes asignar al menos una sede al usuario.');
       return;
     }
 
@@ -653,7 +659,7 @@ export default function EmpresaConfigPage() {
           apellido,
           email,
           rol: editUserForm.rol,
-          sede_id: editUserForm.rol === 'comprador' ? (editUserForm.sede_id || null) : null,
+          sede_ids: editUserForm.sede_ids,
           activo: editUserForm.activo,
         }),
       });
@@ -684,9 +690,8 @@ export default function EmpresaConfigPage() {
     }
 
     const confirmed = window.confirm(
-      `¿Confirmar eliminación de ${usuario.nombre} ${usuario.apellido} (${usuario.email})?\n\n` +
-        'Se desactivará el usuario y se revocará su acceso. Si tiene pedidos asociados, ' +
-        'se conservará el perfil para preservar el historial; si no, será eliminado por completo.'
+      `¿Retirar a ${usuario.nombre} ${usuario.apellido} (${usuario.email}) de esta empresa?\n\n` +
+        'Si tiene acceso a otras empresas, su cuenta seguirá activa. Solo se revocará completamente cuando no conserve otras asociaciones.'
     );
     if (!confirmed) return;
 
@@ -705,7 +710,9 @@ export default function EmpresaConfigPage() {
 
       await fetchData();
 
-      if (result.hard_deleted) {
+      if (result.association_removed && result.account_active) {
+        setToast(`Se retiró el acceso de ${usuario.email} a esta empresa. Su cuenta continúa activa en otras empresas.`);
+      } else if (result.hard_deleted) {
         setToast(`Usuario ${usuario.email} eliminado por completo.`);
       } else {
         setToast(
@@ -824,20 +831,20 @@ export default function EmpresaConfigPage() {
     const apellido = newUserForm.apellido.trim();
     const email = newUserForm.email.trim().toLowerCase();
     const password = newUserForm.password;
-    const requiereSede = newUserForm.rol === 'comprador' && empresa.usa_sedes;
+    const requiereSede = empresa.usa_sedes;
 
-    if (!nombre || !apellido || !email || !password) {
-      setCreateUserError('Completa nombre, apellido, email y contraseña temporal.');
+    if (!nombre || !apellido || !email) {
+      setCreateUserError('Completa nombre, apellido y email.');
       return;
     }
 
-    if (password.length < 8) {
-      setCreateUserError('La contraseña temporal debe tener al menos 8 caracteres.');
+    if (password && password.length < 8) {
+      setCreateUserError('Si indicas una contraseña temporal, debe tener al menos 8 caracteres.');
       return;
     }
 
-    if (requiereSede && !newUserForm.sede_id) {
-      setCreateUserError('Debes asignar una sede al usuario comprador.');
+    if (requiereSede && newUserForm.sede_ids.length === 0) {
+      setCreateUserError('Debes asignar al menos una sede al usuario.');
       return;
     }
 
@@ -856,7 +863,7 @@ export default function EmpresaConfigPage() {
           email,
           password,
           rol: newUserForm.rol,
-          sede_id: newUserForm.rol === 'comprador' ? (newUserForm.sede_id || null) : null,
+          sede_ids: newUserForm.sede_ids,
         }),
       });
 
@@ -869,7 +876,9 @@ export default function EmpresaConfigPage() {
 
       await fetchData();
       closeCreateUserModal();
-      setToast(`Usuario ${result.usuario?.email || email} creado correctamente.`);
+      setToast(result.associated
+        ? `Usuario ${result.usuario?.email || email} asociado correctamente a esta empresa.`
+        : `Usuario ${result.usuario?.email || email} creado correctamente.`);
       setTimeout(() => setToast(null), 3000);
     } catch (error) {
       setCreateUserError(error instanceof Error ? error.message : 'No se pudo crear el usuario.');
@@ -2318,6 +2327,7 @@ export default function EmpresaConfigPage() {
                     <tr>
                       <th className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Usuario</th>
                       <th className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Rol</th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Sedes</th>
                       <th className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Estado</th>
                       <th className="relative px-6 py-3"><span className="sr-only">Acciones</span></th>
                     </tr>
@@ -2340,6 +2350,13 @@ export default function EmpresaConfigPage() {
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap">
                             <div className="text-sm text-slate-900 font-medium capitalize">{usuario.rol.replace('_', ' ')}</div>
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="max-w-48 text-xs text-slate-600">
+                              {(usuario.sede_ids ?? []).length > 0
+                                ? `${usuario.sede_ids!.length} sede${usuario.sede_ids!.length === 1 ? '' : 's'} autorizada${usuario.sede_ids!.length === 1 ? '' : 's'}`
+                                : 'Sin sedes'}
+                            </div>
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap">
                             <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full border ${
@@ -2364,7 +2381,7 @@ export default function EmpresaConfigPage() {
                                 <button
                                   onClick={() => handleDeleteUser(usuario)}
                                   disabled={deletingUserId === usuario.id}
-                                  title="Eliminar usuario"
+                                  title="Retirar acceso a esta empresa"
                                   className="text-slate-400 hover:text-red-600 transition-colors mx-2 disabled:opacity-50"
                                 >
                                   {deletingUserId === usuario.id ? (
@@ -2543,9 +2560,9 @@ export default function EmpresaConfigPage() {
           <div className="w-full max-w-2xl rounded-2xl border border-border bg-white shadow-2xl">
             <div className="flex items-start justify-between gap-4 border-b border-border px-6 py-5">
               <div>
-                <h3 className="text-lg font-bold text-slate-900">Crear usuario cliente</h3>
+                <h3 className="text-lg font-bold text-slate-900">Crear o asociar usuario cliente</h3>
                 <p className="mt-1 text-sm text-slate-500">
-                  El usuario se creará en autenticación y quedará asociado a {empresa.nombre}.
+                  Si el correo ya existe, solo se agregará el acceso a {empresa.nombre}.
                 </p>
               </div>
               <button
@@ -2595,11 +2612,7 @@ export default function EmpresaConfigPage() {
                     value={newUserForm.rol}
                     onChange={(e) => {
                       const rol = e.target.value as UserRoleCliente;
-                      setNewUserForm((prev) => ({
-                        ...prev,
-                        rol,
-                        sede_id: rol === 'comprador' ? prev.sede_id : '',
-                      }));
+                      setNewUserForm((prev) => ({ ...prev, rol }));
                     }}
                     className="w-full rounded-lg border border-border bg-white px-3 py-2.5 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
                   >
@@ -2608,7 +2621,7 @@ export default function EmpresaConfigPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="mb-2 block text-sm font-medium text-slate-700">Contraseña temporal</label>
+                  <label className="mb-2 block text-sm font-medium text-slate-700">Contraseña temporal (solo usuario nuevo)</label>
                   <input
                     type="password"
                     value={newUserForm.password}
@@ -2617,38 +2630,37 @@ export default function EmpresaConfigPage() {
                     placeholder="Mínimo 8 caracteres"
                   />
                 </div>
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-slate-700">
-                    Sede {empresa.usa_sedes && newUserForm.rol === 'comprador' ? '(obligatoria)' : '(opcional)'}
-                  </label>
-                  <select
-                    value={newUserForm.sede_id}
-                    onChange={(e) => setNewUserForm((prev) => ({ ...prev, sede_id: e.target.value }))}
-                    disabled={newUserForm.rol !== 'comprador' || sedes.length === 0}
-                    className="w-full rounded-lg border border-border bg-white px-3 py-2.5 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-slate-100 disabled:text-slate-400"
-                  >
-                    <option value="">
-                      {sedes.length === 0
-                        ? 'Sin sedes disponibles'
-                        : newUserForm.rol === 'comprador'
-                          ? 'Selecciona una sede'
-                          : 'No aplica para este rol'}
-                    </option>
-                    {sedes.map((sede) => (
-                      <option key={sede.id} value={sede.id}>
-                        {sede.nombre}{sede.ciudad ? ` · ${sede.ciudad}` : ''}
-                      </option>
+                <div className="md:col-span-2">
+                  <span className="mb-2 block text-sm font-medium text-slate-700">
+                    Sedes autorizadas {empresa.usa_sedes ? '(mínimo una)' : '(opcionales)'}
+                  </span>
+                  <div className="grid gap-2 rounded-lg border border-border bg-slate-50 p-3 sm:grid-cols-2">
+                    {sedes.length === 0 ? (
+                      <p className="text-sm text-slate-500">Sin sedes disponibles.</p>
+                    ) : sedes.map((sede) => (
+                      <label key={sede.id} className="flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-sm text-slate-700">
+                        <input
+                          type="checkbox"
+                          checked={newUserForm.sede_ids.includes(sede.id)}
+                          onChange={(event) => setNewUserForm((prev) => ({
+                            ...prev,
+                            sede_ids: event.target.checked
+                              ? [...prev.sede_ids, sede.id]
+                              : prev.sede_ids.filter((id) => id !== sede.id),
+                          }))}
+                          className="h-4 w-4 rounded border-slate-300 accent-primary"
+                        />
+                        <span>{sede.nombre}{sede.ciudad ? ` · ${sede.ciudad}` : ''}</span>
+                      </label>
                     ))}
-                  </select>
+                  </div>
                 </div>
               </div>
 
               <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600">
                 <p>
                   La empresa {empresa.usa_sedes ? 'opera con sedes' : 'no exige sedes'}.
-                  {newUserForm.rol === 'comprador'
-                    ? ' Los compradores quedan listos para operar en su sede asignada.'
-                    : ' Los aprobadores se crean a nivel empresa.'}
+                  {' El rol y las sedes se aplican únicamente dentro de esta empresa.'}
                 </p>
               </div>
 
@@ -2673,7 +2685,7 @@ export default function EmpresaConfigPage() {
                 className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white transition hover:bg-primary-dark disabled:opacity-50"
               >
                 {creatingUser ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                Crear usuario
+                Crear o asociar
               </button>
             </div>
           </div>
@@ -2738,11 +2750,7 @@ export default function EmpresaConfigPage() {
                     value={editUserForm.rol}
                     onChange={(e) => {
                       const rol = e.target.value as UserRoleCliente;
-                      setEditUserForm((prev) => ({
-                        ...prev,
-                        rol,
-                        sede_id: rol === 'comprador' ? prev.sede_id : '',
-                      }));
+                      setEditUserForm((prev) => ({ ...prev, rol }));
                     }}
                     className="w-full rounded-lg border border-border bg-white px-3 py-2.5 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
                   >
@@ -2750,29 +2758,30 @@ export default function EmpresaConfigPage() {
                     <option value="aprobador">Aprobador</option>
                   </select>
                 </div>
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-slate-700">
-                    Sede {empresa.usa_sedes && editUserForm.rol === 'comprador' ? '(obligatoria)' : '(opcional)'}
-                  </label>
-                  <select
-                    value={editUserForm.sede_id}
-                    onChange={(e) => setEditUserForm((prev) => ({ ...prev, sede_id: e.target.value }))}
-                    disabled={editUserForm.rol !== 'comprador' || sedes.length === 0}
-                    className="w-full rounded-lg border border-border bg-white px-3 py-2.5 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-slate-100 disabled:text-slate-400"
-                  >
-                    <option value="">
-                      {sedes.length === 0
-                        ? 'Sin sedes disponibles'
-                        : editUserForm.rol === 'comprador'
-                          ? 'Selecciona una sede'
-                          : 'No aplica para este rol'}
-                    </option>
-                    {sedes.map((sede) => (
-                      <option key={sede.id} value={sede.id}>
-                        {sede.nombre}{sede.ciudad ? ` · ${sede.ciudad}` : ''}
-                      </option>
+                <div className="md:col-span-2">
+                  <span className="mb-2 block text-sm font-medium text-slate-700">
+                    Sedes autorizadas {empresa.usa_sedes ? '(mínimo una)' : '(opcionales)'}
+                  </span>
+                  <div className="grid gap-2 rounded-lg border border-border bg-slate-50 p-3 sm:grid-cols-2">
+                    {sedes.length === 0 ? (
+                      <p className="text-sm text-slate-500">Sin sedes disponibles.</p>
+                    ) : sedes.map((sede) => (
+                      <label key={sede.id} className="flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-sm text-slate-700">
+                        <input
+                          type="checkbox"
+                          checked={editUserForm.sede_ids.includes(sede.id)}
+                          onChange={(event) => setEditUserForm((prev) => ({
+                            ...prev,
+                            sede_ids: event.target.checked
+                              ? [...prev.sede_ids, sede.id]
+                              : prev.sede_ids.filter((id) => id !== sede.id),
+                          }))}
+                          className="h-4 w-4 rounded border-slate-300 accent-primary"
+                        />
+                        <span>{sede.nombre}{sede.ciudad ? ` · ${sede.ciudad}` : ''}</span>
+                      </label>
                     ))}
-                  </select>
+                  </div>
                 </div>
                 <div>
                   <label className="mb-2 block text-sm font-medium text-slate-700">Estado</label>
@@ -2785,7 +2794,7 @@ export default function EmpresaConfigPage() {
                       className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary"
                     />
                     <label htmlFor="edit-user-activo" className="text-sm text-slate-700">
-                      Usuario activo (puede iniciar sesión y operar)
+                      Acceso activo en esta empresa
                     </label>
                   </div>
                 </div>

@@ -45,11 +45,13 @@ export default function DashboardComprador() {
           .from('pedidos')
           .select('id', { count: 'exact', head: true })
           .eq('usuario_creador_id', user.id)
+          .eq('empresa_id', user.empresa_id)
           .in('estado', ['borrador', 'en_aprobacion', 'aprobado', 'en_validacion_imprima']),
         supabase
           .from('pedidos')
           .select('id, numero, estado, valor_total_cop, fecha_creacion')
           .eq('usuario_creador_id', user.id)
+          .eq('empresa_id', user.empresa_id)
           .order('fecha_creacion', { ascending: false })
           .limit(5),
       ]);
@@ -70,13 +72,11 @@ export default function DashboardComprador() {
     fetchData();
   }, [user]);
 
-  const formatTimeAgo = (dateStr: string) => {
-    const diff = Date.now() - new Date(dateStr).getTime();
-    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-    if (days === 0) return 'Hoy';
-    if (days === 1) return 'Ayer';
-    return `Hace ${days} días`;
-  };
+  const formatTimeAgo = (dateStr: string) => new Intl.DateTimeFormat('es-CO', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  }).format(new Date(dateStr));
 
   if (loading) {
     return (

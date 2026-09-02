@@ -383,6 +383,7 @@ export default function CatalogoPage() {
           onClose={() => setVariantModalProduct(null)}
           onAddToCart={handleAddVariant}
           showPrices={showPrices}
+          empresaId={user?.empresa_id}
         />
       )}
     </div>

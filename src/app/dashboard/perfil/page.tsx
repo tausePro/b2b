@@ -7,7 +7,7 @@ import { ROLE_CONFIG } from '@/types';
 import { User, Mail, Building2, MapPin, Key, Loader2, Check, Eye, EyeOff } from 'lucide-react';
 
 export default function PerfilPage() {
-  const { user } = useAuth();
+  const { user, activeCompany } = useAuth();
 
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -88,16 +88,18 @@ export default function PerfilPage() {
           <div className="flex items-center gap-3 py-3 border-b border-border">
             <Building2 className="w-4 h-4 text-muted" />
             <div>
-              <p className="text-xs text-muted">Empresa</p>
-              <p className="text-sm font-medium text-foreground">{user.empresa_id}</p>
+              <p className="text-xs text-muted">Empresa activa</p>
+              <p className="text-sm font-medium text-foreground">{activeCompany?.empresa_nombre ?? user.empresa_id}</p>
             </div>
           </div>
-          {user.sede_id && (
-            <div className="flex items-center gap-3 py-3">
-              <MapPin className="w-4 h-4 text-muted" />
+          {(activeCompany?.sedes.length ?? 0) > 0 && (
+            <div className="flex items-start gap-3 py-3">
+              <MapPin className="mt-0.5 w-4 h-4 text-muted" />
               <div>
-                <p className="text-xs text-muted">Sede</p>
-                <p className="text-sm font-medium text-foreground">{user.sede_id}</p>
+                <p className="text-xs text-muted">Sedes autorizadas</p>
+                <p className="text-sm font-medium text-foreground">
+                  {activeCompany!.sedes.map((site) => site.nombre).join(', ')}
+                </p>
               </div>
             </div>
           )}

@@ -6,11 +6,13 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 type PerfilActual = {
   rol: string;
   empresa_id: string | null;
+  empresas_asignadas?: Array<{ empresa_id: string; rol: string; configuracion_extra?: Record<string, unknown> }>;
 };
 
 type PedidoOdooResumen = {
   id: string;
   numero: string;
+  empresa_id: string;
   odoo_sale_order_id: number | null;
 };
 
@@ -54,42 +56,9 @@ export async function GET(
     }
 
     const perfil = perfilData as PerfilActual;
-    let canShowPrices = ['super_admin', 'aprobador', 'asesor', 'direccion'].includes(perfil.rol);
-
-    if (perfil.empresa_id && ['comprador', 'aprobador'].includes(perfil.rol)) {
-      const { data: configEmpresa } = await supabase
-        .from('empresa_configs')
-        .select('configuracion_extra')
-        .eq('empresa_id', perfil.empresa_id)
-        .maybeSingle();
-
-      const extra =
-        configEmpresa?.configuracion_extra && typeof configEmpresa.configuracion_extra === 'object'
-          ? (configEmpresa.configuracion_extra as Record<string, unknown>)
-          : {};
-
-      if (perfil.rol === 'comprador' && typeof extra.mostrar_precios_comprador === 'boolean') {
-        canShowPrices = extra.mostrar_precios_comprador;
-      }
-
-      if (perfil.rol === 'aprobador' && typeof extra.mostrar_precios_aprobador === 'boolean') {
-        canShowPrices = extra.mostrar_precios_aprobador;
-      }
-    }
-
-    if (!canShowPrices) {
-      return NextResponse.json(
-        {
-          error: 'FORBIDDEN',
-          details: 'Tu perfil no tiene permisos para ver montos.',
-        },
-        { status: 403 }
-      );
-    }
-
     const { data: pedidoData, error: pedidoError } = await supabase
       .from('pedidos')
-      .select('id, numero, odoo_sale_order_id')
+      .select('id, numero, empresa_id, odoo_sale_order_id')
       .eq('id', pedidoId)
       .single();
 
@@ -104,6 +73,40 @@ export async function GET(
     }
 
     const pedido = pedidoData as PedidoOdooResumen;
+    const membership = perfil.empresas_asignadas?.find((item) => item.empresa_id === pedido.empresa_id);
+    const effectiveRole = membership?.rol ?? perfil.rol;
+    let canShowPrices = ['super_admin', 'aprobador', 'asesor', 'direccion'].includes(effectiveRole);
+
+    if (['comprador', 'aprobador'].includes(effectiveRole)) {
+      let extra = membership?.configuracion_extra ?? {};
+      if (Object.keys(extra).length === 0) {
+        const { data: configEmpresa } = await supabase
+          .from('empresa_configs')
+          .select('configuracion_extra')
+          .eq('empresa_id', pedido.empresa_id)
+          .maybeSingle();
+        extra = configEmpresa?.configuracion_extra && typeof configEmpresa.configuracion_extra === 'object'
+          ? configEmpresa.configuracion_extra as Record<string, unknown>
+          : {};
+      }
+
+      if (effectiveRole === 'comprador' && typeof extra.mostrar_precios_comprador === 'boolean') {
+        canShowPrices = extra.mostrar_precios_comprador;
+      }
+      if (effectiveRole === 'aprobador' && typeof extra.mostrar_precios_aprobador === 'boolean') {
+        canShowPrices = extra.mostrar_precios_aprobador;
+      }
+    }
+
+    if (!canShowPrices) {
+      return NextResponse.json(
+        {
+          error: 'FORBIDDEN',
+          details: 'Tu perfil no tiene permisos para ver montos.',
+        },
+        { status: 403 }
+      );
+    }
     if (!pedido.odoo_sale_order_id) {
       return NextResponse.json(
         {

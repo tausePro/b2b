@@ -160,6 +160,18 @@ export async function getAccessibleEmpresaIds(
     return Array.from(new Set(data.map((item) => String(item.empresa_id))));
   }
 
+  if (context.actor.rol === 'comprador' || context.actor.rol === 'aprobador') {
+    const { data, error } = await context.admin
+      .from('usuario_empresas')
+      .select('empresa_id')
+      .eq('usuario_id', context.actor.id)
+      .eq('activo', true);
+
+    if (!error && Array.isArray(data) && data.length > 0) {
+      return Array.from(new Set(data.map((item) => String(item.empresa_id))));
+    }
+  }
+
   return context.actor.empresa_id ? [context.actor.empresa_id] : [];
 }
 

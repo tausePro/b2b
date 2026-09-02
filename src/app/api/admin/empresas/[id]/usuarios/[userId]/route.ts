@@ -14,6 +14,7 @@ interface UpdateUserPayload {
   apellido?: string;
   email?: string;
   rol?: ClientRole;
+  sede_ids?: string[];
   sede_id?: string | null;
   activo?: boolean;
 }
@@ -23,6 +24,7 @@ interface ResolvedContext {
   empresaId: string;
   userId: string;
   empresa: { id: string; nombre: string; usa_sedes: boolean; activa: boolean };
+  membership: { id: string; rol: ClientRole; activo: boolean; es_principal: boolean };
   targetUser: {
     id: string;
     auth_id: string | null;
@@ -96,6 +98,20 @@ async function authorizeAndResolve(
     );
   }
 
+  const { data: membership, error: membershipError } = await admin
+    .from('usuario_empresas')
+    .select('id, rol, activo, es_principal')
+    .eq('usuario_id', userId)
+    .eq('empresa_id', empresaId)
+    .maybeSingle();
+
+  if (membershipError || !membership) {
+    return NextResponse.json(
+      { error: 'El usuario no está asociado a la empresa indicada.', details: membershipError?.message ?? null },
+      { status: 404 }
+    );
+  }
+
   const { data: targetUser, error: targetError } = await admin
     .from('usuarios')
     .select(USER_SELECT)
@@ -109,18 +125,12 @@ async function authorizeAndResolve(
     );
   }
 
-  if (targetUser.empresa_id !== empresaId) {
-    return NextResponse.json(
-      { error: 'El usuario no pertenece a la empresa indicada.' },
-      { status: 400 }
-    );
-  }
-
   return {
     admin,
     empresaId,
     userId,
     empresa: empresa as ResolvedContext['empresa'],
+    membership: membership as ResolvedContext['membership'],
     targetUser: targetUser as ResolvedContext['targetUser'],
   };
 }
@@ -133,11 +143,11 @@ export async function PATCH(
     const resolved = await authorizeAndResolve(request, context);
     if (resolved instanceof NextResponse) return resolved;
 
-    const { admin, empresaId, userId, empresa, targetUser } = resolved;
+    const { admin, empresaId, userId, empresa, membership, targetUser } = resolved;
     const body = (await request.json()) as UpdateUserPayload;
 
     const updates: Record<string, unknown> = {};
-    let nextRole = targetUser.rol as ClientRole;
+    let nextRole = membership.rol;
 
     if (body.nombre !== undefined) {
       const nombre = body.nombre?.trim();
@@ -168,48 +178,49 @@ export async function PATCH(
           { status: 400 }
         );
       }
-      updates.rol = body.rol;
       nextRole = body.rol;
     }
 
-    if (body.sede_id !== undefined) {
-      const sedeId = body.sede_id ?? null;
-      if (sedeId) {
-        const { data: sede, error: sedeError } = await admin
-          .from('sedes')
-          .select('id, empresa_id')
-          .eq('id', sedeId)
-          .maybeSingle();
+    const { data: currentSiteRows, error: currentSitesError } = await admin
+      .from('usuario_empresa_sedes')
+      .select('sede_id')
+      .eq('usuario_empresa_id', membership.id)
+      .eq('activa', true);
+    if (currentSitesError) throw currentSitesError;
 
-        if (sedeError || !sede || sede.empresa_id !== empresaId) {
-          return NextResponse.json(
-            {
-              error: 'La sede seleccionada no pertenece a la empresa.',
-              details: sedeError?.message ?? null,
-            },
-            { status: 400 }
-          );
-        }
-      }
-      updates.sede_id = nextRole === 'comprador' ? sedeId : null;
-    } else if (body.rol !== undefined) {
-      updates.sede_id = nextRole === 'comprador' ? targetUser.sede_id : null;
-    }
+    const requestedSiteIds = Array.from(new Set(
+      (Array.isArray(body.sede_ids)
+        ? body.sede_ids
+        : body.sede_id !== undefined
+          ? body.sede_id ? [body.sede_id] : []
+          : (currentSiteRows ?? []).map((row) => String(row.sede_id)))
+        .map((id) => id.trim())
+        .filter(Boolean)
+    ));
 
-    const finalSedeId = (updates.sede_id !== undefined ? updates.sede_id : targetUser.sede_id) as
-      | string
-      | null;
-
-    if (nextRole === 'comprador' && empresa.usa_sedes && !finalSedeId) {
+    if (empresa.usa_sedes && requestedSiteIds.length === 0) {
       return NextResponse.json(
-        { error: 'Los compradores de esta empresa deben quedar asociados a una sede.' },
+        { error: 'El usuario debe conservar al menos una sede autorizada.' },
         { status: 400 }
       );
     }
 
-    if (body.activo !== undefined) {
-      updates.activo = Boolean(body.activo);
+    if (requestedSiteIds.length > 0) {
+      const { data: validSites, error: sitesError } = await admin
+        .from('sedes')
+        .select('id')
+        .in('id', requestedSiteIds)
+        .eq('empresa_id', empresaId)
+        .eq('activa', true);
+      if (sitesError || (validSites ?? []).length !== requestedSiteIds.length) {
+        return NextResponse.json(
+          { error: 'Una o más sedes seleccionadas no pertenecen a la empresa.', details: sitesError?.message ?? null },
+          { status: 400 }
+        );
+      }
     }
+
+    const membershipActive = body.activo ?? membership.activo;
 
     let nextEmail: string | null = null;
     if (body.email !== undefined) {
@@ -247,7 +258,11 @@ export async function PATCH(
       }
     }
 
-    if (Object.keys(updates).length === 0) {
+    const hasMembershipChanges = body.rol !== undefined
+      || body.sede_ids !== undefined
+      || body.sede_id !== undefined
+      || body.activo !== undefined;
+    if (Object.keys(updates).length === 0 && !hasMembershipChanges) {
       return NextResponse.json(
         { error: 'No se enviaron cambios para aplicar.' },
         { status: 400 }
@@ -270,24 +285,92 @@ export async function PATCH(
       }
     }
 
-    const { data: updated, error: updateError } = await admin
-      .from('usuarios')
-      .update(updates)
-      .eq('id', userId)
-      .select(USER_SELECT)
-      .single();
+    if (membershipActive) {
+      const { error: membershipError } = await admin.rpc('configurar_usuario_empresa', {
+        p_usuario_id: userId,
+        p_empresa_id: empresaId,
+        p_rol: nextRole,
+        p_sede_ids: requestedSiteIds,
+        p_es_principal: membership.es_principal,
+        p_creado_por: null,
+      });
+      if (membershipError) {
+        return NextResponse.json(
+          { error: 'No se pudo actualizar el acceso a la empresa.', details: membershipError.message },
+          { status: 500 }
+        );
+      }
+      updates.activo = true;
+      if (membership.es_principal) {
+        updates.rol = nextRole;
+        updates.sede_id = nextRole === 'comprador' ? (requestedSiteIds[0] ?? null) : null;
+      }
+    } else {
+      const { error: membershipError } = await admin
+        .from('usuario_empresas')
+        .update({ activo: false, es_principal: false })
+        .eq('id', membership.id);
+      if (membershipError) throw membershipError;
 
-    if (updateError || !updated) {
-      return NextResponse.json(
-        {
-          error: 'No se pudo actualizar el perfil del usuario.',
-          details: updateError?.message ?? null,
-        },
-        { status: 500 }
-      );
+      if (membership.es_principal) {
+        const { data: replacement } = await admin
+          .from('usuario_empresas')
+          .select('id, empresa_id, rol')
+          .eq('usuario_id', userId)
+          .eq('activo', true)
+          .order('created_at')
+          .limit(1)
+          .maybeSingle();
+        if (replacement) {
+          await admin.from('usuario_empresas').update({ es_principal: true }).eq('id', replacement.id);
+          const { data: replacementSites } = await admin
+            .from('usuario_empresa_sedes')
+            .select('sede_id, es_predeterminada')
+            .eq('usuario_empresa_id', replacement.id)
+            .eq('activa', true);
+          const sites = replacementSites ?? [];
+          updates.empresa_id = replacement.empresa_id;
+          updates.rol = replacement.rol;
+          updates.sede_id = replacement.rol === 'comprador'
+            ? sites.find((site) => site.es_predeterminada)?.sede_id ?? sites[0]?.sede_id ?? null
+            : null;
+        } else {
+          updates.activo = false;
+        }
+      }
     }
 
-    return NextResponse.json({ usuario: updated });
+    let updated = targetUser;
+    if (Object.keys(updates).length > 0) {
+      const { data: updatedProfile, error: updateError } = await admin
+        .from('usuarios')
+        .update(updates)
+        .eq('id', userId)
+        .select(USER_SELECT)
+        .single();
+
+      if (updateError || !updatedProfile) {
+        return NextResponse.json(
+          {
+            error: 'No se pudo actualizar el perfil del usuario.',
+            details: updateError?.message ?? null,
+          },
+          { status: 500 }
+        );
+      }
+      updated = updatedProfile as ResolvedContext['targetUser'];
+    }
+
+    return NextResponse.json({
+      usuario: {
+        ...updated,
+        rol: nextRole,
+        activo: membershipActive && updated.activo,
+        asociacion_id: membership.id,
+        sede_ids: requestedSiteIds,
+        sede_id: requestedSiteIds[0] ?? null,
+      },
+    });
   } catch (error) {
     return NextResponse.json(
       {
@@ -307,7 +390,57 @@ export async function DELETE(
     const resolved = await authorizeAndResolve(request, context);
     if (resolved instanceof NextResponse) return resolved;
 
-    const { admin, userId, targetUser } = resolved;
+    const { admin, userId, targetUser, membership } = resolved;
+
+    const { error: unlinkError } = await admin
+      .from('usuario_empresas')
+      .update({ activo: false, es_principal: false })
+      .eq('id', membership.id);
+    if (unlinkError) {
+      return NextResponse.json(
+        { error: 'No se pudo retirar el acceso a esta empresa.', details: unlinkError.message },
+        { status: 500 }
+      );
+    }
+
+    const { data: remainingMemberships, error: remainingError } = await admin
+      .from('usuario_empresas')
+      .select('id, empresa_id, rol, es_principal')
+      .eq('usuario_id', userId)
+      .eq('activo', true)
+      .order('es_principal', { ascending: false })
+      .order('created_at');
+    if (remainingError) throw remainingError;
+
+    if ((remainingMemberships ?? []).length > 0) {
+      if (membership.es_principal) {
+        const replacement = remainingMemberships![0];
+        await admin.from('usuario_empresas').update({ es_principal: true }).eq('id', replacement.id);
+        const { data: replacementSites } = await admin
+          .from('usuario_empresa_sedes')
+          .select('sede_id, es_predeterminada')
+          .eq('usuario_empresa_id', replacement.id)
+          .eq('activa', true);
+        const sites = replacementSites ?? [];
+        await admin
+          .from('usuarios')
+          .update({
+            empresa_id: replacement.empresa_id,
+            rol: replacement.rol,
+            sede_id: replacement.rol === 'comprador'
+              ? sites.find((site) => site.es_predeterminada)?.sede_id ?? sites[0]?.sede_id ?? null
+              : null,
+          })
+          .eq('id', userId);
+      }
+
+      return NextResponse.json({
+        ok: true,
+        association_removed: true,
+        account_active: true,
+        remaining_companies: remainingMemberships!.length,
+      });
+    }
 
     // 1) Soft delete: marcar inactivo (idempotente y no dependiente del estado de auth).
     const { error: deactivateError } = await admin

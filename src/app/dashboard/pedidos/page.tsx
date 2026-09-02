@@ -43,7 +43,7 @@ export default function PedidosPage() {
 
       // Comprador solo ve sus pedidos
       if (user.rol === 'comprador') {
-        query = query.eq('usuario_creador_id', user.id);
+        query = query.eq('usuario_creador_id', user.id).eq('empresa_id', user.empresa_id);
       } else if (user.rol === 'aprobador') {
         query = query.eq('empresa_id', user.empresa_id);
       }
@@ -68,7 +68,7 @@ export default function PedidosPage() {
     ? pedidos.filter(
         (p) =>
           p.numero.toLowerCase().includes(busqueda.toLowerCase()) ||
-          p.sede?.nombre_sede.toLowerCase().includes(busqueda.toLowerCase())
+          p.sede?.nombre_sede?.toLowerCase().includes(busqueda.toLowerCase())
       )
     : pedidos;
 

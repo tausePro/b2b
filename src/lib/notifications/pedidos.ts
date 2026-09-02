@@ -13,6 +13,7 @@ type PedidoContext = {
   numero: string;
   estado: string;
   empresa_id: string;
+  sede_id: string | null;
   odoo_sale_order_id: number | null;
   valor_total_cop: number;
   total_items: number;
@@ -86,7 +87,7 @@ async function loadPedidoContext(pedidoId: string): Promise<PedidoContext> {
   const { data, error } = await admin
     .from('pedidos')
     .select(`
-      id, numero, estado, empresa_id, odoo_sale_order_id, valor_total_cop, total_items,
+      id, numero, estado, empresa_id, sede_id, odoo_sale_order_id, valor_total_cop, total_items,
       empresa:empresas(nombre),
       sede:sedes(nombre_sede),
       creador:usuarios!pedidos_usuario_creador_id_fkey(id, email, nombre, apellido)
@@ -112,6 +113,7 @@ async function loadPedidoContext(pedidoId: string): Promise<PedidoContext> {
     numero: String(data.numero),
     estado: String(data.estado),
     empresa_id: String(data.empresa_id),
+    sede_id: data.sede_id == null ? null : String(data.sede_id),
     odoo_sale_order_id: data.odoo_sale_order_id == null ? null : Number(data.odoo_sale_order_id),
     valor_total_cop: Number(data.valor_total_cop || 0),
     total_items: Number(data.total_items || 0),
@@ -152,11 +154,11 @@ async function loadActor(actorUserId?: string | null): Promise<Recipient | null>
   };
 }
 
-async function loadApprovers(empresaId: string): Promise<Recipient[]> {
+async function loadApprovers(empresaId: string, sedeId: string | null): Promise<Recipient[]> {
   const admin = getSupabaseAdmin();
   const { data, error } = await admin
-    .from('usuarios')
-    .select('id, email, nombre, apellido, rol, empresa_id')
+    .from('usuario_empresas')
+    .select('id, usuario:usuarios!usuario_empresas_usuario_id_fkey(id, email, nombre, apellido, rol, empresa_id, activo)')
     .eq('empresa_id', empresaId)
     .eq('rol', 'aprobador')
     .eq('activo', true);
@@ -165,14 +167,23 @@ async function loadApprovers(empresaId: string): Promise<Recipient[]> {
     return [];
   }
 
-  return data.map((item) => ({
-    id: String(item.id),
-    email: item.email ?? null,
-    nombre: item.nombre ?? null,
-    apellido: item.apellido ?? null,
-    rol: item.rol ?? null,
-    empresa_id: item.empresa_id ?? null,
-  }));
+  let allowedMembershipIds: Set<string> | null = null;
+  if (sedeId && data.length > 0) {
+    const { data: siteRows, error: siteError } = await admin
+      .from('usuario_empresa_sedes')
+      .select('usuario_empresa_id')
+      .in('usuario_empresa_id', data.map((item) => item.id))
+      .eq('sede_id', sedeId)
+      .eq('activa', true);
+    if (siteError) return [];
+    allowedMembershipIds = new Set((siteRows ?? []).map((row) => String(row.usuario_empresa_id)));
+  }
+
+  return data
+    .filter((item) => !allowedMembershipIds || allowedMembershipIds.has(String(item.id)))
+    .map((item) => normalizeSingle(item.usuario as (Recipient & { activo?: boolean }) | (Recipient & { activo?: boolean })[] | null))
+    .filter((item): item is Recipient & { activo?: boolean } => Boolean(item && item.activo !== false))
+    .map((item) => ({ ...item, rol: 'aprobador', empresa_id: empresaId }));
 }
 
 async function loadDireccionRecipients(): Promise<Recipient[]> {
@@ -246,7 +257,7 @@ async function resolveRecipients(event: PedidoNotificationEvent, pedido: PedidoC
   switch (event) {
     case 'pedido_creado_en_aprobacion': {
       const [approvers, direccion] = await Promise.all([
-        loadApprovers(pedido.empresa_id),
+        loadApprovers(pedido.empresa_id, pedido.sede_id),
         loadDireccionRecipients(),
       ]);
       return dedupeRecipients([...approvers, ...direccion]);

@@ -3,6 +3,7 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import type { ProductoOdoo, TipoPedidoItem } from '@/types';
+import { getCartStorageKey } from '@/lib/auth/companyContext';
 
 export interface CartItem {
   id: string;
@@ -77,18 +78,20 @@ function matchesCartItem(item: CartItem, itemIdOrOdooProductId: string | number)
   return item.tipo_item === 'catalogo' && item.odoo_product_id === itemIdOrOdooProductId;
 }
 
-const CART_STORAGE_PREFIX = 'b2b_cart_';
-
-function getStorageKey(userId: string | null) {
-  return userId ? `${CART_STORAGE_PREFIX}${userId}` : null;
-}
-
-function loadCartFromStorage(userId: string | null): CartItem[] {
+function loadCartFromStorage(userId: string | null, companyId: string | null): CartItem[] {
   if (typeof window === 'undefined') return [];
-  const key = getStorageKey(userId);
+  const key = getCartStorageKey(userId, companyId);
   if (!key) return [];
   try {
-    const raw = localStorage.getItem(key);
+    let raw = localStorage.getItem(key);
+    if (!raw && userId) {
+      const legacyKey = `b2b_cart_${userId}`;
+      raw = localStorage.getItem(legacyKey);
+      if (raw) {
+        localStorage.setItem(key, raw);
+        localStorage.removeItem(legacyKey);
+      }
+    }
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
@@ -97,12 +100,16 @@ function loadCartFromStorage(userId: string | null): CartItem[] {
   }
 }
 
-function saveCartToStorage(userId: string | null, items: CartItem[]) {
+function saveCartToStorage(userId: string | null, companyId: string | null, items: CartItem[]) {
   if (typeof window === 'undefined') return;
-  const key = getStorageKey(userId);
+  const key = getCartStorageKey(userId, companyId);
   if (!key) return;
   try {
-    const toStore = items.map(({ imagen_url, ...rest }) => rest);
+    const toStore = items.map((item) => {
+      const stored = { ...item };
+      delete stored.imagen_url;
+      return stored;
+    });
     localStorage.setItem(key, JSON.stringify(toStore));
   } catch {
     // localStorage lleno o no disponible
@@ -112,35 +119,39 @@ function saveCartToStorage(userId: string | null, items: CartItem[]) {
 export function CartProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   const userId = user?.id ?? null;
+  const companyId = user?.empresa_id ?? null;
   const [items, setItems] = useState<CartItem[]>([]);
   const currentUserRef = useRef<string | null>(null);
   const initialized = useRef(false);
+  const skipNextSaveRef = useRef(false);
 
   // Cargar carrito al montar o cuando cambia el usuario
   useEffect(() => {
-    if (!userId) {
+    const contextKey = getCartStorageKey(userId, companyId);
+    if (!contextKey) {
       if (currentUserRef.current) {
         setItems([]);
         currentUserRef.current = null;
       }
       return;
     }
-    if (currentUserRef.current === userId && initialized.current) return;
-    currentUserRef.current = userId;
+    if (currentUserRef.current === contextKey && initialized.current) return;
+    currentUserRef.current = contextKey;
     initialized.current = true;
-    const stored = loadCartFromStorage(userId);
+    skipNextSaveRef.current = true;
+    const stored = loadCartFromStorage(userId, companyId);
     setItems(stored);
 
     // Recargar imágenes desde Odoo para items que no las tengan
     if (stored.length > 0) {
       const catalogIds = [...new Set(stored.filter((i) => i.tipo_item === 'catalogo' && i.odoo_product_id).map((i) => i.odoo_product_id!))];
-      if (catalogIds.length > 0 && user?.empresa_id) {
+      if (catalogIds.length > 0 && companyId) {
         (async () => {
           try {
             const { data: empresa } = await (await import('@/lib/supabase/client')).createClient()
               .from('empresas')
               .select('odoo_partner_id')
-              .eq('id', user.empresa_id)
+              .eq('id', companyId)
               .single();
             if (!empresa?.odoo_partner_id) return;
             const res = await fetch(`/api/odoo/productos?partner_id=${empresa.odoo_partner_id}&limit=500`);
@@ -165,13 +176,17 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         })();
       }
     }
-  }, [userId, user?.empresa_id]);
+  }, [userId, companyId]);
 
   // Guardar en localStorage cada vez que items cambia
   useEffect(() => {
     if (!initialized.current || !currentUserRef.current) return;
-    saveCartToStorage(currentUserRef.current, items);
-  }, [items]);
+    if (skipNextSaveRef.current) {
+      skipNextSaveRef.current = false;
+      return;
+    }
+    saveCartToStorage(userId, companyId, items);
+  }, [companyId, items, userId]);
 
   const addItem = useCallback((producto: ProductoOdoo, cantidad: number = 1) => {
     const itemId = createCatalogItemId(producto.odoo_product_id);
@@ -275,7 +290,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
   const clearCart = useCallback(() => {
     setItems([]);
-    const key = getStorageKey(currentUserRef.current);
+    const key = currentUserRef.current;
     if (key) try { localStorage.removeItem(key); } catch { /* noop */ }
   }, []);
 
