@@ -7,6 +7,8 @@ import { safeEnqueuePedidoNotifications } from '@/lib/notifications/pedidos';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { loadPricingContext, resolveProductPrice, type ModoPricing } from '@/lib/pricing/margins';
 import { loadEmpresaPricelistRules } from '@/lib/pricing/pricelist';
+import { getClientCompanyAccess } from '@/lib/auth/companyMemberships.server';
+import { validateOrderCompanyContext } from '@/lib/auth/companyContext';
 import type { TipoPedidoItem } from '@/types';
 
 type PerfilActual = {
@@ -32,6 +34,8 @@ type CreatePedidoItemInput = {
 
 type CreatePedidoRequest = {
   idempotency_key?: string | null;
+  empresa_id?: string | null;
+  sede_id?: string | null;
   comentarios_sede?: string | null;
   items: CreatePedidoItemInput[];
   guardar_como_borrador?: boolean;
@@ -118,21 +122,27 @@ export async function POST(request: NextRequest) {
     }
 
     const perfil = perfilData as PerfilActual;
-    if (perfil.rol !== 'comprador') {
-      return NextResponse.json(
-        { error: 'FORBIDDEN', details: 'Solo los compradores pueden crear pedidos.' },
-        { status: 403 }
-      );
-    }
+    const body = (await request.json()) as CreatePedidoRequest;
+    const requestedCompanyId = typeof body.empresa_id === 'string' && body.empresa_id.trim()
+      ? body.empresa_id.trim()
+      : perfil.empresa_id;
 
-    if (!perfil.empresa_id) {
+    if (!requestedCompanyId) {
       return NextResponse.json(
         { error: 'INVALID_PROFILE', details: 'El usuario no tiene empresa asignada.' },
         { status: 422 }
       );
     }
 
-    const body = (await request.json()) as CreatePedidoRequest;
+    const admin = getSupabaseAdmin();
+    const companyAccess = await getClientCompanyAccess(admin, perfil.id, requestedCompanyId);
+    if (!companyAccess) {
+      return NextResponse.json(
+        { error: 'FORBIDDEN', details: 'No tienes acceso a la empresa seleccionada.' },
+        { status: 403 }
+      );
+    }
+
     const idempotencyKey = typeof body.idempotency_key === 'string'
       ? body.idempotency_key.trim()
       : null;
@@ -161,11 +171,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const admin = getSupabaseAdmin();
     const { data: empresa, error: empresaError } = await admin
       .from('empresas')
       .select('id, nombre, requiere_aprobacion, usa_sedes, odoo_partner_id, odoo_comercial_id')
-      .eq('id', perfil.empresa_id)
+      .eq('id', requestedCompanyId)
       .single();
 
     if (empresaError || !empresa) {
@@ -175,31 +184,46 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const requestedSiteId = typeof body.sede_id === 'string' && body.sede_id.trim()
+      ? body.sede_id.trim()
+      : companyAccess.defaultSiteId;
+    const contextError = validateOrderCompanyContext(companyAccess, {
+      companyId: requestedCompanyId,
+      siteId: requestedSiteId,
+      usesSites: empresa.usa_sedes,
+    });
+    if (contextError) {
+      const isSiteRequired = contextError === 'SITE_REQUIRED';
+      return NextResponse.json(
+        {
+          error: isSiteRequired ? 'SEDE_REQUIRED' : 'FORBIDDEN',
+          details: isSiteRequired
+            ? 'Selecciona una sede autorizada para esta empresa.'
+            : 'No tienes el rol o acceso requerido para crear el pedido.',
+        },
+        { status: isSiteRequired ? 422 : 403 }
+      );
+    }
+
     let sedeId: string | null = null;
     let sedeData: { id: string; nombre_sede: string; direccion: string | null; ciudad: string | null; odoo_address_id: number | null } | null = null;
-    if (empresa.usa_sedes) {
-      if (!perfil.sede_id) {
-        return NextResponse.json(
-          { error: 'SEDE_REQUIRED', details: 'Tu empresa opera con sedes y tu usuario no tiene una sede asignada.' },
-          { status: 422 }
-        );
-      }
-
+    if (requestedSiteId) {
       const { data: sede, error: sedeError } = await admin
         .from('sedes')
         .select('id, nombre_sede, direccion, ciudad, odoo_address_id')
-        .eq('id', perfil.sede_id)
-        .eq('empresa_id', perfil.empresa_id)
+        .eq('id', requestedSiteId)
+        .eq('empresa_id', requestedCompanyId)
+        .eq('activa', true)
         .maybeSingle();
 
       if (sedeError || !sede) {
         return NextResponse.json(
-          { error: 'INVALID_SEDE', details: sedeError?.message ?? 'La sede asignada no es válida para la empresa.' },
+          { error: 'INVALID_SEDE', details: sedeError?.message ?? 'La sede seleccionada no es válida para la empresa.' },
           { status: 422 }
         );
       }
 
-      sedeId = perfil.sede_id;
+      sedeId = requestedSiteId;
       sedeData = sede;
     }
 
@@ -208,9 +232,9 @@ export async function POST(request: NextRequest) {
     // Recalcular precios de catálogo server-side con jerarquía: override > costo+margen > pricelist
     const catalogItemsToReprice = items.filter((i) => i.tipo_item === 'catalogo' && i.odoo_product_id);
     let modoPricing: ModoPricing = 'costo_margen';
-    if (!esBorrador && catalogItemsToReprice.length > 0 && perfil.empresa_id) {
+    if (!esBorrador && catalogItemsToReprice.length > 0) {
       try {
-        const pricingCtx = await loadPricingContext(perfil.empresa_id);
+        const pricingCtx = await loadPricingContext(requestedCompanyId);
         modoPricing = pricingCtx.modoPricing;
         const odooConfig = await getServerOdooConfig();
         if (odooConfig) {
@@ -221,10 +245,9 @@ export async function POST(request: NextRequest) {
           // contra el list_price crudo del template, que en este catálogo suele
           // ser 0 (y a veces 1), y dos variantes de un mismo producto con
           // precios negociados distintos terminaban cobrándose igual.
-          const pricelistRules =
-            pricingCtx.modoPricing === 'pricelist' && perfil.empresa_id
-              ? await loadEmpresaPricelistRules(perfil.empresa_id, odooSession)
-              : null;
+          const pricelistRules = pricingCtx.modoPricing === 'pricelist'
+            ? await loadEmpresaPricelistRules(requestedCompanyId, odooSession)
+            : null;
 
           const templateIds = [...new Set(catalogItemsToReprice.map((i) => i.odoo_product_id!))];
           const templates = await read(
@@ -303,7 +326,7 @@ export async function POST(request: NextRequest) {
     const estadoInicial = esBorrador ? 'borrador' : undefined; // undefined = trigger de BD decide
 
     const insertData: Record<string, unknown> = {
-      empresa_id: perfil.empresa_id,
+      empresa_id: requestedCompanyId,
       sede_id: sedeId,
       usuario_creador_id: perfil.id,
       idempotency_key: idempotencyKey,

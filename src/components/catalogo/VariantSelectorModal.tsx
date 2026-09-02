@@ -58,6 +58,7 @@ interface VariantSelectorModalProps {
   onClose: () => void;
   onAddToCart: (variants: VariantSelection[]) => void;
   showPrices: boolean;
+  empresaId?: string | null;
 }
 
 export default function VariantSelectorModal({
@@ -66,6 +67,7 @@ export default function VariantSelectorModal({
   onClose,
   onAddToCart,
   showPrices,
+  empresaId,
 }: VariantSelectorModalProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -82,6 +84,7 @@ export default function VariantSelectorModal({
       if (Number.isFinite(product.list_price) && product.list_price > 0) {
         params.set('fallback_price', String(product.list_price));
       }
+      if (empresaId) params.set('empresa_id', empresaId);
       const queryString = params.toString();
       const res = await fetch(`/api/odoo/productos/${product.id}/variantes${queryString ? `?${queryString}` : ''}`);
       if (!res.ok) {
@@ -95,7 +98,7 @@ export default function VariantSelectorModal({
     } finally {
       setLoading(false);
     }
-  }, [product.id, product.list_price]);
+  }, [empresaId, product.id, product.list_price]);
 
   useEffect(() => {
     if (open) {

@@ -3,6 +3,8 @@
 // Esquema Multitenant con aislamiento por empresa_id
 // ============================================
 
+import type { UserCompanyMembership } from '@/lib/auth/companyContext';
+
 export type UserRole = 'super_admin' | 'comprador' | 'aprobador' | 'asesor' | 'direccion' | 'editor_contenido';
 
 export interface User {
@@ -12,9 +14,12 @@ export interface User {
   email: string;
   nombre: string;
   apellido: string;
-  rol: UserRole; // Rol primario: dashboard inicial, branding, RLS base.
+  rol: UserRole; // Rol efectivo en la empresa activa para usuarios cliente.
+  rol_principal?: UserRole;
   rolesExtra?: UserRole[]; // Capacidades adicionales activas (multi-rol por composición). Cargadas desde usuario_roles_extra.
-  empresa_id: string | null; // NULL para roles Imprima (asesor, direccion)
+  empresa_id: string | null; // Empresa activa en cliente; principal en perfiles server-side.
+  empresa_principal_id?: string | null;
+  empresas_asignadas?: UserCompanyMembership[];
   sede_id?: string | null;
   avatar?: string;
   activo: boolean;

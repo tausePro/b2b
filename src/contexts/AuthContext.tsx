@@ -1,9 +1,16 @@
 'use client';
 
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import type { User as SupabaseUser } from '@supabase/supabase-js';
 import { type User, type UserRole, ROLE_CONFIG } from '@/types';
+import {
+  getActiveCompanyStorageKey,
+  getDefaultSiteId,
+  normalizeCompanyMemberships,
+  selectActiveCompany,
+  type UserCompanyMembership,
+} from '@/lib/auth/companyContext';
 
 interface AuthContextType {
   user: User | null;
@@ -11,6 +18,8 @@ interface AuthContextType {
   loading: boolean;
   showPrices: boolean;
   permissions: typeof ROLE_CONFIG[UserRole] | null;
+  activeCompany: UserCompanyMembership | null;
+  switchCompany: (empresaId: string) => Promise<{ error: string | null }>;
   signIn: (email: string, password: string) => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
 }
@@ -41,16 +50,39 @@ function normalizeRolesExtra(raw: unknown): UserRole[] {
 }
 
 function mapProfileToUser(data: Record<string, unknown>): User {
+  const userId = data.id as string;
+  const principalRole = data.rol as UserRole;
+  const principalCompanyId = (data.empresa_id as string) || null;
+  const principalSiteId = (data.sede_id as string) || null;
+  let preferredCompanyId: string | null = null;
+  if (typeof window !== 'undefined') {
+    try {
+      preferredCompanyId = window.localStorage.getItem(getActiveCompanyStorageKey(userId));
+    } catch {
+      preferredCompanyId = null;
+    }
+  }
+  const memberships = normalizeCompanyMemberships(data.empresas_asignadas, {
+    userId,
+    empresaId: principalCompanyId,
+    sedeId: principalSiteId,
+    role: principalRole,
+  });
+  const activeCompany = selectActiveCompany(memberships, preferredCompanyId, principalCompanyId);
+
   return {
-    id: data.id as string,
+    id: userId,
     auth_id: data.auth_id as string,
     email: data.email as string,
     nombre: data.nombre as string,
     apellido: data.apellido as string,
-    rol: data.rol as UserRole,
+    rol: (activeCompany?.rol ?? principalRole) as UserRole,
+    rol_principal: principalRole,
     rolesExtra: normalizeRolesExtra(data.roles_extra),
-    empresa_id: (data.empresa_id as string) || null,
-    sede_id: (data.sede_id as string) || null,
+    empresa_id: activeCompany?.empresa_id ?? principalCompanyId,
+    empresa_principal_id: principalCompanyId,
+    empresas_asignadas: memberships,
+    sede_id: activeCompany ? getDefaultSiteId(activeCompany) : principalSiteId,
     avatar: data.avatar as string | undefined,
     activo: data.activo as boolean,
     created_at: data.created_at as string,
@@ -169,6 +201,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const resolveShowPricesByCompany = async (profile: User | null): Promise<boolean | null> => {
       if (!profile?.empresa_id) return null;
       if (profile.rol !== 'comprador' && profile.rol !== 'aprobador') return null;
+
+      const membership = profile.empresas_asignadas?.find((item) => item.empresa_id === profile.empresa_id);
+      const membershipExtra = membership?.configuracion_extra ?? {};
+      if (profile.rol === 'comprador' && typeof membershipExtra.mostrar_precios_comprador === 'boolean') {
+        return membershipExtra.mostrar_precios_comprador;
+      }
+      if (profile.rol === 'aprobador' && typeof membershipExtra.mostrar_precios_aprobador === 'boolean') {
+        return membershipExtra.mostrar_precios_aprobador;
+      }
 
       try {
         const { data, error } = await supabase
@@ -373,6 +414,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setSupabaseUser(null);
   };
 
+  const activeCompany = useMemo(
+    () => user?.empresas_asignadas?.find((membership) => membership.empresa_id === user.empresa_id) ?? null,
+    [user],
+  );
+
+  const switchCompany = async (empresaId: string) => {
+    if (!user) return { error: 'No hay una sesión activa.' };
+    const membership = user.empresas_asignadas?.find((item) => item.empresa_id === empresaId && item.activo);
+    if (!membership) return { error: 'No tienes acceso a la empresa seleccionada.' };
+    if (membership.empresa_id === user.empresa_id) return { error: null };
+
+    try {
+      window.localStorage.setItem(getActiveCompanyStorageKey(user.id), membership.empresa_id);
+      window.location.assign('/dashboard');
+      return { error: null };
+    } catch {
+      return { error: 'No se pudo guardar la empresa activa en este navegador.' };
+    }
+  };
+
   const roleConfig = user ? ROLE_CONFIG[user.rol] : null;
 
   return (
@@ -383,6 +444,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         loading,
         showPrices: showPricesOverride ?? roleConfig?.showPrices ?? false,
         permissions: roleConfig ?? null,
+        activeCompany,
+        switchCompany,
         signIn,
         signOut,
       }}

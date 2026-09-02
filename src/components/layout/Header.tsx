@@ -13,6 +13,7 @@ import {
   LogOut,
   User,
   Menu,
+  Building2,
 } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -24,10 +25,11 @@ interface HeaderProps {
 }
 
 export default function Header({ onToggleSidebar, portalBranding }: HeaderProps) {
-  const { user, signOut } = useAuth();
+  const { user, signOut, activeCompany, switchCompany } = useAuth();
   const { totalItems } = useCart();
   const router = useRouter();
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [switchingCompany, setSwitchingCompany] = useState(false);
   const [supabase] = useState(() => createClient());
   const [unreadCount, setUnreadCount] = useState(0);
 
@@ -100,6 +102,7 @@ export default function Header({ onToggleSidebar, portalBranding }: HeaderProps)
   if (!user) return null;
 
   const roleLabel = ROLE_CONFIG[user.rol].label;
+  const companyMemberships = user.empresas_asignadas ?? [];
   const isClientPortal = Boolean(
     portalBranding && (user.rol === 'comprador' || user.rol === 'aprobador')
   );
@@ -162,6 +165,33 @@ export default function Header({ onToggleSidebar, portalBranding }: HeaderProps)
 
       {/* Derecha: Acciones */}
       <div className="flex items-center gap-3">
+        {companyMemberships.length > 1 && activeCompany && (
+          <label className="flex min-w-0 items-center gap-1 rounded-lg border border-border bg-background-light px-1.5 py-1.5 sm:gap-2 sm:px-2">
+            <Building2 className="hidden h-4 w-4 shrink-0 text-primary sm:block" />
+            <span className="sr-only">Empresa activa</span>
+            <select
+              value={activeCompany.empresa_id}
+              disabled={switchingCompany}
+              onChange={async (event) => {
+                setSwitchingCompany(true);
+                const result = await switchCompany(event.target.value);
+                if (result.error) {
+                  setSwitchingCompany(false);
+                  window.alert(result.error);
+                }
+              }}
+              className="max-w-24 bg-transparent text-xs font-bold text-foreground outline-none sm:max-w-52 sm:text-sm"
+              aria-label="Cambiar empresa activa"
+            >
+              {companyMemberships.map((membership) => (
+                <option key={membership.id} value={membership.empresa_id}>
+                  {membership.empresa_nombre} · {membership.rol === 'aprobador' ? 'Aprobador' : 'Comprador'}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+
         {/* Carrito - solo para compradores */}
         {user.rol === 'comprador' && (
           <Link
