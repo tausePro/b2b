@@ -7,7 +7,7 @@ import {
   type PricelistRuleSet,
 } from '@/lib/odoo/client';
 import { getServerOdooConfig } from '@/lib/odoo/serverConfig';
-import { authorizeApiRoles } from '@/lib/auth/apiRouteGuards';
+import { authorizeApiRoles, getAccessibleEmpresaIds } from '@/lib/auth/apiRouteGuards';
 import { loadPricingContext, resolveProductPrice, type PricingContext } from '@/lib/pricing/margins';
 import { loadEmpresaPricelistRules } from '@/lib/pricing/pricelist';
 import { getOdooCostAgeStatus, markupOnCost } from '@/lib/pricing/cost-staleness';
@@ -66,6 +66,13 @@ export async function GET(
     //   3. fallback               → actor.empresa_id (usuario comprador / aprobador).
     const queryEmpresaId = request.nextUrl.searchParams.get('empresa_id');
     const queryStorefrontId = request.nextUrl.searchParams.get('storefront_id');
+
+    if (queryEmpresaId) {
+      const accessibleEmpresaIds = await getAccessibleEmpresaIds(authorized);
+      if (!accessibleEmpresaIds.includes(queryEmpresaId)) {
+        return NextResponse.json({ error: 'FORBIDDEN' }, { status: 403 });
+      }
+    }
 
     let pricingCtx: PricingContext | null = null;
     if (queryEmpresaId) {

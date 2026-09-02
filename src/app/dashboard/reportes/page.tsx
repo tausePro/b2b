@@ -47,7 +47,7 @@ export default function ReportesPage() {
         .limit(500);
 
       if (user.rol === 'comprador') {
-        query = query.eq('usuario_creador_id', user.id);
+        query = query.eq('usuario_creador_id', user.id).eq('empresa_id', user.empresa_id);
       } else if (user.empresa_id) {
         query = query.eq('empresa_id', user.empresa_id);
       }

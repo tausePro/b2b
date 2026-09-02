@@ -280,7 +280,7 @@ export default function DetallePedidoPage() {
     setLoadingProducts(true);
     try {
       // Obtener odoo_partner_id de la empresa del pedido
-      const empresaId = user?.empresa_id || pedido.empresa_id;
+      const empresaId = pedido.empresa_id;
       if (!empresaId) throw new Error('No se pudo determinar la empresa');
 
       const { data: empresa } = await supabase
@@ -478,6 +478,10 @@ export default function DetallePedidoPage() {
 
   const handleReorder = async () => {
     if (!pedido || items.length === 0 || !user?.empresa_id) return;
+    if (user.empresa_id !== pedido.empresa_id) {
+      window.alert('Cambia a la empresa de este pedido antes de volver a pedir.');
+      return;
+    }
 
     if (cartItems.length > 0) {
       const confirmed = window.confirm(
@@ -493,7 +497,7 @@ export default function DetallePedidoPage() {
       const { data: empresa } = await supabase
         .from('empresas')
         .select('odoo_partner_id')
-        .eq('id', user.empresa_id)
+        .eq('id', pedido.empresa_id)
         .single();
 
       // 2. Traer precios e imágenes actuales del catálogo (con margen aplicado)
@@ -521,7 +525,7 @@ export default function DetallePedidoPage() {
 
       for (const templateId of uniqueTemplateIds) {
         try {
-          const vRes = await fetch(`/api/odoo/productos/${templateId}/variantes`);
+          const vRes = await fetch(`/api/odoo/productos/${templateId}/variantes?empresa_id=${encodeURIComponent(pedido.empresa_id)}`);
           if (vRes.ok) {
             const vData = await vRes.json();
             const attrs = (vData.attributes || []) as { values: { ptavId: number; name: string }[] }[];

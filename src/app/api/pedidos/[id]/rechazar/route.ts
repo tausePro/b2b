@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { safeEnqueuePedidoNotifications } from '@/lib/notifications/pedidos';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { getClientCompanyAccess } from '@/lib/auth/companyMemberships.server';
 
 function getSupabaseAdmin() {
   return createSupabaseClient(
@@ -47,7 +48,7 @@ export async function POST(
     }
 
     const perfil = perfilData as PerfilActual;
-    if (!['aprobador', 'super_admin', 'direccion'].includes(perfil.rol)) {
+    if (!['comprador', 'aprobador', 'super_admin', 'direccion'].includes(perfil.rol)) {
       return NextResponse.json(
         { error: 'FORBIDDEN', details: 'Tu rol no puede rechazar pedidos.' },
         { status: 403 }
@@ -57,7 +58,7 @@ export async function POST(
     const admin = getSupabaseAdmin();
     const { data: pedido, error: pedidoError } = await admin
       .from('pedidos')
-      .select('id, numero, estado, empresa_id')
+      .select('id, numero, estado, empresa_id, sede_id')
       .eq('id', pedidoId)
       .single();
 
@@ -68,9 +69,19 @@ export async function POST(
       );
     }
 
-    if (perfil.rol === 'aprobador' && perfil.empresa_id !== pedido.empresa_id) {
+    const isInternalApprover = perfil.rol === 'super_admin' || perfil.rol === 'direccion';
+    const companyAccess = isInternalApprover
+      ? null
+      : await getClientCompanyAccess(admin, perfil.id, pedido.empresa_id);
+    if (!isInternalApprover && companyAccess?.role !== 'aprobador') {
       return NextResponse.json(
-        { error: 'FORBIDDEN', details: 'No tienes acceso a este pedido.' },
+        { error: 'FORBIDDEN', details: 'No tienes rol aprobador en la empresa de este pedido.' },
+        { status: 403 }
+      );
+    }
+    if (!isInternalApprover && pedido.sede_id && !companyAccess?.siteIds.includes(pedido.sede_id)) {
+      return NextResponse.json(
+        { error: 'FORBIDDEN', details: 'No tienes acceso a la sede de este pedido.' },
         { status: 403 }
       );
     }

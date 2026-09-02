@@ -3,6 +3,7 @@ import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { normalizeTipoPedidoItem } from '@/lib/pedidoItems';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import type { TipoPedidoItem } from '@/types';
+import { getClientCompanyAccess } from '@/lib/auth/companyMemberships.server';
 
 type PerfilActual = {
   id: string;
@@ -50,7 +51,7 @@ export async function DELETE(
     }
 
     const perfil = perfilData as PerfilActual;
-    if (!['super_admin', 'comprador'].includes(perfil.rol)) {
+    if (!['super_admin', 'comprador', 'aprobador'].includes(perfil.rol)) {
       return NextResponse.json(
         { error: 'FORBIDDEN', details: 'No tienes permisos para eliminar pedidos.' },
         { status: 403 }
@@ -61,7 +62,7 @@ export async function DELETE(
 
     const { data: pedido, error: pedidoError } = await admin
       .from('pedidos')
-      .select('id, numero, estado, empresa_id, usuario_creador_id')
+      .select('id, numero, estado, empresa_id, sede_id, usuario_creador_id')
       .eq('id', pedidoId)
       .single();
 
@@ -73,7 +74,20 @@ export async function DELETE(
     }
 
     // Comprador solo puede eliminar sus propios borradores
-    if (perfil.rol === 'comprador') {
+    if (perfil.rol !== 'super_admin') {
+      const companyAccess = await getClientCompanyAccess(admin, perfil.id, pedido.empresa_id);
+      if (companyAccess?.role !== 'comprador') {
+        return NextResponse.json(
+          { error: 'FORBIDDEN', details: 'No tienes rol comprador en la empresa de este pedido.' },
+          { status: 403 }
+        );
+      }
+      if (pedido.sede_id && !companyAccess.siteIds.includes(pedido.sede_id)) {
+        return NextResponse.json(
+          { error: 'FORBIDDEN', details: 'No tienes acceso a la sede de este pedido.' },
+          { status: 403 }
+        );
+      }
       if (pedido.estado !== 'borrador') {
         return NextResponse.json(
           { error: 'FORBIDDEN', details: 'Solo puedes eliminar pedidos en estado borrador.' },
@@ -227,7 +241,7 @@ export async function PATCH(
 
     const { data: pedido, error: pedidoError } = await admin
       .from('pedidos')
-      .select('id, numero, estado, empresa_id')
+      .select('id, numero, estado, empresa_id, sede_id, usuario_creador_id')
       .eq('id', pedidoId)
       .single();
 
@@ -238,17 +252,27 @@ export async function PATCH(
       );
     }
 
-    if ((perfil.rol === 'aprobador' || perfil.rol === 'comprador') && perfil.empresa_id !== pedido.empresa_id) {
+    const companyAccess = perfil.rol === 'super_admin'
+      ? null
+      : await getClientCompanyAccess(admin, perfil.id, pedido.empresa_id);
+    const effectiveRole = perfil.rol === 'super_admin' ? 'super_admin' : companyAccess?.role ?? null;
+    if (!effectiveRole) {
       return NextResponse.json(
         { error: 'FORBIDDEN', details: 'No tienes acceso a este pedido.' },
         { status: 403 }
       );
     }
-
-    // Comprador solo puede editar/enviar borradores
-    if (perfil.rol === 'comprador' && pedido.estado !== 'borrador') {
+    if (companyAccess && pedido.sede_id && !companyAccess.siteIds.includes(pedido.sede_id)) {
       return NextResponse.json(
-        { error: 'FORBIDDEN', details: 'Solo puedes editar tus borradores.' },
+        { error: 'FORBIDDEN', details: 'No tienes acceso a la sede de este pedido.' },
+        { status: 403 }
+      );
+    }
+
+    // Comprador solo puede editar/enviar sus propios borradores
+    if (effectiveRole === 'comprador' && (pedido.estado !== 'borrador' || pedido.usuario_creador_id !== perfil.id)) {
+      return NextResponse.json(
+        { error: 'FORBIDDEN', details: 'Solo puedes editar tus propios borradores.' },
         { status: 403 }
       );
     }
