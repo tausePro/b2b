@@ -7,9 +7,11 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "tsx --test tests/company-context.test.ts",
+    "test": "tsx --test tests/company-context.test.ts tests/bono-plataforma.test.ts",
     "test:multiempresa:integration": "tsx --test tests/multiempresa.integration.test.ts",
-    "test:multiempresa": "npm test && npm run test:multiempresa:integration"
+    "test:multiempresa": "npm test && npm run test:multiempresa:integration",
+    "test:bono:integration": "node --conditions=react-server --import tsx --test tests/bono-plataforma.integration.test.ts",
+    "test:bono:odoo": "node --conditions=react-server --import tsx --test --test-name-pattern=Odoo tests/bono-plataforma.integration.test.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.8.0",
@@ -19,6 +21,7 @@
     "next": "16.1.6",
     "react": "19.2.3",
     "react-dom": "19.2.3",
+    "server-only": "0.0.1",
     "tailwind-merge": "^3.4.0"
   },
   "devDependencies": {

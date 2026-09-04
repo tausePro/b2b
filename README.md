@@ -97,6 +97,30 @@ npm run test:multiempresa:integration
 npm run build
 ```
 
+## Bono Plataforma para asesoras
+
+La migración `supabase/migrations/048_bono_plataforma_asesoras.sql` habilita el bono adicional del 0,5% desde septiembre de 2026.
+
+- Solo participan empresas activas con asignación de asesora y al menos un usuario cliente activo.
+- La base proviene exclusivamente de líneas facturadas en Odoo que estén vinculadas a pedidos originados en el portal.
+- El cálculo usa el saldo firmado de líneas de producto sin IVA, validando que la moneda de compañía sea COP. No usa el total visual del portal ni incluye facturas completas cuando contienen ventas externas.
+- Las notas crédito se buscan también por su factura original. Ajustes sin trazabilidad, líneas mixtas y saldos que requieren conciliación bloquean el cierre; no se prorratean ni se descartan silenciosamente.
+- Las asesoras solo consultan su liquidación; Dirección y Super Admin revisan el equipo completo.
+- Los periodos son provisionales durante el mes y solo se cierran después del corte en America/Bogota. Marcar pagada registra un pago externo, no ejecuta transferencias.
+- Cada cierre congela nombres, importes y enlaces a líneas de Odoo. Reabrir conserva el cierre anterior en el historial; las transiciones son transaccionales y validan la versión revisada.
+- Si la facturación o elegibilidad cambia después de revisar, el cierre exige actualizar y confirmar otra vez. La elegibilidad provisional se consulta con los accesos activos actuales.
+
+Validación:
+
+```bash
+npm test
+npm run test:bono:odoo
+npm run test:bono:integration
+npm run build
+```
+
+`test:bono:odoo` consulta datos reales de solo lectura y puede verificar la política aprobada antes del backfill. `test:bono:integration` requiere la migración 048 aplicada; las pruebas de cierre, RLS autenticada y reapertura requieren además validación funcional autorizada.
+
 ## Recuperación automática de perfil Auth
 
 Se agregó una contingencia para el error **"Perfil no encontrado"** cuando el `auth.users.id` cambia pero `public.usuarios.auth_id` quedó desincronizado.
