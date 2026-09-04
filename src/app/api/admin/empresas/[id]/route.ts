@@ -42,6 +42,7 @@ export async function GET(
     productosAutorizadosCount,
     margenesCount,
     overridesCount,
+    liquidacionesResult,
   ] = await Promise.all([
     admin.from('pedidos').select('*', { count: 'exact', head: true }).eq('empresa_id', empresaId),
     admin.from('usuarios').select('*', { count: 'exact', head: true }).eq('empresa_id', empresaId),
@@ -65,15 +66,23 @@ export async function GET(
       .from('precios_empresa_producto')
       .select('*', { count: 'exact', head: true })
       .eq('empresa_id', empresaId),
+    admin.from('comision_clientes').select('id', { count: 'exact' }).eq('empresa_id', empresaId).limit(1),
   ]);
+  if (liquidacionesResult.error) {
+    return NextResponse.json({ error: 'No se pudo verificar el historial del bono plataforma.' }, { status: 500 });
+  }
 
   const pedidos = pedidosCount.count ?? 0;
   const usuariosTotal = usuariosTotalCount.count ?? 0;
   const usuariosActivos = usuariosActivosCount.count ?? 0;
   const usuariosInactivos = Math.max(usuariosTotal - usuariosActivos, 0);
 
-  const puedeEliminar = pedidos === 0 && usuariosTotal === 0;
+  const liquidaciones = liquidacionesResult.count ?? 0;
+  const puedeEliminar = pedidos === 0 && usuariosTotal === 0 && liquidaciones === 0;
   const bloqueos: string[] = [];
+  if (liquidaciones > 0) {
+    bloqueos.push('Tiene historial del bono plataforma. Conserva la empresa y desactívala en lugar de eliminarla.');
+  }
   if (pedidos > 0) {
     bloqueos.push(
       `Tiene ${pedidos} pedido${pedidos === 1 ? '' : 's'} asociado${pedidos === 1 ? '' : 's'}. ` +
@@ -103,6 +112,7 @@ export async function GET(
     },
     dependencias: {
       pedidos,
+      liquidaciones_bono: liquidaciones,
       usuarios_total: usuariosTotal,
       usuarios_activos: usuariosActivos,
       usuarios_inactivos: usuariosInactivos,
@@ -232,6 +242,21 @@ export async function DELETE(
       },
       { status: 409 }
     );
+  }
+
+  const { data: liquidaciones, error: liquidacionesError } = await admin
+    .from('comision_clientes')
+    .select('id')
+    .eq('empresa_id', empresaId)
+    .limit(1);
+  if (liquidacionesError) {
+    return NextResponse.json({ error: 'No se pudo verificar el historial del bono plataforma.' }, { status: 500 });
+  }
+  if (liquidaciones?.length) {
+    return NextResponse.json({
+      error: 'No se puede eliminar la empresa: tiene historial del bono plataforma.',
+      sugerencia: 'Conserva el historial y desactiva la empresa en lugar de eliminarla.',
+    }, { status: 409 });
   }
 
   // 5. Capturar conteos de dependencias para el reporte de respuesta.

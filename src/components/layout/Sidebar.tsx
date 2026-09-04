@@ -41,6 +41,7 @@ const MENU_BY_ROLE: Record<UserRole, SidebarItem[]> = {
     { label: 'Catálogo', href: '/dashboard/catalogo', icon: <ShoppingBag className="w-5 h-5" />, activePattern: '/dashboard/catalogo' },
     { label: 'Presupuestos', href: '/dashboard/presupuestos', icon: <DollarSign className="w-5 h-5" />, activePattern: '/dashboard/presupuestos' },
     { label: 'Reportes', href: '/dashboard/reportes', icon: <BarChart3 className="w-5 h-5" />, activePattern: '/dashboard/reportes' },
+    { label: 'Comisiones', href: '/dashboard/comisiones', icon: <DollarSign className="w-5 h-5" />, activePattern: '/dashboard/comisiones' },
     { label: 'Panel Admin', href: '/admin', icon: <Settings className="w-5 h-5" />, activePattern: '/admin' },
   ],
   comprador: [
@@ -60,6 +61,7 @@ const MENU_BY_ROLE: Record<UserRole, SidebarItem[]> = {
     { label: 'Dashboard', href: '/dashboard', icon: <LayoutDashboard className="w-5 h-5" />, activePattern: '/dashboard$' },
     { label: 'Gestión Pedidos', href: '/dashboard/gestion-pedidos', icon: <Package className="w-5 h-5" />, activePattern: '/dashboard/gestion-pedidos' },
     { label: 'Mis Clientes', href: '/dashboard/clientes', icon: <Users className="w-5 h-5" />, activePattern: '/dashboard/clientes' },
+    { label: 'Bono Plataforma', href: '/dashboard/comisiones', icon: <DollarSign className="w-5 h-5" />, activePattern: '/dashboard/comisiones' },
     { label: 'Reportes', href: '/dashboard/reportes', icon: <BarChart3 className="w-5 h-5" />, activePattern: '/dashboard/reportes' },
   ],
   direccion: [
@@ -68,6 +70,7 @@ const MENU_BY_ROLE: Record<UserRole, SidebarItem[]> = {
     { label: 'Pedidos', href: '/dashboard/pedidos', icon: <ClipboardList className="w-5 h-5" />, activePattern: '/dashboard/pedidos' },
     { label: 'Analítica Ventas', href: '/dashboard/analitica', icon: <TrendingUp className="w-5 h-5" />, activePattern: '/dashboard/analitica' },
     { label: 'Equipo Ventas', href: '/dashboard/equipo', icon: <Users className="w-5 h-5" />, activePattern: '/dashboard/equipo' },
+    { label: 'Comisiones', href: '/dashboard/comisiones', icon: <DollarSign className="w-5 h-5" />, activePattern: '/dashboard/comisiones' },
     { label: 'Control Operativo', href: '/dashboard/operativo', icon: <Activity className="w-5 h-5" />, activePattern: '/dashboard/operativo' },
     { label: 'Presupuestos', href: '/dashboard/presupuestos', icon: <DollarSign className="w-5 h-5" />, activePattern: '/dashboard/presupuestos' },
     { label: 'Alertas', href: '/dashboard/alertas', icon: <AlertTriangle className="w-5 h-5" />, activePattern: '/dashboard/alertas' },
