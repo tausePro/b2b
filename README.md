@@ -71,11 +71,18 @@ ARIS MINING SEGOVIA usa `modo_pricing = 'pricelist'`; sus precios de venta provi
 La migración `supabase/migrations/046_empaques_personalizados.sql` debe aplicarse antes de desplegar el configurador. Crea el detalle estructurado de las solicitudes y el bucket privado `empaques-solicitudes`.
 
 - Vista pública: `/empaques/personalizados` y `/personalizados` desde el subdominio de Empaques.
-- Recopila tipo, uso, medidas, material, impresión, cantidad, entrega, comentarios y hasta tres archivos privados; no maneja acabados.
-- Crea un lead con fuente `empaques_personalizados` y ofrece continuidad por WhatsApp.
+- La migración adicional `supabase/migrations/049_empaques_tiff_por_cara.sql` debe aplicarse completa antes de desplegar la selección acotada y la carga TIFF. Conserva las solicitudes antiguas y sus JPG/PNG/WEBP/PDF.
+- Solo ofrece las seis referencias kraft configuradas en Supabase. El área imprimible es fija por referencia y no representa las dimensiones físicas de la bolsa.
+- Producción utiliza los SKU `2300100105` (una cara) o `2300100190` (dos). Muestra utiliza `2300100191` para ambas opciones, sin duplicar el servicio por cara.
+- Requiere un TIFF para frente o dos TIFF separados para frente/reverso. Valida mínimo 150 ppp efectivos, recomienda 300 y ajusta proporcionalmente dentro del área, sin recortar ni estirar.
+- Los originales privados se suben directamente a Storage con autorización temporal sin sobrescritura. Se aceptan hasta 100 MiB por original y 64 millones de píxeles, sujetos a límites de memoria/procesamiento; el límite global de Storage también debe permitirlo.
+- El servidor verifica TIFF, genera PNG sRGB sin metadatos privados y conserva el SHA-256 del original. La vista previa es orientativa, no una prueba de color sobre kraft.
+- Crea un lead con fuente `empaques_personalizados` mediante registro transaccional e idempotente y ofrece continuidad por WhatsApp. No acepta archivos sin validación o reutilizados en otra solicitud.
 - No crea productos ni cotizaciones en Odoo y no calcula precios automáticos.
-- Las opciones y textos se editan desde Admin > Empaques > Landing.
-- Los archivos se consultan desde Admin > Leads mediante URLs firmadas temporales.
+- Referencias y textos se gestionan desde Admin > Empaques > Landing; los cambios parciales conservan el catálogo configurado.
+- Admin > Leads muestra referencia, servicio, áreas y vistas previas por cara; originales y previews se consultan mediante URLs firmadas temporales.
+- Reservas: 12 cargas por origen en 30 minutos y 500 globales en 24 horas. Autorizaciones de dos horas; las cargas abandonadas caducadas hace más de 25 horas se limpian oportunistamente al iniciar otras, sin borrar archivos de leads.
+- `npm run test:empaques` verifica el decodificador y contratos sin subir archivos. `npm run test:empaques:integration` es de solo lectura y requiere la 049 aplicada. El flujo completo debe validarse después con un arte real y un envío autorizado.
 
 ## Usuarios cliente multiempresa
 

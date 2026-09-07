@@ -4,6 +4,8 @@
  * `./landing-config.ts` lo re-exporta y agrega los helpers de servidor.
  */
 
+import { EMPAQUES_REFERENCIA_SKUS, type EmpaquesReferencia } from './personalizados-shared';
+
 export const LANDING_BENEFIT_ICONS = ['sparkles', 'leaf', 'route', 'package', 'box', 'building'] as const;
 export type LandingBenefitIcon = (typeof LANDING_BENEFIT_ICONS)[number];
 
@@ -44,6 +46,7 @@ export interface EmpaquesPersonalizadosConfig {
   tipos_empaque: string[];
   materiales: string[];
   impresiones: string[];
+  referencias: EmpaquesReferencia[];
 }
 
 export interface EmpaquesLandingConfig {
@@ -105,6 +108,7 @@ export const DEFAULT_LANDING_CONFIG: EmpaquesLandingConfig = {
     tipos_empaque: [],
     materiales: [],
     impresiones: [],
+    referencias: [],
   },
 };
 
@@ -192,6 +196,21 @@ function normalizeBenefits(raw: unknown): EmpaquesLandingBenefits {
   };
 }
 
+function normalizeReferencias(raw: unknown): EmpaquesReferencia[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  return raw.flatMap((value) => {
+    if (!value || typeof value !== 'object') return [];
+    const row = value as Record<string, unknown>;
+    if (typeof row.sku !== 'string' || !(EMPAQUES_REFERENCIA_SKUS as readonly string[]).includes(row.sku) || seen.has(row.sku)
+      || typeof row.nombre !== 'string' || !row.nombre.trim()
+      || typeof row.alto_cm !== 'number' || typeof row.ancho_cm !== 'number'
+      || ![row.alto_cm, row.ancho_cm].every((size) => Number.isFinite(size) && size > 0 && size <= 100)) return [];
+    seen.add(row.sku);
+    return [{ sku: row.sku, nombre: row.nombre.trim().slice(0, 120), alto_cm: row.alto_cm, ancho_cm: row.ancho_cm, activo: row.activo === true }];
+  });
+}
+
 function normalizePersonalizados(raw: unknown): EmpaquesPersonalizadosConfig {
   const source = (raw && typeof raw === 'object') ? raw as Record<string, unknown> : {};
   const defaults = DEFAULT_LANDING_CONFIG.personalizados;
@@ -207,6 +226,7 @@ function normalizePersonalizados(raw: unknown): EmpaquesPersonalizadosConfig {
     tipos_empaque: asStringList(source.tipos_empaque, defaults.tipos_empaque),
     materiales: asStringList(source.materiales, defaults.materiales),
     impresiones: asStringList(source.impresiones, defaults.impresiones),
+    referencias: normalizeReferencias(source.referencias),
   };
 }
 

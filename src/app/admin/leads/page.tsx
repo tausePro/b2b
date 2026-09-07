@@ -1,12 +1,13 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import Image from 'next/image';
 import {
   Loader2, UserPlus, Filter, MessageCircle, Mail, Phone,
   Building2, Calendar, ChevronDown, Check, AlertCircle, Target,
   Trash2, Package,
 } from 'lucide-react';
-import type { EmpaquesPersonalizadosDetalle } from '@/lib/empaques/personalizados-shared';
+import type { EmpaquesPersonalizadosArchivo, EmpaquesPersonalizadosDetalle } from '@/lib/empaques/personalizados-shared';
 
 interface Lead {
   id: string;
@@ -117,6 +118,114 @@ function formatHost(url: string | null): string | null {
 function formatMeasures(detail: EmpaquesPersonalizadosDetalle) {
   if (detail.medida_largo === null && detail.medida_ancho === null && detail.medida_alto === null) return 'Por definir';
   return [detail.medida_largo ?? '—', detail.medida_ancho ?? '—', detail.medida_alto ?? '—'].join(' × ') + ` ${detail.unidad_medida}`;
+}
+
+function safeFileUrl(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    return ['https:', 'http:'].includes(url.protocol) && !url.username && !url.password ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+function EmpaquesArchivo({ file }: { file: EmpaquesPersonalizadosArchivo }) {
+  const [failedPreviewUrl, setFailedPreviewUrl] = useState<string | null>(null);
+  const signedUrl = safeFileUrl(file.signed_url);
+  const previewUrl = file.preview_path && /\.png$/i.test(file.preview_path) ? safeFileUrl(file.preview_url) : null;
+  const cara = file.cara === 'frente' ? 'Frente' : file.cara === 'reverso' ? 'Reverso' : null;
+  const isTiff = file.tipo === 'image/tiff' || /\.tiff?$/i.test(file.nombre);
+  const validation = file.validacion;
+
+  return (
+    <div className="min-w-0 space-y-2 rounded-lg border border-lime-200 bg-white p-3">
+      <div>
+        <p className="font-bold text-slate-800">{cara ? `Cara: ${cara}` : 'Archivo histórico'}</p>
+        <p className="break-all text-slate-700">{file.nombre}</p>
+        <p className="text-slate-500">{file.tipo} · {(file.tamano / (1024 * 1024)).toLocaleString('es-CO', { maximumFractionDigits: 2 })} MiB</p>
+      </div>
+      {previewUrl && failedPreviewUrl !== previewUrl ? (
+        <a href={previewUrl} target="_blank" rel="noopener noreferrer" className="block space-y-1 text-center font-bold text-slate-700 hover:text-primary">
+          <Image
+            src={previewUrl}
+            alt={`Vista previa PNG${cara ? ` de la cara ${cara.toLowerCase()}` : ''}: ${file.nombre}`}
+            width={640}
+            height={480}
+            unoptimized
+            referrerPolicy="no-referrer"
+            onError={() => setFailedPreviewUrl(previewUrl)}
+            className="h-40 w-full rounded border border-border bg-slate-50 object-contain"
+          />
+          <span className="block">Ampliar PNG sin recorte</span>
+        </a>
+      ) : isTiff || file.preview_path ? (
+        <p className="text-slate-500">Vista previa no disponible. El TIFF original se consulta mediante descarga.</p>
+      ) : null}
+      {validation && (
+        <div className="space-y-1 text-slate-600">
+          <p>{validation.ancho_px.toLocaleString('es-CO')} × {validation.alto_px.toLocaleString('es-CO')} px (ancho × alto)</p>
+          <p>{validation.ppp_efectivos.toLocaleString('es-CO', { maximumFractionDigits: 2 })} ppp efectivos (ppi)</p>
+          <p>Tamaño impreso (alto × ancho): {validation.alto_impresion_cm} × {validation.ancho_impresion_cm} cm</p>
+          {!validation.resolucion_recomendada && <p className="text-amber-700">Cumple el mínimo, pero no la resolución recomendada.</p>}
+          {validation.proporcion_diferente && <p className="text-amber-700">Proporción diferente al área: arte ajustado sin recorte.</p>}
+        </div>
+      )}
+      {signedUrl ? (
+        <a href={signedUrl} download={file.nombre} target="_blank" rel="noopener noreferrer" className="inline-block rounded-full border border-lime-300 bg-white px-3 py-1 font-bold text-slate-700 transition hover:border-[#9CBB06]">
+          {isTiff ? 'Descargar TIFF original' : 'Descargar archivo'}
+        </a>
+      ) : (
+        <p className="text-amber-700">Descarga no disponible. Recarga la lista para renovar los enlaces privados.</p>
+      )}
+    </div>
+  );
+}
+
+function EmpaquesDetalle({ detail }: { detail: EmpaquesPersonalizadosDetalle }) {
+  const isReferencia = Boolean(detail.referencia_sku || detail.impresion_sku || detail.modalidad || detail.caras != null
+    || detail.area_alto_cm != null || detail.area_ancho_cm != null);
+
+  return (
+    <details className="mt-2 max-w-md rounded-lg border border-lime-200 bg-lime-50/60 p-2 text-xs text-slate-700">
+      <summary className="flex cursor-pointer list-none items-center gap-1.5 font-bold text-slate-800">
+        <Package className="h-3.5 w-3.5 text-[#7f9b00]" />
+        Ver configuración personalizada
+      </summary>
+      <div className="mt-3 grid gap-x-4 gap-y-2 sm:grid-cols-2">
+        <div><span className="font-bold">{isReferencia ? 'Producto:' : 'Tipo:'}</span> {detail.tipo_empaque}</div>
+        <div><span className="font-bold">Cantidad:</span> {detail.cantidad}</div>
+        {isReferencia ? (
+          <>
+            <div><span className="font-bold">SKU de referencia:</span> {detail.referencia_sku || 'No registrado'}</div>
+            <div><span className="font-bold">Modalidad:</span> {detail.modalidad === 'muestra' ? 'Muestra' : detail.modalidad === 'produccion' ? 'Producción' : 'No registrada'}</div>
+            <div><span className="font-bold">Caras:</span> {detail.caras ?? 'No registradas'}</div>
+            <div><span className="font-bold">SKU de impresión:</span> {detail.impresion_sku || 'No registrado'}</div>
+            <div className="sm:col-span-2">
+              <span className="font-bold">Área de impresión (alto × ancho):</span> {detail.area_alto_cm != null && detail.area_ancho_cm != null ? `${detail.area_alto_cm} × ${detail.area_ancho_cm} cm` : 'No registrada'}
+              <p className="text-slate-500">No corresponde a las medidas de la bolsa.</p>
+            </div>
+          </>
+        ) : (
+          <>
+            <div><span className="font-bold">Medidas de empaque (legado, largo × ancho × alto):</span> {formatMeasures(detail)}</div>
+            <div><span className="font-bold">Material:</span> {detail.material || 'Por definir'}</div>
+            <div><span className="font-bold">Impresión (legado):</span> {detail.impresion || 'Por definir'}</div>
+          </>
+        )}
+        <div><span className="font-bold">Entrega:</span> {detail.ciudad_entrega || 'Por definir'}{detail.fecha_requerida ? ` · ${detail.fecha_requerida}` : ''}</div>
+        {detail.uso_producto && <div className="sm:col-span-2"><span className="font-bold">Uso:</span> {detail.uso_producto}</div>}
+        {detail.comentarios && (
+          <div className="sm:col-span-2"><span className="font-bold">Comentarios:</span> {detail.comentarios}</div>
+        )}
+      </div>
+      {detail.archivos.length > 0 && (
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          {detail.archivos.map((file) => <EmpaquesArchivo key={file.path} file={file} />)}
+        </div>
+      )}
+    </details>
+  );
 }
 
 export default function LeadsPage() {
@@ -453,35 +562,7 @@ export default function LeadsPage() {
                       {lead.mensaje && (
                         <p className="text-xs text-slate-400 mt-1 italic max-w-xs truncate">&ldquo;{lead.mensaje}&rdquo;</p>
                       )}
-                      {lead.empaques_personalizado && (
-                        <details className="mt-2 max-w-md rounded-lg border border-lime-200 bg-lime-50/60 p-2 text-xs text-slate-700">
-                          <summary className="flex cursor-pointer list-none items-center gap-1.5 font-bold text-slate-800">
-                            <Package className="h-3.5 w-3.5 text-[#7f9b00]" />
-                            Ver configuración personalizada
-                          </summary>
-                          <div className="mt-3 grid gap-x-4 gap-y-2 sm:grid-cols-2">
-                            <div><span className="font-bold">Tipo:</span> {lead.empaques_personalizado.tipo_empaque}</div>
-                            <div><span className="font-bold">Cantidad:</span> {lead.empaques_personalizado.cantidad}</div>
-                            <div><span className="font-bold">Medidas:</span> {formatMeasures(lead.empaques_personalizado)}</div>
-                            <div><span className="font-bold">Material:</span> {lead.empaques_personalizado.material || 'Por definir'}</div>
-                            <div><span className="font-bold">Impresión:</span> {lead.empaques_personalizado.impresion || 'Por definir'}</div>
-                            <div><span className="font-bold">Entrega:</span> {lead.empaques_personalizado.ciudad_entrega || 'Por definir'}{lead.empaques_personalizado.fecha_requerida ? ` · ${lead.empaques_personalizado.fecha_requerida}` : ''}</div>
-                            <div className="sm:col-span-2"><span className="font-bold">Uso:</span> {lead.empaques_personalizado.uso_producto}</div>
-                            {lead.empaques_personalizado.comentarios && (
-                              <div className="sm:col-span-2"><span className="font-bold">Comentarios:</span> {lead.empaques_personalizado.comentarios}</div>
-                            )}
-                          </div>
-                          {lead.empaques_personalizado.archivos.length > 0 && (
-                            <div className="mt-3 flex flex-wrap gap-2">
-                              {lead.empaques_personalizado.archivos.map((file) => file.signed_url ? (
-                                <a key={file.path} href={file.signed_url} target="_blank" rel="noreferrer" className="rounded-full border border-lime-300 bg-white px-3 py-1 font-bold text-slate-700 transition hover:border-[#9CBB06]">
-                                  {file.nombre}
-                                </a>
-                              ) : null)}
-                            </div>
-                          )}
-                        </details>
-                      )}
+                      {lead.empaques_personalizado && <EmpaquesDetalle detail={lead.empaques_personalizado} />}
                     </td>
                     <td className="px-4 py-3">
                       <span className="text-xs text-slate-500">{lead.fuente}</span>

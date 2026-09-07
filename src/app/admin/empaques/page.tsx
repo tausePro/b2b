@@ -34,6 +34,13 @@ import {
   type EmpaquesLandingConfig,
   type LandingBenefitIcon,
 } from '@/lib/empaques/landing-config-shared';
+import {
+  EMPAQUES_MIN_PPP,
+  EMPAQUES_RECOMMENDED_PPP,
+  EMPAQUES_TIFF_MAX_BYTES,
+  getEmpaquesImpresionSku,
+  type EmpaquesReferencia,
+} from '@/lib/empaques/personalizados-shared';
 
 type TabId = 'configuracion' | 'margenes' | 'precios' | 'editorial' | 'landing' | 'asesoras';
 type PublicationState = 'borrador' | 'publicado';
@@ -573,6 +580,18 @@ export default function AdminEmpaquesPage() {
     const selectedProduct = (catalog?.productos ?? []).find((product) => String(product.id) === editorialProductId);
     setProductDraft(selectedProduct ? buildProductDraft(selectedProduct, productOverridesById.get(selectedProduct.id)) : null);
   }, [catalog?.productos, editorialProductId, productOverridesById]);
+
+  const updateReferencia = (sku: string, changes: Partial<Omit<EmpaquesReferencia, 'sku'>>) => {
+    setLanding((prev) => ({
+      ...prev,
+      personalizados: {
+        ...prev.personalizados,
+        referencias: prev.personalizados.referencias.map((referencia) =>
+          referencia.sku === sku ? { ...referencia, ...changes } : referencia,
+        ),
+      },
+    }));
+  };
 
   const handleSaveConfig = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1559,9 +1578,16 @@ export default function AdminEmpaquesPage() {
         <form
           onSubmit={async (event) => {
             event.preventDefault();
+            if (!landingLoaded || savingLanding) return;
             setSavingLanding(true);
             setError(null);
             try {
+              if (landing.personalizados.referencias.some((referencia) =>
+                !referencia.nombre.trim()
+                || ![referencia.alto_cm, referencia.ancho_cm].every((value) => Number.isFinite(value) && value > 0 && value <= 100),
+              )) {
+                throw new Error('Cada referencia debe tener nombre y un área de impresión mayor que 0 y de hasta 100 cm por lado.');
+              }
               const data = await parseJsonResponse<{ landing: EmpaquesLandingConfig }>(
                 await fetch('/api/admin/storefronts/empaques/landing', {
                   method: 'PUT',
@@ -1891,7 +1917,7 @@ export default function AdminEmpaquesPage() {
               <div>
                 <h2 className="text-lg font-bold text-slate-900">Empaques personalizados</h2>
                 <p className="mt-1 text-sm text-slate-500">
-                  Contenido público y opciones reales del configurador. Escribe una opción por línea.
+                  Contenido público y gestión de las seis referencias kraft configuradas. Los SKU y los servicios de impresión son fijos.
                 </p>
               </div>
               <label className="inline-flex items-center gap-2 text-sm font-semibold text-slate-700">
@@ -1994,60 +2020,106 @@ export default function AdminEmpaquesPage() {
                   className="h-11 w-full rounded-lg border border-border bg-white px-3 text-sm focus:border-primary focus:outline-none"
                 />
               </label>
-              <label className="space-y-2">
-                <span className="text-sm font-medium text-slate-700">Tipos de empaque</span>
-                <textarea
-                  rows={6}
-                  value={landing.personalizados.tipos_empaque.join('\n')}
-                  onChange={(event) =>
-                    setLanding((prev) => ({
-                      ...prev,
-                      personalizados: {
-                        ...prev.personalizados,
-                        tipos_empaque: event.target.value.split('\n').map((item) => item.trim()).filter(Boolean),
-                      },
-                    }))
-                  }
-                  placeholder="Una opción por línea"
-                  className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm focus:border-primary focus:outline-none"
-                />
-              </label>
-              <label className="space-y-2">
-                <span className="text-sm font-medium text-slate-700">Materiales</span>
-                <textarea
-                  rows={6}
-                  value={landing.personalizados.materiales.join('\n')}
-                  onChange={(event) =>
-                    setLanding((prev) => ({
-                      ...prev,
-                      personalizados: {
-                        ...prev.personalizados,
-                        materiales: event.target.value.split('\n').map((item) => item.trim()).filter(Boolean),
-                      },
-                    }))
-                  }
-                  placeholder="Una opción por línea"
-                  className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm focus:border-primary focus:outline-none"
-                />
-              </label>
-              <label className="space-y-2 md:col-span-2">
-                <span className="text-sm font-medium text-slate-700">Tipos de impresión</span>
-                <textarea
-                  rows={5}
-                  value={landing.personalizados.impresiones.join('\n')}
-                  onChange={(event) =>
-                    setLanding((prev) => ({
-                      ...prev,
-                      personalizados: {
-                        ...prev.personalizados,
-                        impresiones: event.target.value.split('\n').map((item) => item.trim()).filter(Boolean),
-                      },
-                    }))
-                  }
-                  placeholder="Una opción por línea"
-                  className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm focus:border-primary focus:outline-none"
-                />
-              </label>
+              <div className="space-y-4 md:col-span-2">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-800">Referencias kraft</h3>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Solo se gestionan las referencias existentes en la configuración de Supabase. El área corresponde a impresión, no a las medidas de la bolsa.
+                  </p>
+                </div>
+                {!landingLoaded ? (
+                  <p className="text-sm text-slate-500">Esperando la configuración guardada.</p>
+                ) : landing.personalizados.referencias.length === 0 ? (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+                    Migración 049 pendiente: no hay referencias kraft configuradas. Debe cargarse el seed aprobado en Supabase antes de habilitar el configurador.
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {landing.personalizados.referencias.map((referencia) => (
+                      <div key={referencia.sku} className="rounded-xl border border-border bg-slate-50/60 p-4">
+                        <div className="grid gap-4 md:grid-cols-2">
+                          <label className="space-y-2">
+                            <span className="text-sm font-medium text-slate-700">SKU de referencia</span>
+                            <input
+                              type="text"
+                              readOnly
+                              value={referencia.sku}
+                              className="h-11 w-full rounded-lg border border-border bg-slate-100 px-3 font-mono text-sm text-slate-600"
+                            />
+                          </label>
+                          <label className="inline-flex items-center gap-2 text-sm font-semibold text-slate-700">
+                            <input
+                              type="checkbox"
+                              checked={referencia.activo}
+                              onChange={(event) => updateReferencia(referencia.sku, { activo: event.target.checked })}
+                              disabled={savingLanding}
+                              className="h-4 w-4 rounded border-slate-300 accent-primary"
+                            />
+                            Referencia activa
+                          </label>
+                          <label className="space-y-2 md:col-span-2">
+                            <span className="text-sm font-medium text-slate-700">Nombre</span>
+                            <input
+                              type="text"
+                              required
+                              maxLength={120}
+                              value={referencia.nombre}
+                              onChange={(event) => updateReferencia(referencia.sku, { nombre: event.target.value })}
+                              disabled={savingLanding}
+                              className="h-11 w-full rounded-lg border border-border bg-white px-3 text-sm focus:border-primary focus:outline-none"
+                            />
+                          </label>
+                          <label className="space-y-2">
+                            <span className="text-sm font-medium text-slate-700">Alto del área de impresión (cm)</span>
+                            <input
+                              type="number"
+                              required
+                              min="0.01"
+                              max="100"
+                              step="any"
+                              value={Number.isFinite(referencia.alto_cm) ? referencia.alto_cm : ''}
+                              onChange={(event) => updateReferencia(referencia.sku, { alto_cm: event.target.valueAsNumber })}
+                              disabled={savingLanding}
+                              className="h-11 w-full rounded-lg border border-border bg-white px-3 text-sm focus:border-primary focus:outline-none"
+                            />
+                          </label>
+                          <label className="space-y-2">
+                            <span className="text-sm font-medium text-slate-700">Ancho del área de impresión (cm)</span>
+                            <input
+                              type="number"
+                              required
+                              min="0.01"
+                              max="100"
+                              step="any"
+                              value={Number.isFinite(referencia.ancho_cm) ? referencia.ancho_cm : ''}
+                              onChange={(event) => updateReferencia(referencia.sku, { ancho_cm: event.target.valueAsNumber })}
+                              disabled={savingLanding}
+                              className="h-11 w-full rounded-lg border border-border bg-white px-3 text-sm focus:border-primary focus:outline-none"
+                            />
+                          </label>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <p className="text-xs text-slate-500">
+                  Los tipos, materiales e impresiones anteriores se conservan como legado; no se ofrecen como opciones del nuevo configurador.
+                </p>
+              </div>
+              <div className="space-y-3 rounded-xl border border-border bg-slate-50/60 p-4 md:col-span-2">
+                <h3 className="text-sm font-bold text-slate-800">Arte y servicios de impresión</h3>
+                <p className="text-sm text-slate-600">
+                  Un TIFF por cara: frente y, para dos caras, reverso. Mínimo {EMPAQUES_MIN_PPP} ppp; recomendado {EMPAQUES_RECOMMENDED_PPP} ppp. Máximo {EMPAQUES_TIFF_MAX_BYTES / (1024 * 1024)} MiB por TIFF.
+                </p>
+                <dl className="space-y-1 text-sm text-slate-700">
+                  <div><dt className="inline font-semibold">Producción, 1 cara: </dt><dd className="inline font-mono">{getEmpaquesImpresionSku('produccion', 1)}</dd></div>
+                  <div><dt className="inline font-semibold">Producción, 2 caras: </dt><dd className="inline font-mono">{getEmpaquesImpresionSku('produccion', 2)}</dd></div>
+                  <div><dt className="inline font-semibold">Muestra, 1 o 2 caras: </dt><dd className="inline font-mono">{getEmpaquesImpresionSku('muestra', 1)}</dd></div>
+                </dl>
+                <p className="text-xs text-slate-500">
+                  La muestra tiene tarifa única para una o dos caras. Los precios se resuelven con el pricing del storefront, no se fijan en este formulario.
+                </p>
+              </div>
               <div className="space-y-2 md:col-span-2">
                 <MediaUpload
                   uploadUrl="/api/admin/storefronts/empaques/upload"
@@ -2087,15 +2159,25 @@ export default function AdminEmpaquesPage() {
           <div className="flex items-center justify-end gap-3">
             <button
               type="button"
-              onClick={() => setLanding(DEFAULT_LANDING_CONFIG)}
+              onClick={() => setLanding((prev) => ({
+                ...DEFAULT_LANDING_CONFIG,
+                personalizados: {
+                  ...DEFAULT_LANDING_CONFIG.personalizados,
+                  activo: prev.personalizados.activo,
+                  referencias: prev.personalizados.referencias,
+                  tipos_empaque: prev.personalizados.tipos_empaque,
+                  materiales: prev.personalizados.materiales,
+                  impresiones: prev.personalizados.impresiones,
+                },
+              }))}
               className="inline-flex items-center gap-2 rounded-lg border border-border bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
-              disabled={savingLanding}
+              disabled={savingLanding || !landingLoaded}
             >
-              Restaurar defaults
+              Restaurar textos por defecto
             </button>
             <button
               type="submit"
-              disabled={savingLanding}
+              disabled={savingLanding || !landingLoaded}
               className="inline-flex items-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-primary/90 disabled:opacity-60"
             >
               {savingLanding ? (
