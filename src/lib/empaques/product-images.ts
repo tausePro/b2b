@@ -1,6 +1,7 @@
 type EmpaquesProductImageFields = {
   image_url?: string | null;
   image_128?: string | false;
+  image_1024?: string | false;
   image_1920?: string | false;
 };
 
@@ -32,7 +33,7 @@ export function getEmpaquesProductImageSrc(
   }
 
   if (size === 'detail') {
-    return asDataUrl(product.image_1920) ?? asDataUrl(product.image_128);
+    return asDataUrl(product.image_1920) ?? asDataUrl(product.image_1024) ?? asDataUrl(product.image_128);
   }
 
   return asDataUrl(product.image_128);
