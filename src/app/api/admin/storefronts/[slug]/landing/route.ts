@@ -73,8 +73,6 @@ export async function PUT(
       : { hero: incoming.hero, ventajas: incoming.ventajas, personalizados: incoming.personalizados },
   };
 
-  const normalized = normalizeLandingConfig(flattened);
-
   const { data: current, error: fetchError } = await auth.admin
     .from('storefront_configs')
     .select('id, configuracion_extra')
@@ -92,6 +90,22 @@ export async function PUT(
     ? current.configuracion_extra as Record<string, unknown>
     : {};
 
+  const currentConfig = normalizeLandingConfig(currentExtra);
+  const asObject = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  const landingInput = asObject(flattened.landing);
+  const personalizadosInput = asObject(landingInput.personalizados);
+  const normalized = normalizeLandingConfig({
+    descripcion: incoming.descripcion ?? currentConfig.descripcion,
+    landing: {
+      hero: { ...currentConfig.hero, ...asObject(landingInput.hero) },
+      ventajas: { ...currentConfig.ventajas, ...asObject(landingInput.ventajas) },
+      personalizados: { ...currentConfig.personalizados, ...personalizadosInput },
+    },
+  });
+  if ('referencias' in personalizadosInput && (!Array.isArray(personalizadosInput.referencias)
+    || normalized.personalizados.referencias.length !== personalizadosInput.referencias.length)) {
+    return NextResponse.json({ error: 'Las referencias contienen SKU, medidas o nombres no válidos.' }, { status: 400 });
+  }
   const nextExtra = landingConfigToExtra(normalized, currentExtra);
 
   const { error: updateError } = await auth.admin

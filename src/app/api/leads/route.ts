@@ -1,9 +1,10 @@
 import { createClient } from '@supabase/supabase-js';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { NextRequest, NextResponse } from 'next/server';
-import type {
-  EmpaquesPersonalizadosArchivo,
-  EmpaquesPersonalizadosDetalle,
+import {
+  EMPAQUES_PERSONALIZADOS_FILE_TYPES,
+  type EmpaquesPersonalizadosArchivo,
+  type EmpaquesPersonalizadosDetalle,
 } from '@/lib/empaques/personalizados-shared';
 
 const supabaseAdmin = createClient(
@@ -11,6 +12,83 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 const EMPAQUES_SOLICITUDES_BUCKET = 'empaques-solicitudes';
+
+function normalizePrivatePath(raw: unknown): string | null {
+  if (typeof raw !== 'string' || !raw || raw !== raw.trim()
+    || /[\\:%?#]/.test(raw)
+    || Array.from(raw).some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)
+    || raw.split('/').some((part) => !part || part === '.' || part === '..')) return null;
+  return raw;
+}
+
+function normalizePrivateSignedUrl(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  try {
+    const url = new URL(raw);
+    const storageUrl = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL!);
+    if (!['https:', 'http:'].includes(url.protocol) || url.origin !== storageUrl.origin
+      || url.username || url.password
+      || !url.pathname.startsWith(`/storage/v1/object/sign/${EMPAQUES_SOLICITUDES_BUCKET}/`)) return null;
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
+function normalizePrivateFiles(raw: unknown): EmpaquesPersonalizadosArchivo[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap<EmpaquesPersonalizadosArchivo>((value) => {
+    if (!value || typeof value !== 'object') return [];
+    const file = value as Partial<EmpaquesPersonalizadosArchivo>;
+    const path = normalizePrivatePath(file.path);
+    if (!path || typeof file.nombre !== 'string' || typeof file.tipo !== 'string'
+      || !(file.tipo === 'image/tiff' || (EMPAQUES_PERSONALIZADOS_FILE_TYPES as readonly string[]).includes(file.tipo))
+      || typeof file.tamano !== 'number' || !Number.isFinite(file.tamano) || file.tamano < 0) return [];
+    const previewPath = normalizePrivatePath(file.preview_path);
+    const validation = file.validacion;
+    const validacion = validation && [
+      validation.ancho_px, validation.alto_px, validation.ppp_efectivos,
+      validation.ancho_impresion_cm, validation.alto_impresion_cm,
+    ].every((number) => typeof number === 'number' && Number.isFinite(number) && number > 0)
+      && typeof validation.proporcion_diferente === 'boolean'
+      && typeof validation.resolucion_recomendada === 'boolean'
+      ? {
+        ancho_px: validation.ancho_px,
+        alto_px: validation.alto_px,
+        ppp_efectivos: validation.ppp_efectivos,
+        ancho_impresion_cm: validation.ancho_impresion_cm,
+        alto_impresion_cm: validation.alto_impresion_cm,
+        proporcion_diferente: validation.proporcion_diferente,
+        resolucion_recomendada: validation.resolucion_recomendada,
+      } : undefined;
+    return [{
+      path,
+      nombre: file.nombre,
+      tipo: file.tipo,
+      tamano: file.tamano,
+      signed_url: null,
+      cara: file.cara === 'frente' || file.cara === 'reverso' ? file.cara : undefined,
+      preview_path: previewPath && /\.png$/i.test(previewPath) ? previewPath : null,
+      preview_url: null,
+      sha256: typeof file.sha256 === 'string' && /^[a-f0-9]{64}$/i.test(file.sha256) ? file.sha256 : undefined,
+      validacion,
+    }];
+  });
+}
+
+async function signPrivatePaths(paths: string[], download = false): Promise<Map<string, string>> {
+  const signedUrlByPath = new Map<string, string>();
+  if (paths.length === 0) return signedUrlByPath;
+  const { data, error } = await supabaseAdmin.storage
+    .from(EMPAQUES_SOLICITUDES_BUCKET)
+    .createSignedUrls(Array.from(new Set(paths)), 60 * 60, { download });
+  if (error) throw error;
+  for (const signed of data ?? []) {
+    const url = normalizePrivateSignedUrl(signed.signedUrl);
+    if (signed.path && url) signedUrlByPath.set(signed.path, url);
+  }
+  return signedUrlByPath;
+}
 
 // Campos de atribución aceptados por el POST. Todos opcionales;
 // provienen de la cookie `lead_attr` escrita por
@@ -186,34 +264,35 @@ export async function GET(request: NextRequest) {
     if (personalizedLeadIds.length > 0) {
       const { data: detailRows, error: detailError } = await supabaseAdmin
         .from('lead_empaques_personalizados')
-        .select('id, lead_id, tipo_empaque, uso_producto, medida_largo, medida_ancho, medida_alto, unidad_medida, material, impresion, cantidad, ciudad_entrega, fecha_requerida, comentarios, archivos, created_at')
+        .select('id, lead_id, tipo_empaque, uso_producto, medida_largo, medida_ancho, medida_alto, unidad_medida, material, impresion, cantidad, ciudad_entrega, fecha_requerida, comentarios, archivos, created_at, referencia_sku, impresion_sku, modalidad, caras, area_alto_cm, area_ancho_cm')
         .in('lead_id', personalizedLeadIds);
       if (detailError) throw detailError;
 
-      const rows = (detailRows ?? []) as unknown as EmpaquesPersonalizadosDetalle[];
-      const paths = Array.from(new Set(rows.flatMap((row) =>
-        (Array.isArray(row.archivos) ? row.archivos : [])
-          .map((file) => file.path)
-          .filter(Boolean),
-      )));
-      const signedUrlByPath = new Map<string, string>();
-
-      if (paths.length > 0) {
-        const { data: signedRows, error: signedError } = await supabaseAdmin.storage
-          .from(EMPAQUES_SOLICITUDES_BUCKET)
-          .createSignedUrls(paths, 60 * 60);
-        if (signedError) throw signedError;
-        for (const signed of signedRows ?? []) {
-          if (signed.path && signed.signedUrl) signedUrlByPath.set(signed.path, signed.signedUrl);
-        }
-      }
+      const rows = ((detailRows ?? []) as unknown as EmpaquesPersonalizadosDetalle[]).map((row) => ({
+        ...row,
+        archivos: normalizePrivateFiles(row.archivos),
+      }));
+      const [signedUrlByPath, previewUrlByPath] = await Promise.all([
+        signPrivatePaths(rows.flatMap((row) => row.archivos.map((file) => file.path)), true),
+        signPrivatePaths(rows.flatMap((row) => row.archivos.flatMap((file) => file.preview_path ? [file.preview_path] : []))),
+      ]);
 
       for (const row of rows) {
-        const archivos = (Array.isArray(row.archivos) ? row.archivos : []).map((file: EmpaquesPersonalizadosArchivo) => ({
+        const archivos = row.archivos.map((file) => ({
           ...file,
           signed_url: signedUrlByPath.get(file.path) ?? null,
+          preview_url: file.preview_path ? previewUrlByPath.get(file.preview_path) ?? null : null,
         }));
-        detailByLeadId.set(row.lead_id, { ...row, archivos });
+        detailByLeadId.set(row.lead_id, {
+          ...row,
+          referencia_sku: row.referencia_sku ?? null,
+          impresion_sku: row.impresion_sku ?? null,
+          modalidad: row.modalidad ?? null,
+          caras: row.caras ?? null,
+          area_alto_cm: row.area_alto_cm ?? null,
+          area_ancho_cm: row.area_ancho_cm ?? null,
+          archivos,
+        });
       }
     }
 
@@ -223,7 +302,7 @@ export async function GET(request: NextRequest) {
         empaques_personalizado: detailByLeadId.get(lead.id) ?? null,
       })),
       total: count,
-    });
+    }, { headers: { 'Cache-Control': 'private, no-store' } });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Error al listar leads';
     return NextResponse.json({ error: message }, { status: 500 });
@@ -333,12 +412,12 @@ export async function DELETE(request: NextRequest) {
       .in('lead_id', idsValidos);
     if (personalizedError) throw personalizedError;
 
-    const privatePaths = (personalizedRows ?? []).flatMap((row) => {
-      const archivos = Array.isArray(row.archivos) ? row.archivos as Array<{ path?: unknown }> : [];
+    const privatePaths = Array.from(new Set((personalizedRows ?? []).flatMap((row) => {
+      const archivos = Array.isArray(row.archivos) ? row.archivos as Array<{ path?: unknown; preview_path?: unknown } | null> : [];
       return archivos
-        .map((file) => typeof file.path === 'string' ? file.path : null)
-        .filter((path): path is string => Boolean(path));
-    });
+        .flatMap((file) => [normalizePrivatePath(file?.path), normalizePrivatePath(file?.preview_path)])
+        .filter((path): path is string => path !== null);
+    })));
     const { error, count } = await supabaseAdmin
       .from('leads')
       .delete({ count: 'exact' })
