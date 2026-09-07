@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server';
 import { getEmpaquesCaras, getEmpaquesImpresionSku, type EmpaquesModalidad } from '@/lib/empaques/personalizados-shared';
 import {
   PersonalizadosError, UUID_PATTERN, TOKEN_PATTERN, hashArteToken, hashPersonalizacionRequest,
-  loadPersonalizacionReferencia, personalizacionAdmin, personalizacionError,
+  loadPersonalizacionProductImage, loadPersonalizacionReferencia, personalizacionAdmin, personalizacionError,
   personalizacionJson, readPersonalizacionJson,
 } from '@/lib/empaques/personalizados.server';
 
@@ -23,6 +23,15 @@ function attributionFor(raw: unknown) {
   const clickDate = typeof source.click_at === 'string' ? new Date(source.click_at) : null;
   result.click_at = clickDate && Number.isFinite(clickDate.getTime()) && clickDate.getTime() <= Date.now() + 300000 ? clickDate.toISOString() : null;
   return result;
+}
+
+export async function GET(request: NextRequest) {
+  try {
+    const image = await loadPersonalizacionProductImage(personalizacionAdmin(), request.nextUrl.searchParams.get('sku'));
+    return personalizacionJson(image);
+  } catch (error) {
+    return personalizacionError(error);
+  }
 }
 
 export async function POST(request: NextRequest) {

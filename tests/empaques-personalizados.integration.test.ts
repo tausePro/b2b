@@ -6,6 +6,8 @@ import { normalizeLandingConfig } from '../src/lib/empaques/landing-config-share
 import { EMPAQUES_REFERENCIA_SKUS, EMPAQUES_IMPRESION_SKUS, EMPAQUES_TIFF_MAX_BYTES } from '../src/lib/empaques/personalizados-shared';
 import { getServerOdooConfig } from '../src/lib/odoo/serverConfig';
 import { authenticate, searchRead } from '../src/lib/odoo/client';
+import sharp from 'sharp';
+import { loadPersonalizacionProductImage, PersonalizadosError } from '../src/lib/empaques/personalizados.server';
 
 config({ path: '.env.local', quiet: true });
 function client(admin = true) {
@@ -43,6 +45,25 @@ test('049: cargas privadas y bucket TIFF conservan formatos históricos', async 
   for (const type of ['image/tiff', 'image/png', 'image/jpeg', 'image/webp', 'application/pdf']) {
     assert.ok(bucket.data?.allowed_mime_types?.includes(type));
   }
+});
+
+test('las fotografías de las seis referencias se resuelven sin publicar precios ni costos', async () => {
+  const admin = client();
+  for (const sku of EMPAQUES_REFERENCIA_SKUS) {
+    const image = await loadPersonalizacionProductImage(admin, sku);
+    assert.equal(image.sku, sku);
+    assert.deepEqual(Object.keys(image).sort(), ['imagen_url', 'nombre', 'sku']);
+    assert.ok(image.imagen_url, `La referencia ${sku} no tiene fotografía disponible.`);
+    if (image.imagen_url.startsWith('data:')) {
+      const metadata = await sharp(Buffer.from(image.imagen_url.split(',')[1], 'base64')).metadata();
+      assert.ok(metadata.width && metadata.height);
+      assert.ok(['png', 'jpeg', 'webp', 'gif'].includes(metadata.format ?? ''));
+    } else {
+      assert.equal(new URL(image.imagen_url).protocol, 'https:');
+    }
+  }
+  await assert.rejects(loadPersonalizacionProductImage(admin, EMPAQUES_IMPRESION_SKUS.muestra),
+    (error) => error instanceof PersonalizadosError && error.status === 400);
 });
 
 test('Odoo: las seis bolsas y los tres servicios siguen activos sin modificar el ERP', async () => {
