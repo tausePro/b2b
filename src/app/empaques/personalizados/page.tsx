@@ -7,17 +7,24 @@ import { ArrowLeft, FileLock2, Palette, Ruler } from 'lucide-react';
 import { EmpaquesFooter, EmpaquesHeader } from '@/components/public/EmpaquesChrome';
 import EmpaquesPersonalizadosForm from '@/components/public/EmpaquesPersonalizadosForm';
 import { getEmpaquesLandingConfig } from '@/lib/empaques/landing-config';
+import { DEFAULT_LANDING_CONFIG } from '@/lib/empaques/landing-config-shared';
 
 export const dynamic = 'force-dynamic';
+
+function getSubtitulo(subtitulo: string) {
+  return subtitulo === DEFAULT_LANDING_CONFIG.personalizados.subtitulo
+    ? 'Impresión CMYK sobre referencias de bolsas kraft. Elige producción o muestra, una o dos caras y sube un TIFF por cada cara.'
+    : subtitulo;
+}
 
 export async function generateMetadata(): Promise<Metadata> {
   const config = (await getEmpaquesLandingConfig()).personalizados;
   return {
     title: `${config.titulo} | Imprima`,
-    description: config.subtitulo.slice(0, 160),
+    description: getSubtitulo(config.subtitulo).slice(0, 160),
     openGraph: {
       title: config.titulo,
-      description: config.subtitulo.slice(0, 160),
+      description: getSubtitulo(config.subtitulo).slice(0, 160),
       images: config.imagen_url ? [{ url: config.imagen_url, alt: config.titulo }] : undefined,
     },
   };
@@ -52,7 +59,7 @@ export default async function EmpaquesPersonalizadosPage() {
             <div className="mt-10 max-w-3xl">
               <p className="text-sm font-black uppercase tracking-[0.24em] text-[#C9DE70]">{config.eyebrow}</p>
               <h1 className="mt-4 text-4xl font-black leading-tight tracking-tight sm:text-5xl lg:text-7xl">{config.titulo}</h1>
-              <p className="mt-6 max-w-2xl text-lg font-semibold leading-8 text-white/80">{config.subtitulo}</p>
+              <p className="mt-6 max-w-2xl text-lg font-semibold leading-8 text-white/80">{getSubtitulo(config.subtitulo)}</p>
               <a href="#configurador" className="mt-8 inline-flex min-h-14 items-center justify-center rounded-full bg-[#9CBB06] px-8 py-4 text-lg font-black text-slate-950 transition hover:bg-[#8cab05]">
                 {config.cta_texto}
               </a>
@@ -63,9 +70,9 @@ export default async function EmpaquesPersonalizadosPage() {
         <section className="px-4 py-16 sm:px-6 lg:px-8">
           <div className="mx-auto grid max-w-7xl gap-5 md:grid-cols-3">
             {[
-              { icon: Ruler, title: 'Producto y medidas', text: 'Registra el uso, dimensiones y cantidad estimada del proyecto.' },
-              { icon: Palette, title: 'Material e impresión', text: 'Define las preferencias disponibles o déjalas para asesoría técnica.' },
-              { icon: FileLock2, title: 'Archivos protegidos', text: 'Los artes, logos y referencias se almacenan de forma privada.' },
+              { icon: Ruler, title: 'Bolsa y área fija', text: 'Elige una referencia kraft disponible. Su área de impresión está definida; el arte se ajusta sin recortar ni estirar.' },
+              { icon: Palette, title: 'CMYK por una o dos caras', text: 'Selecciona producción o muestra. La muestra tiene la misma tarifa de impresión para una o dos caras, por confirmar en la propuesta.' },
+              { icon: FileLock2, title: 'Un TIFF por cada cara', text: 'Sube un TIFF de frente o dos TIFF separados de frente y reverso. Los archivos y sus vistas previas PNG son privados.' },
             ].map((item) => (
               <div key={item.title} className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
                 <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#D9E997]">
@@ -81,8 +88,8 @@ export default async function EmpaquesPersonalizadosPage() {
         <section id="configurador" className="scroll-mt-24 px-4 pb-28 sm:px-6 lg:px-8">
           <div className="mx-auto grid max-w-7xl gap-10 lg:grid-cols-[minmax(0,0.7fr)_minmax(0,1.3fr)] lg:items-start">
             <div className="rounded-3xl bg-[#9CBB06] p-8 text-slate-950 lg:sticky lg:top-28 lg:p-10">
-              <p className="text-sm font-black uppercase tracking-[0.2em] text-slate-950/60">Proyecto personalizado</p>
-              <h2 className="mt-4 text-3xl font-black tracking-tight">Cuéntanos qué necesitas</h2>
+              <p className="text-sm font-black uppercase tracking-[0.2em] text-slate-950/60">Impresión sobre kraft</p>
+              <h2 className="mt-4 text-3xl font-black tracking-tight">Personaliza tu bolsa con CMYK</h2>
               <p className="mt-5 font-semibold leading-8 text-slate-950/75">{config.descripcion}</p>
               <p className="mt-6 text-sm font-bold leading-6 text-slate-950/70">
                 El envío no genera un precio automático ni una orden en Odoo. Nuestro equipo revisará la viabilidad técnica y preparará la propuesta comercial.
