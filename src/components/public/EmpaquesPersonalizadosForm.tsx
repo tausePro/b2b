@@ -126,6 +126,49 @@ function subirTiff(url: string, file: File, nodo: NodoSubida, onProgress: (progr
   });
 }
 
+function ImagenReferencia({ sku, nombre }: { sku: string; nombre: string }) {
+  const [foto, setFoto] = useState<{ estado: 'cargando' | 'lista' | 'sin_imagen' | 'error'; src?: string }>({ estado: 'cargando' });
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const cargar = async () => {
+      try {
+        const response = await fetch(`/api/empaques/personalizados?sku=${encodeURIComponent(sku)}`, { signal: controller.signal, cache: 'no-store' });
+        const data = await leerRespuesta(response);
+        if (controller.signal.aborted) return;
+        if (!response.ok || data.sku !== sku) throw new Error('Imagen no disponible');
+        const src = data.imagen_url;
+        if (src === null) setFoto({ estado: 'sin_imagen' });
+        else if (typeof src === 'string' && (esUrlSegura(src) || /^data:image\/(png|jpeg|webp|gif);base64,/.test(src))) setFoto({ estado: 'lista', src });
+        else throw new Error('Imagen no válida');
+      } catch {
+        if (!controller.signal.aborted) setFoto({ estado: 'error' });
+      }
+    };
+    void cargar();
+    return () => controller.abort();
+  }, [sku]);
+
+  return (
+    <figure className="rounded-2xl border border-slate-200 bg-white p-4" data-producto-sku={sku}>
+      <div className="relative mx-auto aspect-[4/3] w-full max-w-sm">
+        {foto.estado === 'lista' && foto.src ? (
+          <Image src={foto.src} alt={`Bolsa seleccionada: ${nombre}`} fill sizes="(max-width: 640px) 100vw, 384px" unoptimized className="object-contain p-2" onError={() => setFoto({ estado: 'error' })} />
+        ) : (
+          <div className="flex h-full items-center justify-center gap-2 text-center text-sm font-semibold text-slate-500" role="status">
+            {foto.estado === 'cargando' && <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />}
+            {foto.estado === 'cargando' ? 'Cargando fotografía de la bolsa…' : foto.estado === 'sin_imagen' ? 'Esta referencia no tiene una fotografía publicada.' : 'No pudimos cargar la fotografía. Puedes continuar configurando la impresión.'}
+          </div>
+        )}
+      </div>
+      <figcaption className="mt-3 text-center text-sm font-semibold text-slate-600">
+        {nombre} · {sku}
+        <span className="mt-1 block text-xs font-medium text-slate-500">Fotografía del empaque base. Tus artes se muestran por separado en cada cara.</span>
+      </figcaption>
+    </figure>
+  );
+}
+
 export default function EmpaquesPersonalizadosForm({ config }: EmpaquesPersonalizadosFormProps) {
   const [form, setForm] = useState(INITIAL_FORM);
   const [artes, setArtes] = useState<ArtesPorCara>({});
@@ -444,7 +487,10 @@ export default function EmpaquesPersonalizadosForm({ config }: EmpaquesPersonali
           </select>
         </label>
         {referencia && (
-          <p className="text-sm font-semibold leading-6 text-slate-600">Área fija de impresión por cara: {referencia.ancho_cm} cm de ancho × {referencia.alto_cm} cm de alto. Estas medidas corresponden al área de impresión, no a las dimensiones de la bolsa.</p>
+          <>
+            <ImagenReferencia key={referencia.sku} sku={referencia.sku} nombre={referencia.nombre} />
+            <p className="text-sm font-semibold leading-6 text-slate-600">Área fija de impresión por cara: {referencia.ancho_cm} cm de ancho × {referencia.alto_cm} cm de alto. Estas medidas corresponden al área de impresión, no a las dimensiones de la bolsa.</p>
+          </>
         )}
       </fieldset>
 

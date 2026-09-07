@@ -4,6 +4,9 @@ import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { normalizeLandingConfig } from './landing-config-shared';
+import { getEmpaquesProductImageSrc } from './product-images';
+import { authenticate, searchRead } from '@/lib/odoo/client';
+import { getServerOdooConfig } from '@/lib/odoo/serverConfig';
 
 export const EMPAQUES_ART_BUCKET = 'empaques-solicitudes';
 export const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -85,6 +88,36 @@ export function hashArteToken(token: string) {
 export function validArteToken(token: unknown, hash: unknown): boolean {
   if (typeof token !== 'string' || !TOKEN_PATTERN.test(token) || typeof hash !== 'string' || !TOKEN_PATTERN.test(hash)) return false;
   return timingSafeEqual(Buffer.from(hashArteToken(token), 'hex'), Buffer.from(hash, 'hex'));
+}
+
+export async function loadPersonalizacionProductImage(admin: ReturnType<typeof personalizacionAdmin>, sku: unknown) {
+  const { referencia, storefrontId } = await loadPersonalizacionReferencia(admin, sku);
+  const result = { sku: referencia.sku, nombre: referencia.nombre, imagen_url: null as string | null };
+  const config = await getServerOdooConfig();
+  if (!config) throw new PersonalizadosError(503, 'La fotografía no está disponible temporalmente.');
+  const session = await authenticate(config);
+  const products = await searchRead('product.product', [
+    ['default_code', '=', referencia.sku], ['active', '=', true], ['sale_ok', '=', true],
+  ], ['id', 'product_tmpl_id', 'image_1024'], { session, limit: 2 });
+  if (products.length !== 1 || !Array.isArray(products[0].product_tmpl_id)) return result;
+  const product = products[0];
+  const templateId = Number((product.product_tmpl_id as [number, string])[0]);
+  const { data: editorial, error } = await admin.from('storefront_product_overrides')
+    .select('imagen_url, visible').eq('storefront_config_id', storefrontId)
+    .eq('odoo_product_id', templateId).eq('estado_publicacion', 'publicado').maybeSingle();
+  if (error) throw error;
+  if (editorial?.visible === false) return result;
+  let editorialImage: string | null = null;
+  if (typeof editorial?.imagen_url === 'string') {
+    try {
+      const url = new URL(editorial.imagen_url);
+      if (url.protocol === 'https:' && !url.username && !url.password) editorialImage = url.href;
+    } catch {
+      editorialImage = null;
+    }
+  }
+  const image = typeof product.image_1024 === 'string' && product.image_1024.length <= 3 * 1024 * 1024 ? product.image_1024 : false;
+  return { ...result, imagen_url: getEmpaquesProductImageSrc({ image_url: editorialImage, image_1024: image }, 'detail') };
 }
 
 export async function loadPersonalizacionReferencia(admin: ReturnType<typeof personalizacionAdmin>, sku: unknown) {
