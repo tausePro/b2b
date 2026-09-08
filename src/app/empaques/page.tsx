@@ -33,7 +33,9 @@ import {
 } from '@/lib/empaques/landing-config';
 import {
   getEmpaquesProductImageSrc,
+  getEmpaquesCategoryImageSrc,
   hasEmpaquesEditorialImage,
+  selectEmpaquesShowcaseCategories,
 } from '@/lib/empaques/product-images';
 
 const BENEFIT_ICON_MAP: Record<LandingBenefitIcon, typeof Sparkles> = {
@@ -49,7 +51,7 @@ export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
   title: 'Empaques | Imprima',
-  description: 'Catálogo público de soluciones de empaque y cafetería de Imprima.',
+  description: 'Catálogo público de soluciones de empaque de Imprima.',
 };
 
 type EmpaquesPageProps = {
@@ -88,13 +90,6 @@ function buildCategoryHref(categoryId: number | null, search: string) {
 function getFeaturedProduct(products: EmpaquesCatalogProduct[], index = 0) {
   const productsWithImage = products.filter((product) => getEmpaquesProductImageSrc(product));
   return productsWithImage[index] ?? products[index] ?? null;
-}
-
-function getCategoryProduct(products: EmpaquesCatalogProduct[], category: EmpaquesCategoryNode) {
-  return products.find((product) => {
-    if (!product.categ_id) return false;
-    return product.categ_id[1].toLowerCase().includes(category.name.toLowerCase());
-  }) ?? getFeaturedProduct(products);
 }
 
 function getHeroOverlay(color: string, opacity: number) {
@@ -197,14 +192,12 @@ function HeroSection({
 
 function CategoryCard({
   category,
-  product,
   variant,
 }: {
   category: EmpaquesCategoryNode;
-  product: EmpaquesCatalogProduct | null;
   variant: 'wide' | 'tall' | 'dark';
 }) {
-  const imageSrc = category.imagen_url ?? (product ? getEmpaquesProductImageSrc(product) : null);
+  const imageSrc = getEmpaquesCategoryImageSrc(category);
   const isTall = variant === 'tall';
   const isDark = variant === 'dark';
 
@@ -217,7 +210,7 @@ function CategoryCard({
       {imageSrc && (
         <Image
           src={imageSrc}
-          alt={product?.name ?? category.name}
+          alt={category.name}
           width={520}
           height={520}
           unoptimized
@@ -243,12 +236,8 @@ function CategoryCard({
   );
 }
 
-function CategoriesSection({ data, highlights }: { data: EmpaquesCatalogData; highlights: EmpaquesCatalogData | null }) {
-  const highlightedProducts = highlights?.productos.length ? highlights.productos : data.productos;
-  const featuredCategories = [
-    ...data.categories,
-    ...data.categories.flatMap((category) => category.children),
-  ].slice(0, 3);
+function CategoriesSection({ data }: { data: EmpaquesCatalogData }) {
+  const featuredCategories = selectEmpaquesShowcaseCategories(data.categories);
 
   if (featuredCategories.length === 0) return null;
 
@@ -259,13 +248,12 @@ function CategoriesSection({ data, highlights }: { data: EmpaquesCatalogData; hi
           <h2 className="text-sm font-black uppercase tracking-[0.24em] text-[#9CBB06]">Nuestras Líneas</h2>
           <h3 className="text-4xl font-black tracking-tight text-slate-950 md:text-5xl">Categorías de Empaques</h3>
         </div>
-        <div className="grid auto-rows-[360px] grid-cols-1 gap-6 md:grid-cols-3">
+        <div className={`grid auto-rows-[360px] grid-cols-1 gap-6 ${featuredCategories.length === 3 ? 'md:grid-cols-3' : featuredCategories.length === 2 ? 'md:grid-cols-4' : 'md:grid-cols-2'}`}>
           {featuredCategories.map((category, index) => (
             <CategoryCard
               key={category.id}
               category={category}
-              product={getCategoryProduct(highlightedProducts, category)}
-              variant={index === 1 ? 'tall' : index === 2 ? 'dark' : 'wide'}
+              variant={featuredCategories.length === 3 ? (index === 1 ? 'tall' : index === 2 ? 'dark' : 'wide') : 'wide'}
             />
           ))}
         </div>
@@ -644,7 +632,7 @@ function EmpaquesContent({
       <EmpaquesHeader personalizedHref={personalizedHref} />
       <main>
         <HeroSection data={data} highlights={highlights} config={landing.hero} />
-        <CategoriesSection data={data} highlights={highlights} />
+        <CategoriesSection data={data} />
         <PersonalizedSection config={landing.personalizados} href={personalizedHref} />
         <BenefitsSection config={landing.ventajas} />
         <CatalogProductsSection data={data} search={search} categoryId={categoryId} page={page} />

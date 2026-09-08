@@ -42,7 +42,7 @@ import {
   type EmpaquesReferencia,
 } from '@/lib/empaques/personalizados-shared';
 
-type TabId = 'configuracion' | 'margenes' | 'precios' | 'editorial' | 'landing' | 'asesoras';
+type TabId = 'configuracion' | 'margenes' | 'precios' | 'editorial' | 'categorias' | 'landing' | 'asesoras';
 type PublicationState = 'borrador' | 'publicado';
 
 // Roles que pueden gestionar (config base + editorial + asignaciones de
@@ -132,6 +132,8 @@ interface CategoryOverrideRow {
   nombre_publico: string | null;
   slug: string | null;
   descripcion_corta: string | null;
+  descripcion_larga: string | null;
+  contenido_extra: Record<string, unknown> | null;
   imagen_url: string | null;
   orden: number;
   visible: boolean;
@@ -186,7 +188,14 @@ interface AsesoraDisponible {
   asignada: boolean;
 }
 
+interface CategoryEditorialOption {
+  id: number;
+  category?: CategoryNode;
+  override?: CategoryOverrideRow;
+}
+
 interface CategoryEditorialDraft {
+  odoo_categ_id: number;
   nombre_publico: string;
   slug: string;
   descripcion_corta: string;
@@ -198,6 +207,7 @@ interface CategoryEditorialDraft {
 }
 
 interface ProductEditorialDraft {
+  odoo_product_id: number;
   nombre_publico: string;
   slug: string;
   descripcion_corta: string;
@@ -264,10 +274,11 @@ function getDescription(config: StorefrontConfig | null) {
   return typeof value === 'string' ? value : '';
 }
 
-function buildCategoryDraft(category: CategoryNode, override?: CategoryOverrideRow): CategoryEditorialDraft {
+function buildCategoryDraft({ id, category, override }: CategoryEditorialOption): CategoryEditorialDraft {
   return {
-    nombre_publico: override?.nombre_publico ?? category.name,
-    slug: override?.slug ?? slugify(category.complete_name),
+    odoo_categ_id: id,
+    nombre_publico: override?.nombre_publico ?? category?.name ?? '',
+    slug: override?.slug ?? (category ? slugify(category.complete_name) : ''),
     descripcion_corta: override?.descripcion_corta ?? '',
     imagen_url: override?.imagen_url ?? '',
     orden: String(override?.orden ?? 0),
@@ -279,6 +290,7 @@ function buildCategoryDraft(category: CategoryNode, override?: CategoryOverrideR
 
 function buildProductDraft(product: CatalogProduct, override?: ProductOverrideRow): ProductEditorialDraft {
   return {
+    odoo_product_id: product.id,
     nombre_publico: override?.nombre_publico ?? product.name,
     slug: override?.slug ?? slugify(product.name),
     descripcion_corta: override?.descripcion_corta ?? '',
@@ -326,6 +338,13 @@ export default function AdminEmpaquesPage() {
   const [savingMargin, setSavingMargin] = useState(false);
   const [savingPriceId, setSavingPriceId] = useState<number | null>(null);
   const [savingEditorial, setSavingEditorial] = useState(false);
+  const [uploadingCategoryImage, setUploadingCategoryImage] = useState(false);
+  const [uploadingProductImage, setUploadingProductImage] = useState(false);
+  const [uploadingProductPdf, setUploadingProductPdf] = useState(false);
+  const [uploadingHeroImage, setUploadingHeroImage] = useState(false);
+  const [uploadingPersonalizadosImage, setUploadingPersonalizadosImage] = useState(false);
+  const isEditorialUploading = uploadingCategoryImage || uploadingProductImage || uploadingProductPdf;
+  const isLandingUploading = uploadingHeroImage || uploadingPersonalizadosImage;
   const [savingAsesoraId, setSavingAsesoraId] = useState<string | null>(null);
   const [variantsModal, setVariantsModal] = useState<{ templateId: number; productName: string; fallbackPrice?: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -359,7 +378,6 @@ export default function AdminEmpaquesPage() {
   const [productCategoryId, setProductCategoryId] = useState('');
   const [productPage, setProductPage] = useState(1);
   const [priceDrafts, setPriceDrafts] = useState<Record<number, string>>({});
-  const [editorialCategoryId, setEditorialCategoryId] = useState('');
   const [editorialProductId, setEditorialProductId] = useState('');
   const [categoryDraft, setCategoryDraft] = useState<CategoryEditorialDraft | null>(null);
   const [productDraft, setProductDraft] = useState<ProductEditorialDraft | null>(null);
@@ -375,6 +393,16 @@ export default function AdminEmpaquesPage() {
     categoryOverrides.forEach((override) => map.set(override.odoo_categ_id, override));
     return map;
   }, [categoryOverrides]);
+  const editorialCategories = useMemo(() => {
+    const options = new Map<number, CategoryEditorialOption>();
+    categories.forEach((category) => options.set(category.id, { id: category.id, category }));
+    categoryOverrides.forEach((override) => options.set(override.odoo_categ_id, {
+      ...options.get(override.odoo_categ_id),
+      id: override.odoo_categ_id,
+      override,
+    }));
+    return Array.from(options.values());
+  }, [categories, categoryOverrides]);
   const productOverridesById = useMemo(() => {
     const map = new Map<number, ProductOverrideRow>();
     productOverrides.forEach((override) => map.set(override.odoo_product_id, override));
@@ -531,7 +559,7 @@ export default function AdminEmpaquesPage() {
     const allowed: TabId[] = [
       ...(canManage ? (['configuracion'] as TabId[]) : []),
       ...(canPricing ? (['margenes', 'precios'] as TabId[]) : []),
-      ...(canEditorial ? (['editorial', 'landing'] as TabId[]) : []),
+      ...(canEditorial ? (['categorias', 'editorial', 'landing'] as TabId[]) : []),
       ...(canManage ? (['asesoras'] as TabId[]) : []),
     ];
     if (allowed.length > 0 && !allowed.includes(activeTab)) {
@@ -570,11 +598,6 @@ export default function AdminEmpaquesPage() {
       cancelled = true;
     };
   }, [canEditorial, landingLoaded, activeTab]);
-
-  useEffect(() => {
-    const selectedCategory = categories.find((category) => String(category.id) === editorialCategoryId);
-    setCategoryDraft(selectedCategory ? buildCategoryDraft(selectedCategory, categoryOverridesById.get(selectedCategory.id)) : null);
-  }, [categories, categoryOverridesById, editorialCategoryId]);
 
   useEffect(() => {
     const selectedProduct = (catalog?.productos ?? []).find((product) => String(product.id) === editorialProductId);
@@ -715,17 +738,22 @@ export default function AdminEmpaquesPage() {
 
   const handleSaveCategoryEditorial = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!categoryDraft || !editorialCategoryId) return;
+    if (!canEditorial || !categoryDraft || savingEditorial || isEditorialUploading) return;
     setSavingEditorial(true);
     setError(null);
+    const existingOverride = categoryOverridesById.get(categoryDraft.odoo_categ_id);
 
     try {
-      await parseJsonResponse<{ categoria: CategoryOverrideRow }>(
+      const data = await parseJsonResponse<{ categoria: CategoryOverrideRow }>(
         await fetch('/api/admin/storefronts/empaques/categorias', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            odoo_categ_id: Number(editorialCategoryId),
+            odoo_categ_id: categoryDraft.odoo_categ_id,
+            descripcion_larga: existingOverride?.descripcion_larga,
+            seo_title: existingOverride?.seo_title,
+            seo_description: existingOverride?.seo_description,
+            contenido_extra: existingOverride?.contenido_extra,
             nombre_publico: categoryDraft.nombre_publico,
             slug: categoryDraft.slug,
             descripcion_corta: categoryDraft.descripcion_corta,
@@ -737,8 +765,17 @@ export default function AdminEmpaquesPage() {
           }),
         })
       );
-      await loadCategoryOverrides();
-      showToast('Categoría editorial guardada.');
+      setCategoryDraft((current) => current?.odoo_categ_id === data.categoria.odoo_categ_id
+        ? buildCategoryDraft({
+            id: data.categoria.odoo_categ_id,
+            category: categories.find((category) => category.id === data.categoria.odoo_categ_id),
+            override: data.categoria,
+          })
+        : current);
+      await Promise.all([loadCategoryOverrides(), loadCatalog()]);
+      showToast(data.categoria.estado_publicacion === 'publicado'
+        ? data.categoria.visible ? 'Categoría publicada.' : 'Categoría publicada como oculta junto con su rama del catálogo.'
+        : 'Borrador guardado. El contenido editorial no está publicado.');
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'No se pudo guardar la categoría editorial.');
     } finally {
@@ -748,7 +785,7 @@ export default function AdminEmpaquesPage() {
 
   const handleSaveProductEditorial = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!productDraft || !editorialProductId) return;
+    if (!canEditorial || !productDraft || productDraft.odoo_product_id !== Number(editorialProductId) || savingEditorial || isEditorialUploading) return;
     setSavingEditorial(true);
     setError(null);
 
@@ -885,6 +922,7 @@ export default function AdminEmpaquesPage() {
       : []),
     ...(canEditorial
       ? [
+          { id: 'categorias' as TabId, label: 'Categorías de portada', icon: <Layers className="h-4 w-4" /> },
           { id: 'editorial' as TabId, label: 'Editorial', icon: <Package className="h-4 w-4" /> },
           { id: 'landing' as TabId, label: 'Landing', icon: <Layers className="h-4 w-4" /> },
         ]
@@ -927,12 +965,14 @@ export default function AdminEmpaquesPage() {
         </div>
       )}
 
-      <div className="flex items-center gap-1 rounded-xl border border-border bg-white p-1">
+      <div className="flex flex-wrap items-center gap-1 rounded-xl border border-border bg-white p-1">
         {tabs.map((tab) => (
           <button
+            type="button"
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition-colors ${
+            disabled={savingEditorial || savingLanding || isEditorialUploading || isLandingUploading}
+            className={`flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
               activeTab === tab.id ? 'bg-primary/10 text-primary' : 'text-slate-600 hover:bg-slate-50'
             }`}
           >
@@ -1301,35 +1341,42 @@ export default function AdminEmpaquesPage() {
         </div>
       )}
 
-      {activeTab === 'editorial' && (
-        <div className="grid gap-6 xl:grid-cols-2">
+      {(activeTab === 'categorias' || activeTab === 'editorial') && canEditorial && (
+        <div className={`grid gap-6 ${activeTab === 'editorial' ? 'xl:grid-cols-2' : ''}`}>
           <form onSubmit={handleSaveCategoryEditorial} className="rounded-2xl border border-border bg-white p-6 shadow-sm">
-            <div className="mb-5">
-              <h2 className="text-lg font-bold text-slate-900">Categorías editoriales</h2>
-              <p className="text-sm text-slate-500">Controla nombres comerciales, visibilidad y destacados por categoría Odoo.</p>
+            <div className="mb-5 space-y-2">
+              <h2 className="text-lg font-bold text-slate-900">Categorías de portada</h2>
+              <p className="text-sm text-slate-500">Edita las fotos y los textos de “Categorías de Empaques”, sin modificar productos ni precios.</p>
+              <p className="text-sm text-slate-500">Si hay categorías publicadas y visibles con “Mostrar en portada”, se usan solo esas: máximo 3, de menor a mayor orden. Si no hay ninguna, se muestran hasta 3 categorías disponibles del catálogo.</p>
+              <p className="text-xs text-slate-500">Cada tarjeta usa únicamente la imagen publicada de su categoría. Subir una foto no la publica: debes guardar con estado Publicado.</p>
             </div>
-            <div className="space-y-4">
+            <fieldset disabled={savingEditorial} className="min-w-0 space-y-4">
               <label className="space-y-2 block">
                 <span className="text-sm font-semibold text-slate-700">Categoría</span>
                 <select
-                  value={editorialCategoryId}
-                  onChange={(event) => setEditorialCategoryId(event.target.value)}
-                  className="w-full rounded-lg border border-border px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                  value={categoryDraft?.odoo_categ_id ?? ''}
+                  onChange={(event) => {
+                    const selected = editorialCategories.find((option) => String(option.id) === event.target.value);
+                    setCategoryDraft(selected ? buildCategoryDraft(selected) : null);
+                  }}
+                  disabled={uploadingCategoryImage || savingEditorial}
+                  className="w-full rounded-lg border border-border px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <option value="">Selecciona una categoría</option>
-                  {categories.map((category) => {
-                    const override = categoryOverridesById.get(category.id);
-                    return (
-                      <option key={category.id} value={category.id}>
-                        {override?.nombre_publico ?? category.complete_name}{override?.estado_publicacion === 'publicado' ? ' · publicado' : ''}
-                      </option>
-                    );
-                  })}
+                  {editorialCategories.map(({ id, category, override }) => (
+                    <option key={id} value={id}>
+                      {override?.nombre_publico || category?.complete_name || `Categoría Odoo #${id}`}
+                      {override ? ` · ${override.estado_publicacion}` : ' · sin edición'}
+                      {override?.visible === false ? override.estado_publicacion === 'publicado' ? ' · oculta' : ' · ocultar al publicar' : ''}
+                      {override?.destacado ? ' · portada' : ''}
+                    </option>
+                  ))}
                 </select>
               </label>
 
               {categoryDraft && (
                 <>
+                  <p className="text-xs text-slate-500">Categoría Odoo #{categoryDraft.odoo_categ_id}. Las categorías con edición guardada siguen disponibles aquí aunque estén ocultas en el catálogo.</p>
                   <div className="grid gap-4 md:grid-cols-2">
                     <label className="space-y-2 block">
                       <span className="text-sm font-semibold text-slate-700">Nombre público</span>
@@ -1359,13 +1406,15 @@ export default function AdminEmpaquesPage() {
                   </label>
                   <div className="grid gap-4 md:grid-cols-[1fr_120px]">
                     <MediaUpload
+                      key={`categoria-${categoryDraft.odoo_categ_id}`}
                       label="Imagen de la categoría"
                       value={categoryDraft.imagen_url || null}
-                      onChange={(url) => setCategoryDraft((current) => current ? { ...current, imagen_url: url } : current)}
+                      onChange={(url) => setCategoryDraft((current) => current?.odoo_categ_id === categoryDraft.odoo_categ_id ? { ...current, imagen_url: url } : current)}
+                      onUploadingChange={setUploadingCategoryImage}
                       uploadUrl="/api/admin/storefronts/empaques/upload"
                       kind="imagen"
                       folder="categorias"
-                      helpText="PNG, JPG, SVG, WEBP o GIF. Máximo 5 MB."
+                      helpText="PNG, JPG, SVG, WEBP o GIF. Máximo 4 MiB."
                       disabled={savingEditorial}
                     />
                     <label className="space-y-2 block">
@@ -1384,9 +1433,10 @@ export default function AdminEmpaquesPage() {
                         type="checkbox"
                         checked={categoryDraft.visible}
                         onChange={(event) => setCategoryDraft((current) => current ? { ...current, visible: event.target.checked } : current)}
+                        aria-describedby="category-visibility-help"
                         className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
                       />
-                      Visible
+                      Visible en catálogo
                     </label>
                     <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2.5 text-sm font-semibold text-slate-700">
                       <input
@@ -1395,30 +1445,46 @@ export default function AdminEmpaquesPage() {
                         onChange={(event) => setCategoryDraft((current) => current ? { ...current, destacado: event.target.checked } : current)}
                         className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
                       />
-                      Destacada
+                      Mostrar en portada
                     </label>
-                    <select
-                      value={categoryDraft.estado_publicacion}
-                      onChange={(event) => setCategoryDraft((current) => current ? { ...current, estado_publicacion: event.target.value as PublicationState } : current)}
-                      className="rounded-lg border border-border px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
-                    >
-                      <option value="borrador">Borrador</option>
-                      <option value="publicado">Publicado</option>
-                    </select>
+                    <label className="space-y-2 block">
+                      <span className="text-sm font-semibold text-slate-700">Publicación</span>
+                      <select
+                        value={categoryDraft.estado_publicacion}
+                        onChange={(event) => setCategoryDraft((current) => current ? { ...current, estado_publicacion: event.target.value as PublicationState } : current)}
+                        aria-describedby="category-publication-help"
+                        className="w-full rounded-lg border border-border px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                      >
+                        <option value="borrador">Borrador</option>
+                        <option value="publicado">Publicado</option>
+                      </select>
+                    </label>
                   </div>
+                  <p id="category-visibility-help" className={`rounded-lg border p-3 text-sm ${categoryDraft.visible ? 'border-border text-slate-600' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
+                    {categoryDraft.visible
+                      ? 'Visible afecta toda la rama en el catálogo de Empaques, no solo la portada. Para quitar una tarjeta de portada sin ocultar sus productos, desmarca “Mostrar en portada” y conserva otras categorías destacadas publicadas.'
+                      : 'Atención: publicar con Visible desmarcado oculta esta categoría, todas sus subcategorías y sus productos del catálogo de Empaques. No solo quita la tarjeta de portada. Una rama con un padre oculto seguirá oculta aunque sus hijas sean visibles.'}
+                  </p>
+                  <p id="category-publication-help" className="text-sm text-slate-600">
+                    {categoryDraft.estado_publicacion === 'publicado'
+                      ? 'Publicar aplica la imagen, los textos, el orden y la visibilidad al storefront. La portada usa solo imágenes de categorías publicadas.'
+                      : 'Guardar borrador no publica esta edición. Si ya estaba publicada, deja de aplicarse su edición anterior (incluida la ocultación) y se usa el catálogo base; no se conserva otra versión publicada.'}
+                  </p>
+                  {uploadingCategoryImage && <p role="status" className="text-sm text-slate-600">Subiendo imagen. Espera antes de guardar o cambiar de categoría.</p>}
                   <button
                     type="submit"
-                    disabled={savingEditorial}
+                    disabled={savingEditorial || isEditorialUploading}
                     className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {savingEditorial ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                    Guardar categoría
+                    {savingEditorial || uploadingCategoryImage ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                    {savingEditorial ? 'Guardando categoría…' : uploadingCategoryImage ? 'Subiendo imagen…' : categoryDraft.estado_publicacion === 'publicado' ? categoryDraft.visible ? 'Publicar categoría' : 'Publicar y ocultar rama' : 'Guardar borrador'}
                   </button>
                 </>
               )}
-            </div>
+            </fieldset>
           </form>
 
+          {activeTab === 'editorial' && (
           <form onSubmit={handleSaveProductEditorial} className="rounded-2xl border border-border bg-white p-6 shadow-sm">
             <div className="mb-5">
               <h2 className="text-lg font-bold text-slate-900">Productos editoriales</h2>
@@ -1430,6 +1496,7 @@ export default function AdminEmpaquesPage() {
                 <select
                   value={editorialProductId}
                   onChange={(event) => setEditorialProductId(event.target.value)}
+                  disabled={uploadingProductImage || uploadingProductPdf || savingEditorial}
                   className="w-full rounded-lg border border-border px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
                 >
                   <option value="">Selecciona un producto</option>
@@ -1444,7 +1511,7 @@ export default function AdminEmpaquesPage() {
                 </select>
               </label>
 
-              {productDraft && (
+              {productDraft && productDraft.odoo_product_id === Number(editorialProductId) && (
                 <>
                   <div className="grid gap-4 md:grid-cols-2">
                     <label className="space-y-2 block">
@@ -1484,13 +1551,15 @@ export default function AdminEmpaquesPage() {
                   </label>
                   <div className="grid gap-4 md:grid-cols-[1fr_120px]">
                     <MediaUpload
+                      key={`producto-${productDraft.odoo_product_id}`}
                       label="Imagen del producto"
                       value={productDraft.imagen_url || null}
-                      onChange={(url) => setProductDraft((current) => current ? { ...current, imagen_url: url } : current)}
+                      onChange={(url) => setProductDraft((current) => current?.odoo_product_id === productDraft.odoo_product_id ? { ...current, imagen_url: url } : current)}
+                      onUploadingChange={setUploadingProductImage}
                       uploadUrl="/api/admin/storefronts/empaques/upload"
                       kind="imagen"
                       folder="productos"
-                      helpText="PNG, JPG, SVG, WEBP o GIF. Máximo 5 MB."
+                      helpText="PNG, JPG, SVG, WEBP o GIF. Máximo 4 MiB."
                       disabled={savingEditorial}
                     />
                     <label className="space-y-2 block">
@@ -1504,9 +1573,11 @@ export default function AdminEmpaquesPage() {
                     </label>
                   </div>
                   <MediaUpload
+                    key={`ficha-${productDraft.odoo_product_id}`}
                     label="Ficha técnica (PDF)"
                     value={productDraft.ficha_tecnica_url || null}
-                    onChange={(url) => setProductDraft((current) => current ? { ...current, ficha_tecnica_url: url } : current)}
+                    onChange={(url) => setProductDraft((current) => current?.odoo_product_id === productDraft.odoo_product_id ? { ...current, ficha_tecnica_url: url } : current)}
+                    onUploadingChange={setUploadingProductPdf}
                     uploadUrl="/api/admin/storefronts/empaques/upload"
                     kind="pdf"
                     folder="fichas"
@@ -1561,16 +1632,17 @@ export default function AdminEmpaquesPage() {
                   </div>
                   <button
                     type="submit"
-                    disabled={savingEditorial}
+                    disabled={savingEditorial || isEditorialUploading}
                     className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {savingEditorial ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                    Guardar producto
+                    {savingEditorial || isEditorialUploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                    {isEditorialUploading ? 'Esperando archivos…' : 'Guardar producto'}
                   </button>
                 </>
               )}
             </div>
           </form>
+          )}
         </div>
       )}
 
@@ -1578,7 +1650,7 @@ export default function AdminEmpaquesPage() {
         <form
           onSubmit={async (event) => {
             event.preventDefault();
-            if (!landingLoaded || savingLanding) return;
+            if (!landingLoaded || savingLanding || isLandingUploading) return;
             setSavingLanding(true);
             setError(null);
             try {
@@ -1610,6 +1682,20 @@ export default function AdminEmpaquesPage() {
           }}
           className="space-y-6"
         >
+          <div className="rounded-2xl border border-border bg-white p-6 shadow-sm">
+            <h2 className="text-lg font-bold text-slate-900">Categorías de Empaques</h2>
+            <p className="mt-1 text-sm text-slate-500">Las fotos y los textos de las tarjetas de categorías se editan por separado del banner. Selecciona una categoría, sube su imagen y publícala en “Categorías de portada”.</p>
+            <button
+              type="button"
+              onClick={() => setActiveTab('categorias')}
+              disabled={savingLanding || isLandingUploading}
+              className="mt-4 inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <Layers className="h-4 w-4" />
+              Editar categorías de portada
+            </button>
+            <p className="mt-2 text-xs text-slate-500">Este acceso no guarda ni publica los cambios de Landing. Las categorías tienen su propio botón de publicación.</p>
+          </div>
           <div className="rounded-2xl border border-border bg-white p-6 shadow-sm">
             <h2 className="text-lg font-bold text-slate-900">Banner principal</h2>
             <p className="mt-1 text-sm text-slate-500">
@@ -1711,6 +1797,8 @@ export default function AdminEmpaquesPage() {
                 <MediaUpload
                   uploadUrl="/api/admin/storefronts/empaques/upload"
                   folder="landing"
+                  onUploadingChange={setUploadingHeroImage}
+                  disabled={savingLanding || !landingLoaded || isLandingUploading}
                   value={landing.hero.imagen_url}
                   onChange={(url) =>
                     setLanding((prev) => ({
@@ -1719,7 +1807,7 @@ export default function AdminEmpaquesPage() {
                     }))
                   }
                   label="Imagen del banner"
-                  helpText="Recomendado: JPG o WEBP panorámico, mínimo 1920×800 px. Máximo 5 MB."
+                  helpText="Recomendado: JPG o WEBP panorámico, mínimo 1920×800 px. Máximo 4 MiB."
                 />
               </div>
               <div className="space-y-4 rounded-xl border border-slate-200 bg-slate-50/60 p-4 md:col-span-2">
@@ -2124,6 +2212,8 @@ export default function AdminEmpaquesPage() {
                 <MediaUpload
                   uploadUrl="/api/admin/storefronts/empaques/upload"
                   folder="personalizados"
+                  onUploadingChange={setUploadingPersonalizadosImage}
+                  disabled={savingLanding || !landingLoaded || isLandingUploading}
                   value={landing.personalizados.imagen_url}
                   onChange={(url) =>
                     setLanding((prev) => ({
@@ -2132,7 +2222,7 @@ export default function AdminEmpaquesPage() {
                     }))
                   }
                   label="Imagen de Empaques Personalizados"
-                  helpText="Se usa en la tarjeta de acceso y en la cabecera de la vista. Máximo 5 MB."
+                  helpText="Se usa en la tarjeta de acceso y en la cabecera de la vista. Máximo 4 MiB."
                 />
               </div>
             </div>
@@ -2171,19 +2261,19 @@ export default function AdminEmpaquesPage() {
                 },
               }))}
               className="inline-flex items-center gap-2 rounded-lg border border-border bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
-              disabled={savingLanding || !landingLoaded}
+              disabled={savingLanding || !landingLoaded || isLandingUploading}
             >
               Restaurar textos por defecto
             </button>
             <button
               type="submit"
-              disabled={savingLanding || !landingLoaded}
+              disabled={savingLanding || !landingLoaded || isLandingUploading}
               className="inline-flex items-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-primary/90 disabled:opacity-60"
             >
-              {savingLanding ? (
+              {savingLanding || isLandingUploading ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  Guardando...
+                  {isLandingUploading ? 'Subiendo imagen…' : 'Guardando…'}
                 </>
               ) : (
                 <>

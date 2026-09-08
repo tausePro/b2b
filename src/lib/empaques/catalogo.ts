@@ -263,15 +263,8 @@ function emptyEditorialContext(): StorefrontEditorialContext {
   };
 }
 
-function isMissingEditorialTableError(error: { code?: string; message?: string } | null) {
-  return Boolean(
-    error
-    && (
-      error.code === 'PGRST205'
-      || error.message?.includes('storefront_category_overrides')
-      || error.message?.includes('storefront_product_overrides')
-    )
-  );
+export function isMissingEditorialTableError(error: { code?: string; message?: string } | null) {
+  return error?.code === 'PGRST205' || error?.code === '42P01';
 }
 
 function getSupabaseAdmin() {
@@ -404,7 +397,7 @@ interface CategoryTreeOptions {
   excludedCategoryIds: number[];
 }
 
-function buildCategoryTree(
+export function buildCategoryTree(
   categories: OdooCategory[],
   options: CategoryTreeOptions,
   editorialCtx: StorefrontEditorialContext
@@ -415,7 +408,7 @@ function buildCategoryTree(
   if (options.allowedCategoryIds) {
     // Modo pricelist: tomar las categorías hoja de productos + ancestros.
     allowedIds = getAncestorIds(categories, options.allowedCategoryIds);
-    for (const excludedId of options.excludedCategoryIds) {
+    for (const excludedId of getDescendantIds(categories, options.excludedCategoryIds)) {
       allowedIds.delete(excludedId);
     }
     topLevelIds = Array.from(allowedIds).filter((id) => {
@@ -427,7 +420,7 @@ function buildCategoryTree(
   } else {
     // Modo clásico: descendentes de rootCategoryIds menos excluidos.
     allowedIds = getDescendantIds(categories, options.rootCategoryIds);
-    for (const excludedId of options.excludedCategoryIds) {
+    for (const excludedId of getDescendantIds(categories, options.excludedCategoryIds)) {
       allowedIds.delete(excludedId);
     }
     topLevelIds = options.rootCategoryIds;
@@ -858,21 +851,14 @@ async function loadStorefrontEditorialContext(storefrontId: string): Promise<Sto
       .eq('estado_publicacion', 'publicado'),
   ]);
 
-  if (categoriesRes.error) {
-    if (isMissingEditorialTableError(categoriesRes.error)) {
-      return emptyEditorialContext();
-    }
+  if (categoriesRes.error && !isMissingEditorialTableError(categoriesRes.error)) {
     throw new EmpaquesConfigurationError(categoriesRes.error.message);
   }
-  if (productsRes.error) {
-    if (isMissingEditorialTableError(productsRes.error)) {
-      return emptyEditorialContext();
-    }
+  if (productsRes.error && !isMissingEditorialTableError(productsRes.error)) {
     throw new EmpaquesConfigurationError(productsRes.error.message);
   }
 
-  const categories = new Map<number, StorefrontCategoryOverrideRow>();
-  const hiddenCategoryIds: number[] = [];
+  const { categories, products, hiddenCategoryIds, hiddenProductIds } = emptyEditorialContext();
   for (const row of (categoriesRes.data ?? []) as StorefrontCategoryOverrideRow[]) {
     if (row.visible === false) {
       hiddenCategoryIds.push(row.odoo_categ_id);
@@ -881,8 +867,6 @@ async function loadStorefrontEditorialContext(storefrontId: string): Promise<Sto
     }
   }
 
-  const products = new Map<number, StorefrontProductOverrideRow>();
-  const hiddenProductIds: number[] = [];
   for (const row of (productsRes.data ?? []) as StorefrontProductOverrideRow[]) {
     if (row.visible === false) {
       hiddenProductIds.push(row.odoo_product_id);
