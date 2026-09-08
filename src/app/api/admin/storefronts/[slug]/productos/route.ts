@@ -37,14 +37,7 @@ function cleanObject(value: unknown) {
 }
 
 function isMissingEditorialTableError(error: { code?: string; message?: string } | null) {
-  return Boolean(
-    error
-    && (
-      error.code === 'PGRST205'
-      || error.message?.includes("Could not find the table 'public.storefront_product_overrides'")
-      || error.message?.includes('storefront_product_overrides')
-    )
-  );
+  return error?.code === 'PGRST205' || error?.code === '42P01';
 }
 
 export async function GET(
@@ -74,6 +67,9 @@ export async function GET(
 
   const { data, error } = await query;
 
+  if (error?.code === '42703' && error.message.includes('ficha_tecnica_url')) {
+    return NextResponse.json({ error: 'Falta actualizar las fichas técnicas: aplica 050_fix_storefront_ficha_tecnica.sql.', code: 'MIGRATION_PENDING' }, { status: 409 });
+  }
   if (isMissingEditorialTableError(error)) {
     return NextResponse.json({ productos: [], migrationPending: true });
   }

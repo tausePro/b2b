@@ -29,14 +29,7 @@ function cleanPublicationState(value: unknown) {
 }
 
 function isMissingEditorialTableError(error: { code?: string; message?: string } | null) {
-  return Boolean(
-    error
-    && (
-      error.code === 'PGRST205'
-      || error.message?.includes("Could not find the table 'public.storefront_category_overrides'")
-      || error.message?.includes('storefront_category_overrides')
-    )
-  );
+  return error?.code === 'PGRST205' || error?.code === '42P01';
 }
 
 export async function GET(
@@ -70,13 +63,33 @@ export async function POST(
   const resolved = await getStorefrontContext(slug);
   if (resolved instanceof NextResponse) return resolved;
 
-  const body = await request.json();
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return NextResponse.json({ error: 'El cuerpo debe ser un objeto JSON válido.' }, { status: 400 });
+  }
   const odooCategId = Number(body.odoo_categ_id);
   const estadoPublicacion = cleanPublicationState(body.estado_publicacion);
 
-  if (!Number.isFinite(odooCategId) || odooCategId <= 0) {
-    return NextResponse.json({ error: 'odoo_categ_id debe ser un número positivo.' }, { status: 400 });
+  if (!Number.isSafeInteger(odooCategId) || odooCategId <= 0 || typeof body.odoo_categ_id === 'boolean') {
+    return NextResponse.json({ error: 'odoo_categ_id debe ser un entero positivo.' }, { status: 400 });
   }
+  const imageUrl = cleanText(body.imagen_url);
+  if (imageUrl) {
+    try {
+      const parsed = new URL(imageUrl);
+      if (parsed.protocol !== 'https:' || parsed.username || parsed.password) throw new Error('URL');
+    } catch {
+      return NextResponse.json({ error: 'La imagen debe usar una URL HTTPS válida.' }, { status: 400 });
+    }
+  }
+  const { data: existing, error: existingError } = await resolved.auth.admin
+    .from('storefront_category_overrides')
+    .select('id, descripcion_larga, seo_title, seo_description, contenido_extra')
+    .eq('storefront_config_id', resolved.storefrontId).eq('odoo_categ_id', odooCategId).maybeSingle();
+  if (isMissingEditorialTableError(existingError)) {
+    return NextResponse.json({ error: 'MIGRATION_PENDING', details: 'Falta la migración 039_storefront_editorial_overrides.sql.' }, { status: 409 });
+  }
+  if (existingError) return NextResponse.json({ error: existingError.message }, { status: 500 });
 
   const { data, error } = await resolved.auth.admin
     .from('storefront_category_overrides')
@@ -87,14 +100,16 @@ export async function POST(
         nombre_publico: cleanText(body.nombre_publico),
         slug: cleanText(body.slug),
         descripcion_corta: cleanText(body.descripcion_corta),
-        descripcion_larga: cleanText(body.descripcion_larga),
-        imagen_url: cleanText(body.imagen_url),
+        descripcion_larga: 'descripcion_larga' in body ? cleanText(body.descripcion_larga) : existing?.descripcion_larga ?? null,
+        imagen_url: imageUrl,
         orden: Number.isFinite(Number(body.orden)) ? Math.trunc(Number(body.orden)) : 0,
         visible: typeof body.visible === 'boolean' ? body.visible : true,
         destacado: typeof body.destacado === 'boolean' ? body.destacado : false,
-        seo_title: cleanText(body.seo_title),
-        seo_description: cleanText(body.seo_description),
-        contenido_extra: body.contenido_extra && typeof body.contenido_extra === 'object' ? body.contenido_extra : {},
+        seo_title: 'seo_title' in body ? cleanText(body.seo_title) : existing?.seo_title ?? null,
+        seo_description: 'seo_description' in body ? cleanText(body.seo_description) : existing?.seo_description ?? null,
+        contenido_extra: body.contenido_extra && typeof body.contenido_extra === 'object' && !Array.isArray(body.contenido_extra)
+          ? body.contenido_extra : existing?.contenido_extra ?? {},
+        ...(!existing ? { creado_por: resolved.auth.actor.id } : {}),
         estado_publicacion: estadoPublicacion,
         actualizado_por: resolved.auth.actor.id,
         publicado_at: estadoPublicacion === 'publicado' ? new Date().toISOString() : null,
@@ -106,7 +121,7 @@ export async function POST(
     .single();
 
   if (isMissingEditorialTableError(error)) {
-    return NextResponse.json({ error: 'MIGRATION_PENDING', details: 'Ejecuta la migración 038_storefront_editorial_overrides.sql antes de guardar contenido editorial.' }, { status: 409 });
+    return NextResponse.json({ error: 'MIGRATION_PENDING', details: 'Ejecuta la migración 039_storefront_editorial_overrides.sql antes de guardar contenido editorial.' }, { status: 409 });
   }
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
@@ -135,7 +150,7 @@ export async function DELETE(
     .eq('storefront_config_id', resolved.storefrontId);
 
   if (isMissingEditorialTableError(error)) {
-    return NextResponse.json({ error: 'MIGRATION_PENDING', details: 'Ejecuta la migración 038_storefront_editorial_overrides.sql antes de eliminar contenido editorial.' }, { status: 409 });
+    return NextResponse.json({ error: 'MIGRATION_PENDING', details: 'Ejecuta la migración 039_storefront_editorial_overrides.sql antes de eliminar contenido editorial.' }, { status: 409 });
   }
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 

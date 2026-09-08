@@ -12,7 +12,7 @@
     "test:multiempresa": "npm test && npm run test:multiempresa:integration",
     "test:bono:integration": "node --conditions=react-server --import tsx --test tests/bono-plataforma.integration.test.ts",
     "test:bono:odoo": "node --conditions=react-server --import tsx --test --test-name-pattern=Odoo tests/bono-plataforma.integration.test.ts",
-    "test:empaques": "node --conditions=react-server --import tsx --test tests/empaques-tiff.test.ts tests/empaques-personalizados.test.ts",
+    "test:empaques": "node --conditions=react-server --import tsx --test tests/empaques-tiff.test.ts tests/empaques-personalizados.test.ts tests/empaques-categorias.test.ts",
     "test:empaques:integration": "node --conditions=react-server --import tsx --test tests/empaques-personalizados.integration.test.ts"
   },
   "dependencies": {

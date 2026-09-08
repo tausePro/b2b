@@ -8,6 +8,7 @@ import { getServerOdooConfig } from '../src/lib/odoo/serverConfig';
 import { authenticate, searchRead } from '../src/lib/odoo/client';
 import sharp from 'sharp';
 import { loadPersonalizacionProductImage, PersonalizadosError } from '../src/lib/empaques/personalizados.server';
+import { getEmpaquesCatalogData, getEmpaquesProductDetail } from '../src/lib/empaques/catalogo';
 
 config({ path: '.env.local', quiet: true });
 function client(admin = true) {
@@ -16,6 +17,24 @@ function client(admin = true) {
   assert.ok(url && key, 'Faltan variables de Supabase.');
   return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
 }
+
+test('050: la configuración editorial se lee y Oficina queda fuera de Empaques', async () => {
+  const admin = client();
+  const schema = await admin.from('storefront_product_overrides').select('ficha_tecnica_url').limit(1);
+  assert.ifError(schema.error);
+  const catalog = await getEmpaquesCatalogData({ limit: 48 });
+  const visit = (categories: typeof catalog.categories) => {
+    for (const category of categories) {
+      assert.ok(![1, 4, 10, 11, 12].includes(category.id), `La categoría ${category.id} debe estar oculta.`);
+      visit(category.children);
+    }
+  };
+  visit(catalog.categories);
+  assert.ok(catalog.categories.some((category) => category.id === 132));
+  assert.ok(catalog.productos.every((product) => product.categ_id && ![1, 4, 10, 11, 12].includes(product.categ_id[0])));
+  await assert.rejects(getEmpaquesCatalogData({ categoryId: 1 }), /no pertenece al catálogo público/);
+  assert.equal(await getEmpaquesProductDetail(2477), null);
+});
 
 test('049: referencias reales configuradas y columnas nuevas disponibles', async () => {
   const admin = client();
