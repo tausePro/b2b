@@ -20,6 +20,15 @@ const nextConfig: NextConfig = {
   // desde NEXT_PUBLIC_SUPABASE_URL para no hardcodear el subdominio del
   // proyecto (permite moverse entre ambientes sin tocar esta config).
   images: {
+    // Por defecto Next solo optimiza imagenes locales sin query string. Las
+    // fotografias de productos de Empaques se sirven desde Odoo a traves de
+    // /api/empaques/imagen/[id]?s=<tamano>&v=<version> y necesitan la query
+    // para elegir resolucion e invalidar cache; el segundo patron conserva
+    // el comportamiento por defecto para el resto de imagenes locales.
+    localPatterns: [
+      { pathname: '/api/empaques/imagen/**' },
+      { pathname: '**', search: '' },
+    ],
     remotePatterns: (() => {
       const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
       if (!supabaseUrl) return [];

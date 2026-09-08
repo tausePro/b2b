@@ -367,7 +367,15 @@ export async function searchRead(
   model: string,
   domain: unknown[] = [],
   fields: string[] = [],
-  options: { limit?: number; offset?: number; order?: string; config?: OdooConfig; session?: OdooSession } = {}
+  options: {
+    limit?: number;
+    offset?: number;
+    order?: string;
+    /** Contexto Odoo (ej. `{ bin_size: true }` devuelve el tamaño de los binarios en vez de su contenido). */
+    context?: Record<string, unknown>;
+    config?: OdooConfig;
+    session?: OdooSession;
+  } = {}
 ): Promise<Record<string, unknown>[]> {
   const session = options.session || await authenticate(options.config);
   const kwargs: Record<string, unknown> = {};
@@ -375,6 +383,7 @@ export async function searchRead(
   if (options.limit !== undefined) kwargs.limit = options.limit;
   if (options.offset !== undefined) kwargs.offset = options.offset;
   if (options.order) kwargs.order = options.order;
+  if (options.context) kwargs.context = options.context;
 
   const result = await executeKw(session, model, 'search_read', [domain], kwargs);
   return result as Record<string, unknown>[];

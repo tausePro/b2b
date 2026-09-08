@@ -86,7 +86,6 @@ function RelatedProductCard({ product }: { product: EmpaquesCatalogProduct }) {
             alt={product.name}
             fill
             sizes="(max-width: 639px) 100vw, (max-width: 1023px) 50vw, 25vw"
-            unoptimized
             className={`${editorialImage ? 'object-contain p-4' : 'object-cover'} transition duration-500 group-hover:scale-105`}
           />
         ) : (
@@ -160,7 +159,6 @@ export default async function EmpaquesProductPage({ params }: EmpaquesProductPag
                       alt={product.name}
                       fill
                       sizes="(max-width: 1023px) 100vw, 55vw"
-                      unoptimized
                       priority
                       className="object-contain p-2 sm:p-4"
                     />
