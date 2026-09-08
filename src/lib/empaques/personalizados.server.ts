@@ -4,7 +4,7 @@ import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { normalizeLandingConfig } from './landing-config-shared';
-import { getEmpaquesProductImageSrc } from './product-images';
+import { getEmpaquesInlineImageSrc } from './product-images';
 import { authenticate, searchRead } from '@/lib/odoo/client';
 import { getServerOdooConfig } from '@/lib/odoo/serverConfig';
 
@@ -117,7 +117,7 @@ export async function loadPersonalizacionProductImage(admin: ReturnType<typeof p
     }
   }
   const image = typeof product.image_1024 === 'string' && product.image_1024.length <= 3 * 1024 * 1024 ? product.image_1024 : false;
-  return { ...result, imagen_url: getEmpaquesProductImageSrc({ image_url: editorialImage, image_1024: image }, 'detail') };
+  return { ...result, imagen_url: getEmpaquesInlineImageSrc({ image_url: editorialImage, image_1024: image }) };
 }
 
 export async function loadPersonalizacionReferencia(admin: ReturnType<typeof personalizacionAdmin>, sku: unknown) {
