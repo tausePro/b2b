@@ -25,6 +25,12 @@ import {
   markupOnCost,
   type OdooCostAgeStatus,
 } from '@/lib/pricing/cost-staleness';
+import {
+  getBase64Mime,
+  hasOdooBinary,
+  toEmpaquesImageVersion,
+  type EmpaquesOdooImageSize,
+} from '@/lib/empaques/product-images';
 
 export const EMPAQUES_DEFAULT_LIMIT = 24;
 export const EMPAQUES_MAX_LIMIT = 48;
@@ -57,7 +63,12 @@ const PRODUCT_FIELDS = [
   'write_date',
 ];
 
-const PRODUCT_DETAIL_FIELDS = [...PRODUCT_FIELDS, 'image_1920'];
+/**
+ * Las fotografías no viajan en base64 dentro del catálogo: con `bin_size`
+ * Odoo devuelve solo el tamaño de `image_128` (o `false`), suficiente para
+ * saber si hay imagen. El binario se sirve por `/api/empaques/imagen/[id]`.
+ */
+const PRODUCT_READ_CONTEXT = { bin_size: true } as const;
 
 interface EmpaquesStorefrontContext {
   id: string;
@@ -97,7 +108,10 @@ export interface EmpaquesCatalogProduct {
   description_sale: string | false;
   descripcion_larga: string | null;
   categ_id: [number, string] | false;
-  image_128: string | false;
+  /** El producto tiene fotografía en Odoo; el binario se sirve por `/api/empaques/imagen/[id]`. */
+  has_image: boolean;
+  /** Token derivado de `write_date` para invalidar la caché de la fotografía. */
+  image_version: string | null;
   image_url: string | null;
   ficha_tecnica_url: string | null;
   default_code: string | false;
@@ -129,8 +143,12 @@ export interface EmpaquesCatalogProduct {
   variantes_consideradas?: number;
 }
 
-export interface EmpaquesProductDetail extends EmpaquesCatalogProduct {
-  image_1920: string | false;
+export type EmpaquesProductDetail = EmpaquesCatalogProduct;
+
+export interface EmpaquesProductImage {
+  /** Contenido base64 tal como lo entrega Odoo. */
+  base64: string;
+  mime: string;
 }
 
 export interface EmpaquesProductDetailData {
@@ -685,7 +703,8 @@ function mapProduct(
     description_sale: description,
     descripcion_larga: override?.descripcion_larga?.trim() || null,
     categ_id: mapCategoryValue(product.categ_id),
-    image_128: typeof product.image_128 === 'string' ? product.image_128 : false,
+    has_image: hasOdooBinary(product.image_128),
+    image_version: toEmpaquesImageVersion(product.write_date),
     image_url: override?.imagen_url?.trim() || null,
     ficha_tecnica_url: override?.ficha_tecnica_url?.trim() || null,
     default_code: typeof product.default_code === 'string' ? product.default_code : false,
@@ -942,7 +961,7 @@ export async function getEmpaquesCatalogData(input: EmpaquesCatalogInput = {}): 
   const pricingCtx = await loadStorefrontPricingContext(storefront.id, storefront.modoPricing);
 
   const [productos, total] = await Promise.all([
-    searchRead('product.template', domain, PRODUCT_FIELDS, { limit, offset, order: 'name asc', session }),
+    searchRead('product.template', domain, PRODUCT_FIELDS, { limit, offset, order: 'name asc', session, context: PRODUCT_READ_CONTEXT }),
     searchCount('product.template', domain, session),
   ]);
 
@@ -1051,8 +1070,8 @@ export const getEmpaquesProductDetail = cache(async (
   const rows = await searchRead(
     'product.template',
     productDomain,
-    PRODUCT_DETAIL_FIELDS,
-    { limit: 1, session },
+    PRODUCT_FIELDS,
+    { limit: 1, session, context: PRODUCT_READ_CONTEXT },
   );
   if (rows.length === 0) return null;
 
@@ -1061,10 +1080,7 @@ export const getEmpaquesProductDetail = cache(async (
   const category = categoryId ? categoryTree.categoryIndex[String(categoryId)] ?? null : null;
   if (!category) return null;
 
-  const product: EmpaquesProductDetail = {
-    ...mapProduct(productRow, pricingCtx, editorialCtx),
-    image_1920: typeof productRow.image_1920 === 'string' ? productRow.image_1920 : false,
-  };
+  const product: EmpaquesProductDetail = mapProduct(productRow, pricingCtx, editorialCtx);
 
   const relatedDomain = buildProductDomain({
     search: '',
@@ -1080,7 +1096,7 @@ export const getEmpaquesProductDetail = cache(async (
     'product.template',
     relatedDomain,
     PRODUCT_FIELDS,
-    { limit: 4, order: 'name asc', session },
+    { limit: 4, order: 'name asc', session, context: PRODUCT_READ_CONTEXT },
   );
 
   return {
@@ -1091,3 +1107,50 @@ export const getEmpaquesProductDetail = cache(async (
     category,
   };
 });
+
+/**
+ * Binario de la fotografía de un producto visible en el storefront público.
+ * Aplica el mismo dominio que el catálogo (raíces, exclusiones, ocultos
+ * editoriales y pricelist) para no exponer productos que la tienda no lista.
+ * Devuelve null si el producto no es visible o no tiene imagen.
+ */
+export async function getEmpaquesProductImage(
+  productId: number,
+  size: EmpaquesOdooImageSize,
+): Promise<EmpaquesProductImage | null> {
+  if (!Number.isFinite(productId) || productId <= 0) return null;
+
+  const normalizedProductId = Math.trunc(productId);
+  // Ruta caliente (una invocación por fotografía no cacheada): se paralelizan
+  // las lecturas independientes para reducir los viajes secuenciales a 3.
+  const [storefront, config] = await Promise.all([getEmpaquesStorefront(), getServerOdooConfig()]);
+  if (!config) {
+    throw new EmpaquesConfigurationError('Configuración de Odoo no encontrada.');
+  }
+
+  const [session, editorialCtx] = await Promise.all([
+    authenticate(config),
+    loadStorefrontEditorialContext(storefront.id),
+  ]);
+  const pricelistTemplateIdsSet = storefront.pricelistId
+    ? await resolvePricelistTemplateIds(session, storefront.pricelistId)
+    : null;
+
+  const usingPricelist = Boolean(storefront.pricelistId) && pricelistTemplateIdsSet !== null;
+  const domain = buildProductDomain({
+    search: '',
+    categoryId: null,
+    rootCategoryIds: storefront.rootCategoryIds,
+    excludedCategoryIds: [...storefront.excludedCategoryIds, ...editorialCtx.hiddenCategoryIds],
+    hiddenProductIds: editorialCtx.hiddenProductIds,
+    pricelistTemplateIds: usingPricelist ? Array.from(pricelistTemplateIdsSet as Set<number>) : undefined,
+  });
+  domain.push(['id', '=', normalizedProductId]);
+
+  const field = `image_${size}`;
+  const rows = await searchRead('product.template', domain, ['id', field], { limit: 1, session });
+  const base64 = rows[0]?.[field];
+  if (!hasOdooBinary(base64)) return null;
+
+  return { base64: base64 as string, mime: getBase64Mime(base64 as string) };
+}

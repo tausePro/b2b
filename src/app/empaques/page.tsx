@@ -131,7 +131,6 @@ function HeroSection({
             alt=""
             fill
             sizes="100vw"
-            unoptimized
             priority
             className="object-cover object-center"
           />
@@ -151,7 +150,6 @@ function HeroSection({
                 alt={fallbackImageAlt}
                 width={460}
                 height={460}
-                unoptimized
                 priority
                 className="max-h-full w-auto object-contain drop-shadow-2xl"
               />
@@ -211,10 +209,9 @@ function CategoryCard({
         <Image
           src={imageSrc}
           alt={category.name}
-          width={520}
-          height={520}
-          unoptimized
-          className={`absolute inset-0 h-full w-full object-cover opacity-60 transition duration-700 group-hover:scale-105 ${isTall ? 'object-center' : 'object-right'}`}
+          fill
+          sizes={isTall ? '(max-width: 767px) 100vw, 33vw' : '(max-width: 767px) 100vw, 66vw'}
+          className={`object-cover opacity-60 transition duration-700 group-hover:scale-105 ${isTall ? 'object-center' : 'object-right'}`}
         />
       )}
       <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-transparent" />
@@ -277,7 +274,7 @@ function PersonalizedSection({
         <Link href={href} className="group grid min-h-[440px] overflow-hidden rounded-3xl bg-slate-950 shadow-xl shadow-slate-900/10 lg:grid-cols-2">
           <div className="relative min-h-[320px] overflow-hidden">
             {config.imagen_url ? (
-              <Image src={config.imagen_url} alt={config.titulo} fill sizes="(max-width: 1023px) 100vw, 50vw" unoptimized className="object-cover transition duration-700 group-hover:scale-105" />
+              <Image src={config.imagen_url} alt={config.titulo} fill sizes="(max-width: 1023px) 100vw, 50vw" className="object-cover transition duration-700 group-hover:scale-105" />
             ) : (
               <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_30%,rgba(156,187,6,0.55),transparent_35%),linear-gradient(145deg,#172033,#020617)]" />
             )}
@@ -346,7 +343,6 @@ function ProductCard({ product }: { product: EmpaquesCatalogProduct }) {
               alt={product.name}
               fill
               sizes="(max-width: 639px) 100vw, (max-width: 1023px) 50vw, (max-width: 1279px) 33vw, 25vw"
-              unoptimized
               className={`${editorialImage ? 'object-contain p-4' : 'object-cover'} transition duration-500 group-hover:scale-105`}
             />
           ) : (
