@@ -7,6 +7,26 @@ type EmpaquesProductImageFields = {
 
 export type EmpaquesProductImageSize = 'card' | 'detail';
 
+export function selectEmpaquesShowcaseCategories<T extends { id: number; name: string; orden: number; destacado: boolean; children: T[] }>(categories: T[]): T[] {
+  const all: T[] = [];
+  const seen = new Set<number>();
+  const visit = (category: T) => {
+    if (seen.has(category.id)) return;
+    seen.add(category.id);
+    all.push(category);
+    category.children.forEach(visit);
+  };
+  categories.forEach(visit);
+  const featured = all.filter((category) => category.destacado);
+  return (featured.length ? featured : all)
+    .sort((a, b) => a.orden - b.orden || a.name.localeCompare(b.name, 'es'))
+    .slice(0, 3);
+}
+
+export function getEmpaquesCategoryImageSrc(category: { imagen_url: string | null }): string | null {
+  return category.imagen_url?.trim() || null;
+}
+
 function getBase64Mime(value: string) {
   if (value.startsWith('/9j/')) return 'image/jpeg';
   if (value.startsWith('iVBORw0KGgo')) return 'image/png';

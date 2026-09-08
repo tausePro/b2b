@@ -13,7 +13,7 @@
  *     nombre del archivo (último segmento del path) y un link "Abrir PDF".
  */
 
-import { ChangeEvent, useRef, useState } from 'react';
+import { ChangeEvent, useEffect, useRef, useState } from 'react';
 import { FileText, Loader2, Trash2, Upload } from 'lucide-react';
 
 export type MediaKind = 'imagen' | 'pdf';
@@ -24,6 +24,7 @@ interface MediaUploadProps {
   value: string | null;
   /** Llamado tras subir o tras eliminar (cadena vacía). */
   onChange: (url: string) => void;
+  onUploadingChange?: (uploading: boolean) => void;
   /** Endpoint que recibe FormData con `file`, `kind`, `folder`. */
   uploadUrl: string;
   /** Tipo de medio aceptado. Default: imagen. */
@@ -59,6 +60,7 @@ export function MediaUpload({
   label,
   value,
   onChange,
+  onUploadingChange,
   uploadUrl,
   kind = 'imagen',
   folder,
@@ -66,18 +68,37 @@ export function MediaUpload({
   disabled = false,
 }: MediaUploadProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const uploadRef = useRef<AbortController | null>(null);
+  const uploadingChangeRef = useRef<MediaUploadProps['onUploadingChange']>(undefined);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => () => {
+    const controller = uploadRef.current;
+    uploadRef.current = null;
+    controller?.abort();
+    uploadingChangeRef.current?.(false);
+    uploadingChangeRef.current = undefined;
+  }, []);
 
   const handleFile = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     // Reset el input para que el mismo archivo pueda re-seleccionarse luego
     // de un fallo o para forzar otra subida.
     event.target.value = '';
-    if (!file) return;
+    if (!file || disabled || uploadRef.current) return;
 
     setError(null);
+    if (kind === 'imagen' && file.size > 4 * 1024 * 1024) {
+      setError('La imagen supera el límite de 4 MiB. Reduce su tamaño antes de subirla.');
+      return;
+    }
+
+    const controller = new AbortController();
+    uploadRef.current = controller;
+    uploadingChangeRef.current = onUploadingChange;
     setUploading(true);
+    onUploadingChange?.(true);
 
     try {
       const formData = new FormData();
@@ -85,23 +106,36 @@ export function MediaUpload({
       formData.append('kind', kind);
       if (folder) formData.append('folder', folder);
 
-      const response = await fetch(uploadUrl, { method: 'POST', body: formData });
-      const data = await response.json();
+      const response = await fetch(uploadUrl, { method: 'POST', body: formData, signal: controller.signal });
+      const data = await response.json().catch(() => null);
       if (!response.ok) {
-        throw new Error(data?.error ?? 'No se pudo subir el archivo.');
+        if (response.status === 413) {
+          throw new Error('El archivo supera el tamaño permitido por el servidor. Reduce su tamaño e inténtalo de nuevo.');
+        }
+        throw new Error(typeof data?.error === 'string' && data.error.trim() ? data.error : `No se pudo subir el archivo (HTTP ${response.status}). Inténtalo de nuevo.`);
       }
-      if (typeof data?.url !== 'string') {
-        throw new Error('El servidor no devolvió URL.');
+      if (typeof data?.url !== 'string' || !data.url.trim()) {
+        throw new Error('El servidor no devolvió una URL válida. Inténtalo de nuevo.');
       }
-      onChange(data.url);
+      if (uploadRef.current === controller && !controller.signal.aborted) {
+        onChange(data.url);
+      }
     } catch (uploadError) {
-      setError(uploadError instanceof Error ? uploadError.message : 'No se pudo subir el archivo.');
+      if (uploadRef.current === controller && !controller.signal.aborted) {
+        setError(uploadError instanceof Error ? uploadError.message : 'No se pudo subir el archivo.');
+      }
     } finally {
-      setUploading(false);
+      if (uploadRef.current === controller) {
+        uploadRef.current = null;
+        setUploading(false);
+        uploadingChangeRef.current?.(false);
+        uploadingChangeRef.current = undefined;
+      }
     }
   };
 
   const handleRemove = () => {
+    if (disabled || uploadRef.current) return;
     setError(null);
     onChange('');
   };
@@ -167,13 +201,15 @@ export function MediaUpload({
           </div>
 
           {helpText && !error && <p className="text-xs text-slate-500">{helpText}</p>}
-          {error && <p className="text-xs text-red-600">{error}</p>}
+          {error && <p role="alert" className="text-xs text-red-600">{error}</p>}
         </div>
 
         <input
           ref={inputRef}
           type="file"
           accept={accept}
+          disabled={uploading || disabled}
+          aria-label={label}
           className="hidden"
           onChange={handleFile}
         />
