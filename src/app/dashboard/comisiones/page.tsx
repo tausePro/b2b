@@ -1,6 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
+import { userHasAnyRole } from '@/lib/auth/roles';
 import { AlertCircle, BadgeDollarSign, Building2, CheckCircle2, FileText, Loader2, LockKeyhole, RefreshCw } from 'lucide-react';
 import KpiCard from '@/components/ui/KpiCard';
 import { useAuth } from '@/contexts/AuthContext';
@@ -119,13 +122,20 @@ function statusClass(status: CommissionPeriodStatus): string {
   return 'bg-amber-100 text-amber-700';
 }
 
-export default function ComisionesPage() {
+function financialMonthQuery(period: string): string {
+  if (periodValidationError(period)) return '';
+  const range = getCommissionPeriodRange(period);
+  const today = getBogotaCalendarDate();
+  return new URLSearchParams({ desde: range.startDate, hasta: range.endDate > today ? today : range.endDate }).toString();
+}
+
+function ComisionesReport({ initialPeriod, initialAdvisorId }: { initialPeriod: string; initialAdvisorId: string }) {
   const { user } = useAuth();
   const userId = user?.id;
   const [currentPeriod, setCurrentPeriod] = useState(currentBogotaPeriod);
-  const [period, setPeriod] = useState(currentBogotaPeriod);
+  const [period, setPeriod] = useState(initialPeriod);
   const [data, setData] = useState<BonusResponse | null>(null);
-  const [selectedAdvisorId, setSelectedAdvisorId] = useState('all');
+  const [selectedAdvisorId, setSelectedAdvisorId] = useState(initialAdvisorId);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -265,6 +275,11 @@ export default function ComisionesPage() {
             Bono adicional del 0,5% sobre facturación sin IVA originada por clientes activos mediante el portal.
             {' '}Marcar pagada solo registra un pago realizado por fuera del portal; no envía dinero ni ejecuta transferencias bancarias.
           </p>
+          {userHasAnyRole(user, ['direccion', 'super_admin']) && (
+            <Link href={`/dashboard/gerencia?${financialMonthQuery(period)}`} className="mt-2 inline-block text-sm font-medium text-primary underline underline-offset-4 hover:text-primary-dark">
+              Ver rentabilidad general y comisión habitual
+            </Link>
+          )}
         </div>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
           {data?.canManage && (
@@ -361,7 +376,13 @@ export default function ComisionesPage() {
                   <tbody>
                     {data.results.map((result) => (
                       <tr key={result.advisor.id} className="border-b border-border/50">
-                        <th scope="row" className="px-4 py-3 text-left font-medium text-foreground">{result.advisor.name}</th>
+                        <th scope="row" className="px-4 py-3 text-left font-medium text-foreground">
+                          {userHasAnyRole(user, ['direccion', 'super_admin']) && result.advisor.odooUserId !== null && Number.isSafeInteger(result.advisor.odooUserId) && result.advisor.odooUserId > 0 ? (
+                            <Link href={`/dashboard/comisiones/asesoras/${result.advisor.odooUserId}?${financialMonthQuery(period)}`} className="text-primary underline underline-offset-4 hover:text-primary-dark">
+                              {result.advisor.name}
+                            </Link>
+                          ) : result.advisor.name}
+                        </th>
                         <td className="px-4 py-3 text-right">{result.totals.activeClients}</td>
                         <td className="px-4 py-3 text-right">{formatBonusCOP(result.totals.netBase)}</td>
                         <td className="px-4 py-3 text-right font-semibold">{formatBonusCOP(result.totals.bonus)}</td>
@@ -518,4 +539,13 @@ export default function ComisionesPage() {
       )}
     </div>
   );
+}
+
+function ComisionesLocation() {
+  const searchParams = useSearchParams();
+  return <ComisionesReport key={searchParams.toString()} initialPeriod={searchParams.get('periodo') ?? currentBogotaPeriod()} initialAdvisorId={searchParams.get('asesor_id') ?? 'all'} />;
+}
+
+export default function ComisionesPage() {
+  return <Suspense fallback={<div className="flex items-center justify-center gap-3 py-20 text-sm text-muted" role="status"><Loader2 aria-hidden="true" className="h-6 w-6 animate-spin text-primary" />Cargando liquidación…</div>}><ComisionesLocation /></Suspense>;
 }
