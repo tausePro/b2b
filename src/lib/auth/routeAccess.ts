@@ -31,6 +31,7 @@ const ROLE_PATH_PREFIXES: Record<UserRole, string[]> = {
     '/dashboard/perfil',
   ],
   direccion: [
+    '/dashboard/gerencia',
     '/dashboard/analitica',
     '/dashboard/equipo',
     '/dashboard/comisiones',
@@ -72,6 +73,9 @@ export function canAccessDashboardPath(
   }
 
   const normalizedPath = normalizePath(pathname);
+  if (normalizedPath === '/dashboard/comisiones/asesoras' || normalizedPath.startsWith('/dashboard/comisiones/asesoras/')) {
+    return effectiveRoles.includes('direccion');
+  }
 
   if (normalizedPath === '/dashboard') {
     return true;
