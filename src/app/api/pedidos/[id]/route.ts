@@ -1,9 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
-import { normalizeTipoPedidoItem } from '@/lib/pedidoItems';
+import { normalizeTipoPedidoItem, partitionPedidoItems } from '@/lib/pedidoItems';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import type { TipoPedidoItem } from '@/types';
 import { getClientCompanyAccess } from '@/lib/auth/companyMemberships.server';
+import { safeEnqueuePedidoNotifications } from '@/lib/notifications/pedidos';
+import {
+  PEDIDO_ITEM_APROBACION_FIELDS,
+  computePedidoTotals,
+  repriceCatalogItems,
+  resolveEstadoAlEnviarBorrador,
+  sincronizarPedidoAprobadoConOdoo,
+  type PedidoItemAprobacion,
+} from '@/lib/pedidos/aprobacion.server';
 
 type PerfilActual = {
   id: string;
@@ -289,30 +298,156 @@ export async function PATCH(
 
     const body = (await request.json()) as PatchPedidoRequest;
 
-    // Cambio simple de estado: borrador → en_aprobacion
+    // Envío de un borrador al flujo. El trigger set_estado_pedido_inicial solo
+    // corre en INSERT, así que aquí hay que replicar su decisión: si la empresa
+    // no requiere aprobación, el pedido se aprueba de inmediato y se crea la
+    // cotización en Odoo, igual que un pedido enviado desde el carrito.
     if (body.estado === 'en_aprobacion' && pedido.estado === 'borrador') {
-      const { error: updateError } = await admin
-        .from('pedidos')
-        .update({ estado: 'en_aprobacion' })
-        .eq('id', pedidoId);
+      const nombreUsuario = [perfil.nombre, perfil.apellido].filter(Boolean).join(' ').trim() || user.email || 'Usuario';
 
-      if (updateError) {
+      const { data: empresa, error: empresaError } = await admin
+        .from('empresas')
+        .select('id, requiere_aprobacion, odoo_partner_id')
+        .eq('id', pedido.empresa_id)
+        .single();
+
+      if (empresaError || !empresa) {
         return NextResponse.json(
-          { error: 'UPDATE_ERROR', details: updateError.message },
+          { error: 'COMPANY_NOT_FOUND', details: empresaError?.message ?? null },
+          { status: 404 }
+        );
+      }
+
+      const { data: itemsData, error: itemsError } = await admin
+        .from('pedido_items')
+        .select(PEDIDO_ITEM_APROBACION_FIELDS)
+        .eq('pedido_id', pedidoId)
+        .order('created_at');
+
+      if (itemsError) {
+        return NextResponse.json(
+          { error: 'ITEMS_FETCH_ERROR', details: itemsError.message },
           { status: 500 }
         );
       }
 
-      const nombreUsuario = [perfil.nombre, perfil.apellido].filter(Boolean).join(' ').trim() || user.email || 'Usuario';
-      await admin.from('logs_trazabilidad').insert({
+      const items = (itemsData || []) as PedidoItemAprobacion[];
+      if (items.length === 0) {
+        return NextResponse.json(
+          { error: 'EMPTY_ORDER', details: 'El borrador no tiene ítems. Agrega productos antes de enviarlo.' },
+          { status: 422 }
+        );
+      }
+
+      const estadoDestino = resolveEstadoAlEnviarBorrador(empresa.requiere_aprobacion);
+
+      if (estadoDestino === 'en_aprobacion') {
+        const { error: updateError } = await admin
+          .from('pedidos')
+          .update({ estado: 'en_aprobacion' })
+          .eq('id', pedidoId);
+
+        if (updateError) {
+          return NextResponse.json(
+            { error: 'UPDATE_ERROR', details: updateError.message },
+            { status: 500 }
+          );
+        }
+
+        await admin.from('logs_trazabilidad').insert({
+          pedido_id: pedidoId,
+          accion: 'creacion',
+          descripcion: `Borrador enviado a aprobación`,
+          usuario_id: perfil.id,
+          usuario_nombre: nombreUsuario,
+        });
+
+        const notificationResult = await safeEnqueuePedidoNotifications({
+          actorUserId: perfil.id,
+          event: 'pedido_creado_en_aprobacion',
+          pedidoId,
+        });
+
+        return NextResponse.json({
+          ok: true,
+          pedido: { ...pedido, estado: 'en_aprobacion' },
+          notifications: notificationResult.result,
+          warning: notificationResult.error,
+        });
+      }
+
+      // Empresa sin aprobación: reprecificar con la jerarquía autoritativa antes
+      // de aprobar, para que el presupuesto y la cotización usen precios vigentes.
+      const { catalogItems } = partitionPedidoItems(items);
+      const modoPricing = await repriceCatalogItems(admin, pedido.empresa_id, catalogItems);
+      const fechaAprobacion = new Date().toISOString();
+
+      const { error: approveError } = await admin
+        .from('pedidos')
+        .update({
+          estado: 'aprobado',
+          fecha_aprobacion: fechaAprobacion,
+          ...computePedidoTotals(items),
+        })
+        .eq('id', pedidoId);
+
+      if (approveError) {
+        return NextResponse.json(
+          { error: 'UPDATE_ERROR', details: approveError.message },
+          { status: 500 }
+        );
+      }
+
+      const { error: logError } = await admin.from('logs_trazabilidad').insert({
         pedido_id: pedidoId,
         accion: 'creacion',
-        descripcion: `Borrador enviado a aprobación`,
+        descripcion: `Borrador enviado con aprobación automática (la empresa no requiere aprobación)`,
         usuario_id: perfil.id,
         usuario_nombre: nombreUsuario,
+        metadata: { requiere_aprobacion: false, auto_aprobado: true, ...computePedidoTotals(items) },
       });
 
-      return NextResponse.json({ ok: true, pedido: { ...pedido, estado: 'en_aprobacion' } });
+      const notificationResult = await safeEnqueuePedidoNotifications({
+        actorUserId: perfil.id,
+        event: 'pedido_creado_autoaprobado',
+        pedidoId,
+      });
+
+      const warnings = [logError?.message, notificationResult.error];
+      let estadoFinal: string = 'aprobado';
+      let odooSaleOrderId: number | null = null;
+
+      if (!empresa.odoo_partner_id) {
+        warnings.push('La empresa no tiene odoo_partner_id; el pedido quedó aprobado sin cotización en Odoo.');
+      } else {
+        const sync = await sincronizarPedidoAprobadoConOdoo(admin, {
+          pedidoId,
+          actor: { id: perfil.id, nombre: nombreUsuario },
+          autoAprobado: true,
+          modoPricing,
+        });
+
+        if (sync.ok) {
+          estadoFinal = sync.estado;
+          odooSaleOrderId = sync.odooSaleOrderId;
+          if (!sync.alreadySynced) warnings.push(sync.warning);
+        } else {
+          warnings.push(sync.details ?? sync.error);
+          console.error('[Pedido borrador auto-aprobado] Error Odoo:', sync.error, sync.details);
+        }
+      }
+
+      return NextResponse.json({
+        ok: true,
+        pedido: {
+          ...pedido,
+          estado: estadoFinal,
+          fecha_aprobacion: fechaAprobacion,
+          odoo_sale_order_id: odooSaleOrderId,
+        },
+        notifications: notificationResult.result,
+        warning: warnings.filter(Boolean).join(' | ') || null,
+      });
     }
 
     const itemChanges = Array.isArray(body.items) ? body.items : [];
