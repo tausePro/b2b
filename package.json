@@ -7,13 +7,15 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "tsx --test tests/company-context.test.ts tests/bono-plataforma.test.ts && npm run test:empaques",
+    "test": "tsx --test tests/company-context.test.ts tests/bono-plataforma.test.ts && npm run test:empaques && npm run test:gerencia",
     "test:multiempresa:integration": "tsx --test tests/multiempresa.integration.test.ts",
     "test:multiempresa": "npm test && npm run test:multiempresa:integration",
     "test:bono:integration": "node --conditions=react-server --import tsx --test tests/bono-plataforma.integration.test.ts",
     "test:bono:odoo": "node --conditions=react-server --import tsx --test --test-name-pattern=Odoo tests/bono-plataforma.integration.test.ts",
     "test:empaques": "node --conditions=react-server --import tsx --test tests/empaques-tiff.test.ts tests/empaques-personalizados.test.ts tests/empaques-categorias.test.ts tests/empaques-imagenes.test.ts",
-    "test:empaques:integration": "node --conditions=react-server --import tsx --test tests/empaques-personalizados.integration.test.ts"
+    "test:empaques:integration": "node --conditions=react-server --import tsx --test tests/empaques-personalizados.integration.test.ts",
+    "test:gerencia": "node --conditions=react-server --import tsx --test tests/gerencia-finanzas.test.ts",
+    "test:gerencia:integration": "node --conditions=react-server --import tsx --test tests/gerencia-finanzas.integration.test.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.8.0",
