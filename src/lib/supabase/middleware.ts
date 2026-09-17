@@ -12,6 +12,7 @@ function prefiereMarkdown(accept: string | null): boolean {
 export async function updateSession(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
   const hostname = request.headers.get('host') || '';
+  const isEmpaquesHost = hostname.startsWith('empaques.');
 
   // ── Content negotiation: Markdown for Agents ──
   // Si el request pide Markdown y la ruta es pública + soportada,
@@ -20,7 +21,16 @@ export async function updateSession(request: NextRequest) {
     const canonico = pathname.length > 1 && pathname.endsWith('/')
       ? pathname.slice(0, -1)
       : pathname;
-    if (RUTAS_MARKDOWN.has(canonico)) {
+    // El home del subdominio de Empaques describe el storefront, no la
+    // landing corporativa. /personalizados usa el renderer de Empaques.
+    if (isEmpaquesHost && ['/', '/empaques', '/personalizados', '/empaques/personalizados'].includes(canonico)) {
+      const url = request.nextUrl.clone();
+      url.pathname = canonico.endsWith('/personalizados') ? '/api/md/empaques/personalizados' : '/api/md/empaques';
+      const response = NextResponse.rewrite(url);
+      response.headers.set('Vary', 'Accept');
+      return response;
+    }
+    if (!isEmpaquesHost && RUTAS_MARKDOWN.has(canonico)) {
       const url = request.nextUrl.clone();
       // El catch-all /api/md/[...path] requiere al menos un segmento;
       // para el home usamos 'home' como sentinel reconocido por el handler.
@@ -41,8 +51,23 @@ export async function updateSession(request: NextRequest) {
   // visitantes anónimos: el storefront es público y la mayoría de tráfico no
   // necesita la cookie. Si en el futuro se requiere auth (e.g. carrito de
   // un comprador logueado) se mueve este bloque después del createServerClient.
-  const isEmpaquesSubdomain = hostname.startsWith('empaques.');
+  const isEmpaquesSubdomain = isEmpaquesHost;
   if (isEmpaquesSubdomain) {
+    // 0. Recursos de descubrimiento propios del storefront: el subdominio
+    //    publica su robots.txt, sitemap.xml y llms.txt con URLs canónicas de
+    //    Empaques en lugar de los archivos del sitio corporativo.
+    const discoveryRewrites: Record<string, string> = {
+      '/robots.txt': '/empaques/robots.txt',
+      '/sitemap.xml': '/empaques/sitemap.xml',
+      '/llms.txt': '/empaques/llms.txt',
+    };
+    const discoveryTarget = discoveryRewrites[pathname];
+    if (discoveryTarget) {
+      const url = request.nextUrl.clone();
+      url.pathname = discoveryTarget;
+      return NextResponse.rewrite(url);
+    }
+
     // 1. Rutas internas que NO deben verse desde el subdominio público.
     //    Redirigimos a la home del subdominio en vez de 404 para que el
     //    visitante caiga siempre en una página utilizable.

@@ -41,6 +41,11 @@ import {
   hasEmpaquesEditorialImage,
   selectEmpaquesShowcaseCategories,
 } from '@/lib/empaques/product-images';
+import {
+  buildEmpaquesHomeCanonical,
+  buildEmpaquesWebSiteJsonLd,
+  jsonLdScriptProps,
+} from '@/lib/empaques/seo';
 
 const BENEFIT_ICON_MAP: Record<LandingBenefitIcon, typeof Sparkles> = {
   sparkles: Sparkles,
@@ -53,14 +58,33 @@ const BENEFIT_ICON_MAP: Record<LandingBenefitIcon, typeof Sparkles> = {
 
 export const dynamic = 'force-dynamic';
 
-export const metadata: Metadata = {
-  title: 'Empaques | Imprima',
-  description: 'Catálogo público de soluciones de empaque de Imprima.',
-};
-
 type EmpaquesPageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
+
+export async function generateMetadata({ searchParams }: EmpaquesPageProps): Promise<Metadata> {
+  const resolved = searchParams ? await searchParams : undefined;
+  const search = getSingleSearchParam(resolved?.q).trim();
+  const categoryId = parsePositiveInteger(getSingleSearchParam(resolved?.categoria));
+  const page = parsePositiveInteger(getSingleSearchParam(resolved?.page)) ?? 1;
+  const description = 'Catálogo de soluciones de empaque de Imprima en Colombia: bolsas kraft, empaques para granos y polvos, porta alimentos reciclables y empaques personalizados con impresión CMYK.';
+
+  return {
+    title: 'Empaques Imprima | Soluciones de empaque en Colombia',
+    description,
+    alternates: { canonical: buildEmpaquesHomeCanonical(search ? null : categoryId, search ? 1 : page) },
+    // Los resultados de búsqueda interna no deben indexarse como páginas propias.
+    ...(search ? { robots: { index: false, follow: true } } : {}),
+    openGraph: {
+      title: 'Empaques Imprima',
+      description,
+      url: buildEmpaquesHomeCanonical(search ? null : categoryId, search ? 1 : page),
+      siteName: 'Empaques Imprima',
+      locale: 'es_CO',
+      type: 'website',
+    },
+  };
+}
 
 const currencyFormatter = new Intl.NumberFormat('es-CO', {
   style: 'currency',
@@ -630,6 +654,7 @@ function EmpaquesContent({
 }) {
   return (
     <div className="min-h-screen bg-[#F8F8F5] text-slate-950 antialiased">
+      <script {...jsonLdScriptProps(buildEmpaquesWebSiteJsonLd())} />
       <EmpaquesHeader sectionBasePath={basePath} personalizedHref={personalizedHref} />
       <main>
         <HeroSection data={data} highlights={highlights} config={landing.hero} />

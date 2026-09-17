@@ -381,6 +381,15 @@ export default function LeadsPage() {
     return () => listRequest.current?.abort();
   }, [fetchLeads]);
 
+  // Enlace directo desde los correos de aviso: /admin/leads?lead=<uuid>
+  // abre el detalle sin depender de que el lead esté en la página actual.
+  useEffect(() => {
+    const requested = new URLSearchParams(window.location.search).get('lead');
+    if (requested && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requested)) {
+      setSelectedLeadId(requested);
+    }
+  }, []);
+
   const actualizarEstado = async (id: string, estado: string) => {
     setSaving(id);
     try {
