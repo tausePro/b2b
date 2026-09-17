@@ -17,6 +17,10 @@ type NotificationEmailPayload = {
   titulo?: string | null;
   total_items?: number | null;
   valor_total_label?: string | null;
+  lead_nombre?: string | null;
+  lead_empresa?: string | null;
+  lead_contacto?: string | null;
+  lead_fuente?: string | null;
 };
 
 type RenderNotificationEmailInput = {
@@ -51,6 +55,10 @@ function normalizePayload(payload?: Record<string, unknown> | null): Notificatio
     total_items: typeof payload?.total_items === 'number' ? payload.total_items : null,
     valor_total_label:
       typeof payload?.valor_total_label === 'string' ? payload.valor_total_label : null,
+    lead_nombre: typeof payload?.lead_nombre === 'string' ? payload.lead_nombre : null,
+    lead_empresa: typeof payload?.lead_empresa === 'string' ? payload.lead_empresa : null,
+    lead_contacto: typeof payload?.lead_contacto === 'string' ? payload.lead_contacto : null,
+    lead_fuente: typeof payload?.lead_fuente === 'string' ? payload.lead_fuente : null,
   };
 }
 
@@ -74,12 +82,18 @@ function getIntro(tipo: TipoNotificacion, payload: NotificationEmailPayload) {
       return `El pedido${payload.pedido_numero ? ` ${payload.pedido_numero}` : ''} pasó a validación Imprima${payload.actor_nombre ? ` por ${payload.actor_nombre}` : ''}.`;
     case 'pedido_procesado_odoo':
       return `El pedido${payload.pedido_numero ? ` ${payload.pedido_numero}` : ''} fue procesado en Odoo.`;
+    case 'lead_creado':
+      return `Llegó una nueva solicitud desde el sitio público${payload.lead_fuente ? ` (${payload.lead_fuente})` : ''}.`;
   }
 }
 
 function buildSummaryItems(payload: NotificationEmailPayload) {
   const items: Array<{ label: string; value: string }> = [];
 
+  if (payload.lead_nombre) items.push({ label: 'Contacto', value: payload.lead_nombre });
+  if (payload.lead_empresa) items.push({ label: 'Empresa del contacto', value: payload.lead_empresa });
+  if (payload.lead_contacto) items.push({ label: 'Correo / teléfono', value: payload.lead_contacto });
+  if (payload.lead_fuente) items.push({ label: 'Fuente', value: payload.lead_fuente });
   if (payload.empresa) items.push({ label: 'Empresa', value: payload.empresa });
   if (payload.sede) items.push({ label: 'Sede', value: payload.sede });
   if (payload.pedido_numero) items.push({ label: 'Pedido', value: payload.pedido_numero });

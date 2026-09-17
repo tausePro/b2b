@@ -3,6 +3,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { NextRequest, NextResponse } from 'next/server';
 import { authorizeApiRoles } from '@/lib/auth/apiRouteGuards';
 import { LEAD_ID_PATTERN, parseAdminLeadQuery } from '@/lib/leads-query';
+import { safeEnqueueLeadNotifications } from '@/lib/notifications/leads';
 import {
   EMPAQUES_PERSONALIZADOS_FILE_TYPES,
   type EmpaquesPersonalizadosArchivo,
@@ -177,6 +178,9 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (error) throw error;
+
+    // Aviso interno por correo (outbox con reintentos). Nunca bloquea el lead.
+    await safeEnqueueLeadNotifications(String(data.id));
 
     // Obtener config WhatsApp
     const { data: config } = await supabaseAdmin

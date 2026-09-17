@@ -8,6 +8,13 @@ import { EmpaquesFooter, EmpaquesHeader } from '@/components/public/EmpaquesChro
 import EmpaquesPersonalizadosForm from '@/components/public/EmpaquesPersonalizadosForm';
 import { getEmpaquesLandingConfig } from '@/lib/empaques/landing-config';
 import { DEFAULT_LANDING_CONFIG } from '@/lib/empaques/landing-config-shared';
+import {
+  buildEmpaquesBreadcrumbJsonLd,
+  buildEmpaquesHomeCanonical,
+  buildEmpaquesPersonalizadosCanonical,
+  buildEmpaquesPersonalizadosServiceJsonLd,
+  jsonLdScriptProps,
+} from '@/lib/empaques/seo';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,9 +29,13 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     title: `${config.titulo} | Imprima`,
     description: getSubtitulo(config.subtitulo).slice(0, 160),
+    alternates: { canonical: buildEmpaquesPersonalizadosCanonical() },
     openGraph: {
       title: config.titulo,
       description: getSubtitulo(config.subtitulo).slice(0, 160),
+      url: buildEmpaquesPersonalizadosCanonical(),
+      siteName: 'Empaques Imprima',
+      locale: 'es_CO',
       images: config.imagen_url ? [{ url: config.imagen_url, alt: config.titulo }] : undefined,
     },
   };
@@ -40,6 +51,13 @@ export default async function EmpaquesPersonalizadosPage() {
 
   return (
     <div className="min-h-screen bg-[#F8F8F5] text-slate-950 antialiased">
+      <script {...jsonLdScriptProps(buildEmpaquesPersonalizadosServiceJsonLd(config))} />
+      <script
+        {...jsonLdScriptProps(buildEmpaquesBreadcrumbJsonLd([
+          { name: 'Empaques', url: buildEmpaquesHomeCanonical(null) },
+          { name: config.titulo, url: buildEmpaquesPersonalizadosCanonical() },
+        ]))}
+      />
       <EmpaquesHeader sectionBasePath={homeHref} personalizedHref={isEmpaquesSubdomain ? '/personalizados' : '/empaques/personalizados'} />
       <main>
         <section className="relative overflow-hidden bg-slate-950 px-4 py-20 text-white sm:px-6 lg:px-8 lg:py-28">

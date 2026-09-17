@@ -5,6 +5,7 @@ import {
   loadPersonalizacionProductImage, loadPersonalizacionReferencia, personalizacionAdmin, personalizacionError,
   personalizacionJson, readPersonalizacionJson,
 } from '@/lib/empaques/personalizados.server';
+import { safeEnqueueLeadNotifications } from '@/lib/notifications/leads';
 
 const ATTRIBUTION_KEYS = ['gclid', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'referrer', 'landing_url'] as const;
 
@@ -114,6 +115,8 @@ export async function POST(request: NextRequest) {
     });
     if (error) throw error;
     if (typeof leadId !== 'string' || !UUID_PATTERN.test(leadId)) throw new Error('INVALID_LEAD_RESPONSE');
+    // Aviso interno por correo (outbox con reintentos). No adjunta TIFF ni bloquea la solicitud.
+    await safeEnqueueLeadNotifications(leadId);
     const whatsappText = `${config.mensaje_whatsapp} Referencia: ${leadId.slice(0, 8)}. ${referencia.nombre}; ${impresion}.`;
     const whatsappUrl = numero ? `https://wa.me/${numero}?text=${encodeURIComponent(whatsappText)}` : null;
     return personalizacionJson({ ok: true, lead_id: leadId, whatsapp_url: whatsappUrl });

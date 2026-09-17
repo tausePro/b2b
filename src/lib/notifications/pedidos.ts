@@ -6,7 +6,7 @@ import {
 import { processPendingEmailNotifications } from '@/lib/notifications/processPendingEmails';
 import type { NivelNotificacion, TipoNotificacion } from '@/types';
 
-type PedidoNotificationEvent = TipoNotificacion;
+type PedidoNotificationEvent = Exclude<TipoNotificacion, 'lead_creado'>;
 
 type PedidoContext = {
   id: string;

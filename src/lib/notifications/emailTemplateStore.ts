@@ -96,7 +96,43 @@ const TEMPLATE_VARIABLES: Record<NotificationEmailTemplateVariableKey, Notificat
     label: 'Valor total',
     description: 'Total del pedido formateado para mostrar en el correo.',
   },
+  lead_nombre: {
+    key: 'lead_nombre',
+    label: 'Nombre del lead',
+    description: 'Nombre del contacto que envió la solicitud desde el sitio público.',
+  },
+  lead_empresa: {
+    key: 'lead_empresa',
+    label: 'Empresa del lead',
+    description: 'Empresa declarada por el contacto, cuando la registró.',
+  },
+  lead_contacto: {
+    key: 'lead_contacto',
+    label: 'Datos de contacto',
+    description: 'Correo y/o teléfono que dejó el contacto.',
+  },
+  lead_fuente: {
+    key: 'lead_fuente',
+    label: 'Fuente',
+    description: 'Origen del lead dentro del sitio (formulario, configurador, WhatsApp, etc.).',
+  },
+  lead_resumen: {
+    key: 'lead_resumen',
+    label: 'Resumen de la solicitud',
+    description: 'Mensaje del contacto o resumen del empaque personalizado solicitado.',
+  },
 };
+
+const LEAD_TEMPLATE_VARIABLE_KEYS: NotificationEmailTemplateVariableKey[] = [
+  'lead_nombre',
+  'lead_empresa',
+  'lead_contacto',
+  'lead_fuente',
+  'lead_resumen',
+  'destinatario_nombre',
+  'destinatario_email',
+  'ruta',
+];
 
 const DEFAULT_TEMPLATE_VARIABLE_KEYS: NotificationEmailTemplateVariableKey[] = [
   'pedido_numero',
@@ -128,6 +164,11 @@ const TEMPLATE_VARIABLE_PREVIEW_VALUES: Record<NotificationEmailTemplateVariable
   sede: '{{sede}}',
   total_items: '{{total_items}}',
   valor_total_label: '{{valor_total_label}}',
+  lead_nombre: '{{lead_nombre}}',
+  lead_empresa: '{{lead_empresa}}',
+  lead_contacto: '{{lead_contacto}}',
+  lead_fuente: '{{lead_fuente}}',
+  lead_resumen: '{{lead_resumen}}',
 };
 
 const DEFAULT_NOTIFICATION_EMAIL_TEMPLATES: Record<TipoNotificacion, Omit<NotificationEmailTemplate, 'created_at' | 'updated_at'>> = {
@@ -208,6 +249,19 @@ const DEFAULT_NOTIFICATION_EMAIL_TEMPLATES: Record<TipoNotificacion, Omit<Notifi
     cta_label: 'Ver pedido procesado',
     activa: true,
     variables: DEFAULT_TEMPLATE_VARIABLE_KEYS.map((key) => TEMPLATE_VARIABLES[key]),
+  },
+  lead_creado: {
+    tipo: 'lead_creado',
+    nombre: 'Nuevo lead recibido',
+    descripcion_operativa: 'Se envía al equipo comercial configurado cuando llega una solicitud desde el sitio público, incluidos los empaques personalizados.',
+    nivel: 'info',
+    asunto_template: 'Nuevo lead: {{lead_nombre}} — {{lead_fuente}}',
+    titulo_template: 'Nueva solicitud de {{lead_nombre}}',
+    intro_template: 'Llegó una nueva solicitud desde el sitio público ({{lead_fuente}}).',
+    descripcion_template: '{{lead_resumen}}',
+    cta_label: 'Abrir la solicitud en el panel',
+    activa: true,
+    variables: LEAD_TEMPLATE_VARIABLE_KEYS.map((key) => TEMPLATE_VARIABLES[key]),
   },
 };
 
@@ -314,7 +368,10 @@ export async function listNotificationEmailTemplates() {
 export function buildNotificationEmailTemplatePreview(
   template: NotificationEmailTemplate
 ): NotificationEmailTemplatePreview {
-  const placeholderContext = DEFAULT_TEMPLATE_VARIABLE_KEYS.reduce<Record<string, string>>((acc, key) => {
+  const previewKeys = template.variables.length > 0
+    ? template.variables.map((variable) => variable.key)
+    : DEFAULT_TEMPLATE_VARIABLE_KEYS;
+  const placeholderContext = previewKeys.reduce<Record<string, string>>((acc, key) => {
     acc[key] = TEMPLATE_VARIABLE_PREVIEW_VALUES[key];
     return acc;
   }, {});
