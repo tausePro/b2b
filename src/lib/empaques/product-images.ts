@@ -49,6 +49,67 @@ export function selectEmpaquesShowcaseCategories<T extends { id: number; name: s
     .slice(0, 3);
 }
 
+export function buildEmpaquesCategoryHref(categoryId: number | null, search = '', page = 1, basePath: '/' | '/empaques' = '/empaques'): string {
+  if (categoryId !== null && (!Number.isSafeInteger(categoryId) || categoryId <= 0)) throw new Error('Categoría inválida.');
+  if (!Number.isSafeInteger(page) || page < 1 || !['/', '/empaques'].includes(basePath)) throw new Error('Ruta de catálogo inválida.');
+  const params = new URLSearchParams();
+  if (categoryId !== null) params.set('categoria', String(categoryId));
+  if (search.trim()) params.set('q', search.trim());
+  if (page > 1) params.set('page', String(page));
+  const query = params.toString();
+  return `${basePath}${query ? `?${query}` : ''}#productos`;
+}
+
+export interface EmpaquesCategoryPresentation {
+  ajuste: 'cover' | 'contain';
+  posicion_x: number;
+  posicion_y: number;
+  opacidad: number;
+  sombra: number;
+}
+
+export function normalizeCategoryPresentation(raw: unknown, defaultX = 50): EmpaquesCategoryPresentation {
+  const source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : {};
+  const percentage = (key: string, fallback: number) => typeof source[key] === 'number' && Number.isFinite(source[key])
+    ? Math.round(Math.max(0, Math.min(100, source[key]))) : fallback;
+  return {
+    ajuste: source.ajuste === 'contain' ? 'contain' : 'cover',
+    posicion_x: percentage('posicion_x', defaultX), posicion_y: percentage('posicion_y', 50),
+    opacidad: percentage('opacidad', 60), sombra: percentage('sombra', 85),
+  };
+}
+
+export function readCategoryPresentation(extra: unknown): EmpaquesCategoryPresentation | null {
+  if (!extra || typeof extra !== 'object' || Array.isArray(extra)) return null;
+  const value = (extra as Record<string, unknown>).imagen_presentacion;
+  return value && typeof value === 'object' && !Array.isArray(value) ? normalizeCategoryPresentation(value) : null;
+}
+
+export function mergeCategoryPresentation(extra: unknown, raw: unknown): Record<string, unknown> {
+  const previous = extra && typeof extra === 'object' && !Array.isArray(extra) ? extra as Record<string, unknown> : {};
+  if (raw === null) {
+    const result = { ...previous };
+    delete result.imagen_presentacion;
+    return result;
+  }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('El encuadre de imagen no es válido.');
+  const value = raw as Record<string, unknown>;
+  if (typeof value.ajuste !== 'string' || !['cover', 'contain'].includes(value.ajuste)
+    || ['posicion_x', 'posicion_y', 'opacidad', 'sombra'].some((key) => typeof value[key] !== 'number' || !Number.isFinite(value[key]) || value[key] < 0 || value[key] > 100)) {
+    throw new Error('El ajuste debe ser imagen completa o recorte y los valores deben estar entre 0 y 100.');
+  }
+  return { ...previous, imagen_presentacion: normalizeCategoryPresentation(value) };
+}
+
+export function categoryImageStyle(presentation: EmpaquesCategoryPresentation) {
+  return { objectFit: presentation.ajuste, objectPosition: `${presentation.posicion_x}% ${presentation.posicion_y}%`, opacity: presentation.opacidad / 100 };
+}
+
+export function categoryImageOverlay(presentation: EmpaquesCategoryPresentation): string {
+  const opacity = presentation.sombra / 100;
+  return `linear-gradient(to top, rgba(0,0,0,${opacity}), rgba(0,0,0,${opacity * 25 / 85}), transparent)`;
+}
+
 export function getEmpaquesCategoryImageSrc(category: { imagen_url: string | null }): string | null {
   return category.imagen_url?.trim() || null;
 }

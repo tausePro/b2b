@@ -34,6 +34,10 @@ import {
 import {
   getEmpaquesProductImageSrc,
   getEmpaquesCategoryImageSrc,
+  buildEmpaquesCategoryHref,
+  normalizeCategoryPresentation,
+  categoryImageStyle,
+  categoryImageOverlay,
   hasEmpaquesEditorialImage,
   selectEmpaquesShowcaseCategories,
 } from '@/lib/empaques/product-images';
@@ -77,14 +81,6 @@ function getSingleSearchParam(value: string | string[] | undefined) {
 function parsePositiveInteger(value: string) {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-}
-
-function buildCategoryHref(categoryId: number | null, search: string) {
-  const params = new URLSearchParams();
-  if (categoryId) params.set('categoria', String(categoryId));
-  if (search) params.set('q', search);
-  const query = params.toString();
-  return query ? `/empaques?${query}` : '/empaques';
 }
 
 function getFeaturedProduct(products: EmpaquesCatalogProduct[], index = 0) {
@@ -191,17 +187,20 @@ function HeroSection({
 function CategoryCard({
   category,
   variant,
+  basePath,
 }: {
   category: EmpaquesCategoryNode;
+  basePath: '/' | '/empaques';
   variant: 'wide' | 'tall' | 'dark';
 }) {
   const imageSrc = getEmpaquesCategoryImageSrc(category);
   const isTall = variant === 'tall';
   const isDark = variant === 'dark';
+  const presentation = normalizeCategoryPresentation(category.imagen_presentacion, isTall ? 50 : 100);
 
   return (
-    <Link
-      href={buildCategoryHref(category.id, '')}
+    <a
+      href={buildEmpaquesCategoryHref(category.id, '', 1, basePath)}
       className={`group relative overflow-hidden rounded-2xl bg-slate-900 shadow-sm transition hover:shadow-md ${isTall ? 'md:col-span-1 md:row-span-2' : 'md:col-span-2 md:row-span-1'}`}
     >
       <div className={`absolute inset-0 ${isDark ? 'bg-gradient-to-br from-slate-950 via-cyan-950 to-slate-950' : 'bg-gradient-to-br from-emerald-900 via-teal-800 to-slate-950'}`} />
@@ -211,10 +210,11 @@ function CategoryCard({
           alt={category.name}
           fill
           sizes={isTall ? '(max-width: 767px) 100vw, 33vw' : '(max-width: 767px) 100vw, 66vw'}
-          className={`object-cover opacity-60 transition duration-700 group-hover:scale-105 ${isTall ? 'object-center' : 'object-right'}`}
+          style={categoryImageStyle(presentation)}
+          className={`transition duration-700 motion-reduce:transition-none ${presentation.ajuste === 'cover' ? 'group-hover:scale-105 motion-reduce:transform-none' : ''}`}
         />
       )}
-      <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-transparent" />
+      <div className="absolute inset-0" style={{ background: categoryImageOverlay(presentation) }} />
       <div className="absolute bottom-0 left-0 w-full p-8">
         {!isTall && (
           <span className="mb-3 inline-block rounded-full bg-[#9CBB06] px-3 py-1 text-xs font-black uppercase tracking-wider text-slate-950">
@@ -229,11 +229,11 @@ function CategoryCard({
           </span>
         )}
       </div>
-    </Link>
+    </a>
   );
 }
 
-function CategoriesSection({ data }: { data: EmpaquesCatalogData }) {
+function CategoriesSection({ data, basePath }: { data: EmpaquesCatalogData; basePath: '/' | '/empaques' }) {
   const featuredCategories = selectEmpaquesShowcaseCategories(data.categories);
 
   if (featuredCategories.length === 0) return null;
@@ -250,6 +250,7 @@ function CategoriesSection({ data }: { data: EmpaquesCatalogData }) {
             <CategoryCard
               key={category.id}
               category={category}
+              basePath={basePath}
               variant={featuredCategories.length === 3 ? (index === 1 ? 'tall' : index === 2 ? 'dark' : 'wide') : 'wide'}
             />
           ))}
@@ -399,26 +400,26 @@ function ProductCard({ product }: { product: EmpaquesCatalogProduct }) {
   );
 }
 
-function CatalogProductsSection({ data, search, categoryId, page }: { data: EmpaquesCatalogData; search: string; categoryId: number | null; page: number }) {
+function CatalogProductsSection({ data, search, categoryId, page, basePath }: { data: EmpaquesCatalogData; search: string; categoryId: number | null; page: number; basePath: '/' | '/empaques' }) {
   const categoryOptions = [
     ...data.categories,
     ...data.categories.flatMap((category) => category.children),
   ];
 
   return (
-    <section className="bg-white px-4 py-28 sm:px-6 lg:px-8">
+    <section id="productos" aria-labelledby="productos-titulo" tabIndex={-1} className="scroll-mt-24 bg-white px-4 py-28 sm:px-6 lg:px-8">
       <div className="mx-auto max-w-7xl">
         <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <h2 className="text-sm font-black uppercase tracking-[0.24em] text-[#9CBB06]">Catálogo real</h2>
-            <h3 className="mt-3 text-4xl font-black tracking-tight text-slate-950">Productos disponibles</h3>
+            <h3 id="productos-titulo" className="mt-3 text-4xl font-black tracking-tight text-slate-950">{data.selectedCategory?.name ?? 'Productos disponibles'}</h3>
             <p className="mt-3 font-bold text-slate-600">
               {data.searchTooShort
                 ? `Escribe mínimo ${data.minSearchLength} caracteres para buscar.`
                 : `${data.total} productos encontrados.`}
             </p>
           </div>
-          <form action="/empaques" className="flex w-full max-w-xl gap-2">
+          <form action={`${basePath}#productos`} method="get" className="flex w-full max-w-xl gap-2">
             {categoryId && <input type="hidden" name="categoria" value={categoryId} />}
             <div className="relative flex-1">
               <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -436,8 +437,9 @@ function CatalogProductsSection({ data, search, categoryId, page }: { data: Empa
         </div>
 
         <div className="mt-8 flex flex-wrap gap-3">
-          <Link
-            href={buildCategoryHref(null, search)}
+          <a
+            href={buildEmpaquesCategoryHref(null, search, 1, basePath)}
+            aria-current={!categoryId ? 'page' : undefined}
             className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-black transition ${
               !categoryId
                 ? 'border-[#9CBB06] bg-[#9CBB06] text-slate-950 shadow-sm shadow-[#9CBB06]/20'
@@ -445,11 +447,12 @@ function CatalogProductsSection({ data, search, categoryId, page }: { data: Empa
             }`}
           >
             Todas
-          </Link>
+          </a>
           {categoryOptions.slice(0, 14).map((category) => (
-            <Link
+            <a
               key={category.id}
-              href={buildCategoryHref(category.id, search)}
+              href={buildEmpaquesCategoryHref(category.id, search, 1, basePath)}
+              aria-current={categoryId === category.id ? 'page' : undefined}
               className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-black transition ${
                 categoryId === category.id
                   ? 'border-[#9CBB06] bg-[#9CBB06] text-slate-950 shadow-sm shadow-[#9CBB06]/20'
@@ -457,7 +460,7 @@ function CatalogProductsSection({ data, search, categoryId, page }: { data: Empa
               }`}
             >
               {category.name}
-            </Link>
+            </a>
           ))}
         </div>
 
@@ -478,23 +481,23 @@ function CatalogProductsSection({ data, search, categoryId, page }: { data: Empa
         {data.totalPages > 1 && (
           <div className="mt-12 flex items-center justify-center gap-3">
             {page > 1 && (
-              <Link
-                href={`/empaques?${new URLSearchParams({ ...(search ? { q: search } : {}), ...(categoryId ? { categoria: String(categoryId) } : {}), page: String(page - 1) }).toString()}`}
+              <a
+                href={buildEmpaquesCategoryHref(categoryId, search, page - 1, basePath)}
                 className="rounded-full border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-700 transition hover:border-[#9CBB06]/50"
               >
                 Anterior
-              </Link>
+              </a>
             )}
             <span className="rounded-full bg-[#F1F1EE] px-5 py-3 text-sm font-black text-slate-600">
               Página {page} de {data.totalPages}
             </span>
             {page < data.totalPages && (
-              <Link
-                href={`/empaques?${new URLSearchParams({ ...(search ? { q: search } : {}), ...(categoryId ? { categoria: String(categoryId) } : {}), page: String(page + 1) }).toString()}`}
+              <a
+                href={buildEmpaquesCategoryHref(categoryId, search, page + 1, basePath)}
                 className="rounded-full border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-700 transition hover:border-[#9CBB06]/50"
               >
                 Siguiente
-              </Link>
+              </a>
             )}
           </div>
         )}
@@ -614,7 +617,9 @@ function EmpaquesContent({
   page,
   landing,
   personalizedHref,
+  basePath,
 }: {
+  basePath: '/' | '/empaques';
   data: EmpaquesCatalogData;
   highlights: EmpaquesCatalogData | null;
   search: string;
@@ -625,16 +630,16 @@ function EmpaquesContent({
 }) {
   return (
     <div className="min-h-screen bg-[#F8F8F5] text-slate-950 antialiased">
-      <EmpaquesHeader personalizedHref={personalizedHref} />
+      <EmpaquesHeader sectionBasePath={basePath} personalizedHref={personalizedHref} />
       <main>
         <HeroSection data={data} highlights={highlights} config={landing.hero} />
-        <CategoriesSection data={data} />
+        <CategoriesSection data={data} basePath={basePath} />
         <PersonalizedSection config={landing.personalizados} href={personalizedHref} />
         <BenefitsSection config={landing.ventajas} />
-        <CatalogProductsSection data={data} search={search} categoryId={categoryId} page={page} />
+        <CatalogProductsSection data={data} search={search} categoryId={categoryId} page={page} basePath={basePath} />
         <QuoteSection data={data} personalized={landing.personalizados} />
       </main>
-      <EmpaquesFooter personalizedHref={personalizedHref} />
+      <EmpaquesFooter sectionBasePath={basePath} personalizedHref={personalizedHref} />
     </div>
   );
 }
@@ -669,6 +674,7 @@ export default async function EmpaquesPage({ searchParams }: EmpaquesPageProps) 
         page={page}
         landing={landing}
         personalizedHref={personalizedHref}
+        basePath={isEmpaquesSubdomain ? '/' : '/empaques'}
       />
     );
   }

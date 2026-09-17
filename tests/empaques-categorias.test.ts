@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { buildCategoryTree, isMissingEditorialTableError } from '../src/lib/empaques/catalogo';
-import { selectEmpaquesShowcaseCategories, getEmpaquesCategoryImageSrc } from '../src/lib/empaques/product-images';
+import { selectEmpaquesShowcaseCategories, getEmpaquesCategoryImageSrc, buildEmpaquesCategoryHref, normalizeCategoryPresentation, readCategoryPresentation, mergeCategoryPresentation, categoryImageStyle, categoryImageOverlay } from '../src/lib/empaques/product-images';
 import type { OdooCategory } from '../src/lib/odoo/client';
 
 const categoriasOdoo: OdooCategory[] = [
@@ -58,6 +58,59 @@ test('sin destacadas usa como máximo tres categorías reales y sin duplicados',
 test('una categoría sin imagen no recibe una fotografía de producto como respaldo', () => {
   assert.equal(getEmpaquesCategoryImageSrc({ imagen_url: null }), null);
   assert.equal(getEmpaquesCategoryImageSrc({ imagen_url: '  ' }), null);
+});
+
+test('los enlaces de categoría conservan filtros y llevan al bloque de productos en ambos dominios', () => {
+  assert.equal(buildEmpaquesCategoryHref(128, '', 1, '/'), '/?categoria=128#productos');
+  assert.equal(buildEmpaquesCategoryHref(134), '/empaques?categoria=134#productos');
+  assert.equal(buildEmpaquesCategoryHref(null, '', 1, '/'), '/#productos');
+  const url = new URL(buildEmpaquesCategoryHref(128, 'bolsa & kraft', 2, '/'), 'https://empaques.imprima.com.co');
+  assert.equal(url.pathname, '/');
+  assert.equal(url.searchParams.get('categoria'), '128');
+  assert.equal(url.searchParams.get('q'), 'bolsa & kraft');
+  assert.equal(url.searchParams.get('page'), '2');
+  assert.equal(url.hash, '#productos');
+  for (const invalid of [0, -1, NaN, Infinity, 1.5]) assert.throws(() => buildEmpaquesCategoryHref(invalid));
+  assert.throws(() => buildEmpaquesCategoryHref(128, '', 0));
+  assert.throws(() => buildEmpaquesCategoryHref(128, '', 1, '/otro' as '/'));
+});
+
+test('el modo automático conserva opacidad, sombra y posición horizontal o vertical anteriores', () => {
+  const horizontal = normalizeCategoryPresentation(null, 100);
+  const vertical = normalizeCategoryPresentation(null, 50);
+  assert.deepEqual(categoryImageStyle(horizontal), { objectFit: 'cover', objectPosition: '100% 50%', opacity: 0.6 });
+  assert.equal(categoryImageStyle(vertical).objectPosition, '50% 50%');
+  assert.equal(categoryImageOverlay(horizontal), 'linear-gradient(to top, rgba(0,0,0,0.85), rgba(0,0,0,0.25), transparent)');
+  assert.equal(readCategoryPresentation({}), null);
+});
+
+test('el encuadre se guarda y se restaura sin modificar los demás metadatos', () => {
+  const original = { conservar: { activo: true } };
+  const settings = { ajuste: 'contain', posicion_x: 20, posicion_y: 70, opacidad: 100, sombra: 40 };
+  const saved = mergeCategoryPresentation(original, settings);
+  assert.deepEqual(readCategoryPresentation(saved), settings);
+  assert.deepEqual(saved.conservar, original.conservar);
+  assert.deepEqual(original, { conservar: { activo: true } });
+  assert.equal(categoryImageStyle(readCategoryPresentation(saved)!).objectFit, 'contain');
+  assert.deepEqual(mergeCategoryPresentation(saved, null), original);
+});
+
+test('el backend rechaza opciones de encuadre inválidas y la lectura de datos antiguos es acotada', () => {
+  const settings = normalizeCategoryPresentation(null);
+  for (const field of ['posicion_x', 'posicion_y', 'opacidad', 'sombra']) {
+    for (const invalid of [-1, 101, NaN, Infinity, '50', null]) assert.throws(() => mergeCategoryPresentation({}, { ...settings, [field]: invalid }));
+  }
+  for (const ajuste of ['stretch', ['cover'], {}, null]) assert.throws(() => mergeCategoryPresentation({}, { ...settings, ajuste }));
+  assert.throws(() => mergeCategoryPresentation({}, []));
+  assert.deepEqual(normalizeCategoryPresentation({ posicion_x: -10, posicion_y: 150, opacidad: '100' }), { ajuste: 'cover', posicion_x: 0, posicion_y: 100, opacidad: 60, sombra: 85 });
+});
+
+test('el árbol público solo expone el encuadre normalizado, no el resto de contenido_extra', () => {
+  const settings = { ajuste: 'contain', posicion_x: 50, posicion_y: 50, opacidad: 100, sombra: 40 };
+  const categories = new Map([[128, { odoo_categ_id: 128, nombre_publico: null, slug: null, descripcion_corta: null, imagen_url: null, orden: 0, visible: true, destacado: true, contenido_extra: { imagen_presentacion: settings, interno: 'conservar' } }]]);
+  const tree = buildCategoryTree(categoriasOdoo, { rootCategoryIds: [132], excludedCategoryIds: [] }, { ...editorial, categories });
+  assert.deepEqual(tree.categoryIndex['128'].imagen_presentacion, settings);
+  assert.equal('contenido_extra' in tree.categoryIndex['128'], false);
 });
 
 test('la falta de ficha_tecnica_url no se confunde con una tabla editorial inexistente', () => {
