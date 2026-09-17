@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
 import Image from 'next/image';
 import {
   Loader2, UserPlus, Filter, MessageCircle, Mail, Phone,
   Building2, Calendar, ChevronDown, Check, AlertCircle, Target,
-  Trash2, Package,
+  Trash2, Package, Eye, X, RefreshCw,
 } from 'lucide-react';
 import type { EmpaquesPersonalizadosArchivo, EmpaquesPersonalizadosDetalle } from '@/lib/empaques/personalizados-shared';
 
@@ -62,6 +63,7 @@ const FUENTES: Array<{ value: string; label: string; mode?: 'prefix' }> = [
   { value: 'producto_', label: 'Producto (detalle)', mode: 'prefix' },
   { value: 'contacto_formulario', label: 'Contacto — Formulario' },
   { value: 'contacto_whatsapp', label: 'Contacto — WhatsApp' },
+  { value: 'empaques_', label: 'Empaques — Todas las fuentes', mode: 'prefix' },
   { value: 'empaques_personalizados', label: 'Empaques — Personalizados' },
   // Prefix: matchea contacto_comercial_<slug> para cada comercial
   // del equipo configurado en CMS. Permite ver el total de leads que
@@ -176,18 +178,18 @@ function EmpaquesArchivo({ file }: { file: EmpaquesPersonalizadosArchivo }) {
           {isTiff ? 'Descargar TIFF original' : 'Descargar archivo'}
         </a>
       ) : (
-        <p className="text-amber-700">Descarga no disponible. Recarga la lista para renovar los enlaces privados.</p>
+        <p className="text-amber-700">Descarga no disponible. Actualiza la información del lead para renovar los enlaces privados.</p>
       )}
     </div>
   );
 }
 
-function EmpaquesDetalle({ detail }: { detail: EmpaquesPersonalizadosDetalle }) {
+function EmpaquesDetalle({ detail, expanded = false }: { detail: EmpaquesPersonalizadosDetalle; expanded?: boolean }) {
   const isReferencia = Boolean(detail.referencia_sku || detail.impresion_sku || detail.modalidad || detail.caras != null
     || detail.area_alto_cm != null || detail.area_ancho_cm != null);
 
   return (
-    <details className="mt-2 max-w-md rounded-lg border border-lime-200 bg-lime-50/60 p-2 text-xs text-slate-700">
+    <details open={expanded} className={`mt-2 rounded-lg border border-lime-200 bg-lime-50/60 p-4 text-sm text-slate-700 ${expanded ? 'w-full' : 'max-w-md'}`}>
       <summary className="flex cursor-pointer list-none items-center gap-1.5 font-bold text-slate-800">
         <Package className="h-3.5 w-3.5 text-[#7f9b00]" />
         Ver configuración personalizada
@@ -228,8 +230,92 @@ function EmpaquesDetalle({ detail }: { detail: EmpaquesPersonalizadosDetalle }) 
   );
 }
 
+function LeadDetailDialog({ leadId, onClose }: { leadId: string; onClose: () => void }) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const [detail, setDetail] = useState<{ lead: Lead; warnings: string[] } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [revision, setRevision] = useState(0);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    const previousOverflow = document.body.style.overflow;
+    dialog?.showModal();
+    document.body.style.overflow = 'hidden';
+    return () => {
+      if (dialog?.open) dialog.close();
+      document.body.style.overflow = previousOverflow;
+    };
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const load = async () => {
+      try {
+        const response = await fetch(`/api/leads?id=${encodeURIComponent(leadId)}`, { cache: 'no-store', signal: controller.signal });
+        const data = await response.json().catch(() => null);
+        if (controller.signal.aborted) return;
+        if (response.status === 401 || response.status === 403) throw new Error('Tu sesión no tiene permisos para consultar este lead. Vuelve a iniciar sesión con un rol autorizado.');
+        if (!response.ok) throw new Error(data?.error || 'No se pudo abrir el lead.');
+        if (data?.lead?.id !== leadId) throw new Error('La respuesta no corresponde al lead seleccionado.');
+        setDetail({ lead: data.lead, warnings: Array.isArray(data.warnings) ? data.warnings : [] });
+      } catch (failure) {
+        if (!controller.signal.aborted) setError(failure instanceof Error ? failure.message : 'No se pudo consultar la información.');
+      }
+    };
+    void load();
+    return () => controller.abort();
+  }, [leadId, revision]);
+
+  const lead = detail?.lead;
+  const loading = !detail && !error;
+  return (
+    <dialog ref={dialogRef} aria-labelledby="lead-detalle-titulo" onCancel={(event) => { event.preventDefault(); onClose(); }} onClose={onClose}
+      className="m-auto max-h-[90dvh] w-[calc(100%_-_2rem)] max-w-4xl overflow-y-auto rounded-2xl border border-border bg-white p-0 text-slate-800 shadow-xl backdrop:bg-slate-950/60">
+      <div className="sticky top-0 z-10 flex items-center justify-between gap-4 border-b border-border bg-white p-5">
+        <div className="min-w-0"><h2 id="lead-detalle-titulo" className="truncate text-xl font-bold">{lead ? `Detalle de ${lead.nombre}` : 'Detalle del lead'}</h2><p className="mt-1 break-all text-xs text-slate-500">ID: {leadId}</p></div>
+        <button type="button" onClick={onClose} aria-label="Cerrar detalle del lead" className="shrink-0 rounded-lg border border-border p-2 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-primary"><X className="h-5 w-5" /></button>
+      </div>
+      <div className="space-y-6 p-5 sm:p-7">
+        {loading && <p role="status" className="flex items-center gap-2 py-8 text-sm text-slate-500"><Loader2 aria-hidden="true" className="h-5 w-5 animate-spin" />Cargando información y enlaces privados…</p>}
+        {error && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</p>}
+        {lead && <>
+          <dl className="grid gap-4 sm:grid-cols-2">
+            {[
+              ['Contacto', lead.nombre], ['Empresa', lead.empresa], ['Correo', lead.email], ['Teléfono', lead.telefono],
+              ['Fuente', lead.fuente], ['Estado', ESTADOS.find((state) => state.value === lead.estado)?.label ?? lead.estado],
+              ['Creado', formatFecha(lead.created_at)], ['Actualizado', formatFecha(lead.updated_at)],
+            ].map(([label, value]) => <div key={label}><dt className="text-xs font-bold uppercase text-slate-500">{label}</dt><dd className="mt-1 break-words text-sm">{value || 'No registrado'}</dd></div>)}
+          </dl>
+          <section><h3 className="font-bold">Mensaje completo</h3><p className="mt-2 whitespace-pre-wrap break-words rounded-lg bg-slate-50 p-4 text-sm">{lead.mensaje || 'No dejó un mensaje.'}</p></section>
+          <section><h3 className="font-bold">Notas de gestión</h3><p className="mt-2 whitespace-pre-wrap break-words text-sm">{lead.notas || 'Sin notas registradas.'}</p></section>
+          {detail.warnings.map((warning) => <p key={warning} role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">{warning}</p>)}
+          {lead.empaques_personalizado && <EmpaquesDetalle detail={lead.empaques_personalizado} expanded />}
+          <details className="rounded-lg border border-border p-4"><summary className="cursor-pointer font-bold">Origen y atribución</summary>
+            <dl className="mt-4 grid gap-3 sm:grid-cols-2">{[
+              ['Google Ads (gclid)', lead.gclid], ['Fuente UTM', lead.utm_source], ['Medio UTM', lead.utm_medium], ['Campaña UTM', lead.utm_campaign],
+              ['Término UTM', lead.utm_term], ['Contenido UTM', lead.utm_content], ['Página de llegada', lead.landing_url], ['Referente', lead.referrer],
+              ['Fecha del clic', lead.click_at ? formatFecha(lead.click_at) : null],
+            ].map(([label, value]) => <div key={label}><dt className="text-xs font-semibold text-slate-500">{label}</dt><dd className="mt-1 break-all text-sm">{value || 'No registrado'}</dd></div>)}</dl>
+          </details>
+        </>}
+        <div className="flex flex-wrap justify-end gap-3 border-t border-border pt-4">
+          <button type="button" disabled={loading} onClick={() => { setDetail(null); setError(null); setRevision((value) => value + 1); }} className="inline-flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-semibold disabled:opacity-50"><RefreshCw className="h-4 w-4" />Actualizar información y enlaces</button>
+          <button type="button" onClick={onClose} className="rounded-lg bg-primary px-4 py-2 text-sm font-bold text-white">Cerrar</button>
+        </div>
+      </div>
+    </dialog>
+  );
+}
+
 export default function LeadsPage() {
+  const { user } = useAuth();
+  const canDelete = user?.rol === 'super_admin' || user?.rol === 'direccion';
+  const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
+  const closeDetail = useCallback(() => setSelectedLeadId(null), []);
+  const listRequest = useRef<AbortController | null>(null);
+  const [warnings, setWarnings] = useState<string[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
+  const [listAvailable, setListAvailable] = useState(false);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -248,7 +334,14 @@ export default function LeadsPage() {
   const [borrando, setBorrando] = useState(false);
 
   const fetchLeads = useCallback(async () => {
+    listRequest.current?.abort();
+    const controller = new AbortController();
+    listRequest.current = controller;
+    setListAvailable(false);
+    setSeleccionados(new Set());
     setLoading(true);
+    setError(null);
+    setWarnings([]);
     try {
       const params = new URLSearchParams();
       if (filtroEstado !== 'todos') params.set('estado', filtroEstado);
@@ -264,19 +357,29 @@ export default function LeadsPage() {
       }
       params.set('limit', '100');
 
-      const res = await fetch(`/api/leads?${params}`);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      setLeads(data.leads || []);
-      setTotal(data.total || 0);
+      const res = await fetch(`/api/leads?${params}`, { cache: 'no-store', signal: controller.signal });
+      const data = await res.json().catch(() => null);
+      if (controller.signal.aborted) return;
+      if (res.status === 401 || res.status === 403) throw new Error('No tienes acceso a la gestión de leads. Revisa tu sesión y tu rol de Dirección, Super Admin o Editor de contenido.');
+      if (!res.ok || !Array.isArray(data?.leads)) throw new Error(data?.error || 'No se pudo consultar la lista de leads.');
+      setLeads(data.leads);
+      setListAvailable(true);
+      setTotal(data.total ?? data.leads.length);
+      setWarnings(Array.isArray(data.warnings) ? data.warnings : []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error cargando leads');
+      if (!controller.signal.aborted) {
+        setError(err instanceof Error ? err.message : 'Error cargando leads');
+        setLeads([]);
+      }
     } finally {
-      setLoading(false);
+      if (!controller.signal.aborted) setLoading(false);
     }
   }, [filtroEstado, filtroFuente]);
 
-  useEffect(() => { void fetchLeads(); }, [fetchLeads]);
+  useEffect(() => {
+    void fetchLeads();
+    return () => listRequest.current?.abort();
+  }, [fetchLeads]);
 
   const actualizarEstado = async (id: string, estado: string) => {
     setSaving(id);
@@ -381,6 +484,8 @@ export default function LeadsPage() {
 
   return (
     <div className="space-y-6 max-w-6xl">
+      {selectedLeadId && <LeadDetailDialog key={selectedLeadId} leadId={selectedLeadId} onClose={closeDetail} />}
+      {warnings.map((warning) => <p key={warning} role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">{warning}</p>)}
       <div>
         <h1 className="text-2xl font-bold text-foreground">Leads</h1>
         <p className="text-sm text-muted mt-1">Gestiona los contactos recibidos desde el sitio público</p>
@@ -394,7 +499,7 @@ export default function LeadsPage() {
       )}
 
       {/* Stats */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+      {listAvailable && <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
         {[
           { label: 'Total', value: stats.total, color: 'text-slate-800', bg: 'bg-white' },
           { label: 'Nuevos', value: stats.nuevos, color: 'text-blue-700', bg: 'bg-blue-50' },
@@ -407,7 +512,7 @@ export default function LeadsPage() {
             <p className={`text-2xl font-bold ${s.color} mt-1`}>{s.value}</p>
           </div>
         ))}
-      </div>
+      </div>}
 
       {/* Filtros */}
       <div className="flex flex-wrap items-center gap-3">
@@ -441,13 +546,13 @@ export default function LeadsPage() {
           ))}
         </select>
         <span className="text-xs text-slate-400 ml-auto">
-          {leadsVisibles.length} visibles · {total} totales
+          {listAvailable ? `${leadsVisibles.length} visibles · ${total} totales` : loading ? 'Consultando contactos…' : 'Consulta no disponible'}
         </span>
       </div>
 
       {/* Barra de acciones masivas: aparece solo cuando hay selección.
           Uso principal: limpiar leads de prueba generados durante QA. */}
-      {seleccionados.size > 0 && (
+      {canDelete && seleccionados.size > 0 && (
         <div className="flex items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm">
           <span className="font-semibold text-red-700">
             {seleccionados.size} seleccionado{seleccionados.size === 1 ? '' : 's'}
@@ -478,6 +583,11 @@ export default function LeadsPage() {
         <div className="flex items-center justify-center py-20">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
+      ) : !listAvailable ? (
+        <div className="rounded-xl border border-border bg-white p-6 text-sm text-slate-600">
+          No fue posible mostrar los contactos. Vuelve a consultar la lista.
+          <button type="button" onClick={() => void fetchLeads()} className="ml-3 font-bold text-primary underline">Volver a consultar</button>
+        </div>
       ) : leadsVisibles.length === 0 ? (
         <div className="bg-white rounded-xl border border-border p-12 text-center">
           <UserPlus className="w-12 h-12 text-slate-200 mx-auto mb-3" />
@@ -496,7 +606,7 @@ export default function LeadsPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border bg-slate-50">
-                  <th className="px-3 py-3 w-8">
+                  {canDelete && <th className="px-3 py-3 w-8">
                     <input
                       type="checkbox"
                       aria-label="Seleccionar todos"
@@ -513,14 +623,14 @@ export default function LeadsPage() {
                       }}
                       className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary/20 cursor-pointer"
                     />
-                  </th>
+                  </th>}
                   <th className="text-left px-4 py-3 font-semibold text-slate-500 text-xs uppercase tracking-wider">Contacto</th>
                   <th className="text-left px-4 py-3 font-semibold text-slate-500 text-xs uppercase tracking-wider">Fuente</th>
                   <th className="text-left px-4 py-3 font-semibold text-slate-500 text-xs uppercase tracking-wider">Atribución</th>
                   <th className="text-left px-4 py-3 font-semibold text-slate-500 text-xs uppercase tracking-wider">Estado</th>
                   <th className="text-left px-4 py-3 font-semibold text-slate-500 text-xs uppercase tracking-wider">Fecha</th>
                   <th className="text-left px-4 py-3 font-semibold text-slate-500 text-xs uppercase tracking-wider w-48">Notas</th>
-                  <th className="px-3 py-3 w-10"></th>
+                  {canDelete && <th className="px-3 py-3 w-10"><span className="sr-only">Eliminar</span></th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
@@ -531,7 +641,7 @@ export default function LeadsPage() {
                       seleccionados.has(lead.id) ? 'bg-red-50/40' : ''
                     }`}
                   >
-                    <td className="px-3 py-3 align-top">
+                    {canDelete && <td className="px-3 py-3 align-top">
                       <input
                         type="checkbox"
                         aria-label={`Seleccionar lead de ${lead.nombre}`}
@@ -539,9 +649,9 @@ export default function LeadsPage() {
                         onChange={() => toggleSeleccion(lead.id)}
                         className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary/20 cursor-pointer mt-1"
                       />
-                    </td>
+                    </td>}
                     <td className="px-4 py-3">
-                      <div className="font-semibold text-slate-800">{lead.nombre}</div>
+                      <button type="button" onClick={() => setSelectedLeadId(lead.id)} className="text-left font-semibold text-slate-800 underline decoration-slate-300 underline-offset-4 hover:text-primary">{lead.nombre}</button>
                       {lead.empresa && (
                         <div className="flex items-center gap-1 text-xs text-slate-400 mt-0.5">
                           <Building2 className="w-3 h-3" /> {lead.empresa}
@@ -549,7 +659,7 @@ export default function LeadsPage() {
                       )}
                       <div className="flex items-center gap-3 mt-1">
                         {lead.email && (
-                          <a href={`mailto:${lead.email}`} className="flex items-center gap-1 text-xs text-slate-400 hover:text-primary">
+                          <a href={`mailto:${encodeURIComponent(lead.email)}`} className="flex items-center gap-1 text-xs text-slate-400 hover:text-primary">
                             <Mail className="w-3 h-3" /> {lead.email}
                           </a>
                         )}
@@ -562,7 +672,7 @@ export default function LeadsPage() {
                       {lead.mensaje && (
                         <p className="text-xs text-slate-400 mt-1 italic max-w-xs truncate">&ldquo;{lead.mensaje}&rdquo;</p>
                       )}
-                      {lead.empaques_personalizado && <EmpaquesDetalle detail={lead.empaques_personalizado} />}
+                      <button type="button" onClick={() => setSelectedLeadId(lead.id)} aria-label={`Ver detalle de ${lead.nombre}`} className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-bold text-primary hover:bg-primary/5"><Eye className="h-4 w-4" />Ver detalle{lead.empaques_personalizado ? ' y configuración' : ''}</button>
                     </td>
                     <td className="px-4 py-3">
                       <span className="text-xs text-slate-500">{lead.fuente}</span>
@@ -667,8 +777,9 @@ export default function LeadsPage() {
                         </button>
                       )}
                     </td>
-                    <td className="px-3 py-3 align-top">
+                    {canDelete && <td className="px-3 py-3 align-top">
                       <button
+                        type="button"
                         onClick={() => eliminarLeads([lead.id])}
                         disabled={borrando}
                         aria-label={`Eliminar lead de ${lead.nombre}`}
@@ -677,7 +788,7 @@ export default function LeadsPage() {
                       >
                         <Trash2 className="h-4 w-4" />
                       </button>
-                    </td>
+                    </td>}
                   </tr>
                 ))}
               </tbody>

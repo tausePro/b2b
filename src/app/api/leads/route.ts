@@ -1,6 +1,8 @@
 import { createClient } from '@supabase/supabase-js';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { NextRequest, NextResponse } from 'next/server';
+import { authorizeApiRoles } from '@/lib/auth/apiRouteGuards';
+import { LEAD_ID_PATTERN, parseAdminLeadQuery } from '@/lib/leads-query';
 import {
   EMPAQUES_PERSONALIZADOS_FILE_TYPES,
   type EmpaquesPersonalizadosArchivo,
@@ -210,29 +212,20 @@ export async function POST(request: NextRequest) {
 // GET — admin: listar leads
 export async function GET(request: NextRequest) {
   try {
-    const supabase = await createServerSupabaseClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 403 });
-
-    const { data: perfil } = await supabase
-      .from('usuarios')
-      .select('rol')
-      .eq('auth_id', user.id)
-      .single();
-
-    if (perfil?.rol !== 'super_admin' && perfil?.rol !== 'direccion' && perfil?.rol !== 'editor_contenido') {
-      return NextResponse.json({ error: 'No autorizado' }, { status: 403 });
-    }
+    const auth = await authorizeApiRoles(['super_admin', 'direccion', 'editor_contenido']);
+    if (auth instanceof NextResponse) return auth;
 
     const { searchParams } = request.nextUrl;
+    let options;
+    try { options = parseAdminLeadQuery(searchParams); }
+    catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : 'Consulta inválida.' }, { status: 400 }); }
+    const { leadId, limit, offset } = options;
     const estado = searchParams.get('estado');
     const fuente = searchParams.get('fuente');
     // fuente_prefix: filtra por prefijo (ej: 'producto_' matchea
     // producto_12, producto_34_cta, etc.). Util para agrupar fuentes
     // dinamicas en el dashboard sin tener un listado exhaustivo.
     const fuentePrefix = searchParams.get('fuente_prefix');
-    const limit = parseInt(searchParams.get('limit') || '50');
-    const offset = parseInt(searchParams.get('offset') || '0');
 
     let query = supabaseAdmin
       .from('leads')
@@ -240,10 +233,11 @@ export async function GET(request: NextRequest) {
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
 
-    if (estado && estado !== 'todos') query = query.eq('estado', estado);
-    if (fuente && fuente !== 'todos') {
+    if (leadId) query = query.eq('id', leadId);
+    if (!leadId && estado && estado !== 'todos') query = query.eq('estado', estado);
+    if (!leadId && fuente && fuente !== 'todos') {
       query = query.eq('fuente', fuente);
-    } else if (fuentePrefix) {
+    } else if (!leadId && fuentePrefix) {
       // Escapamos wildcards del usuario (%, _) antes de hacer LIKE para
       // evitar que un prefix 'foo_' matchee demasiado ancho (siempre lo
       // haria porque _ en LIKE es comodin de un char). Uso like() directo
@@ -256,6 +250,8 @@ export async function GET(request: NextRequest) {
     if (error) throw error;
 
     const leads = data ?? [];
+    if (leadId && leads.length === 0) return NextResponse.json({ error: 'El lead ya no está disponible.' }, { status: 404, headers: { 'Cache-Control': 'private, no-store' } });
+    const warnings: string[] = [];
     const personalizedLeadIds = leads
       .filter((lead) => lead.fuente === 'empaques_personalizados')
       .map((lead) => lead.id);
@@ -272,10 +268,12 @@ export async function GET(request: NextRequest) {
         ...row,
         archivos: normalizePrivateFiles(row.archivos),
       }));
-      const [signedUrlByPath, previewUrlByPath] = await Promise.all([
+      const signedPaths = await Promise.allSettled([
         signPrivatePaths(rows.flatMap((row) => row.archivos.map((file) => file.path)), true),
         signPrivatePaths(rows.flatMap((row) => row.archivos.flatMap((file) => file.preview_path ? [file.preview_path] : []))),
       ]);
+      const [signedUrlByPath, previewUrlByPath] = signedPaths.map((result) => result.status === 'fulfilled' ? result.value : new Map<string, string>());
+      if (signedPaths.some((result) => result.status === 'rejected')) warnings.push('No se pudieron renovar todos los enlaces privados. La información del lead está disponible; vuelve a actualizar para consultar sus archivos.');
 
       for (const row of rows) {
         const archivos = row.archivos.map((file) => ({
@@ -296,13 +294,10 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    return NextResponse.json({
-      leads: leads.map((lead) => ({
-        ...lead,
-        empaques_personalizado: detailByLeadId.get(lead.id) ?? null,
-      })),
-      total: count,
-    }, { headers: { 'Cache-Control': 'private, no-store' } });
+    const results = leads.map((lead) => ({ ...lead, empaques_personalizado: detailByLeadId.get(lead.id) ?? null }));
+    return NextResponse.json(leadId ? { lead: results[0], warnings } : { leads: results, total: count, warnings }, {
+      headers: { 'Cache-Control': 'private, no-store', 'Referrer-Policy': 'no-referrer' },
+    });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Error al listar leads';
     return NextResponse.json({ error: message }, { status: 500 });
@@ -312,24 +307,15 @@ export async function GET(request: NextRequest) {
 // PUT — admin: actualizar estado de lead
 export async function PUT(request: NextRequest) {
   try {
-    const supabase = await createServerSupabaseClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 403 });
-
-    const { data: perfil } = await supabase
-      .from('usuarios')
-      .select('rol')
-      .eq('auth_id', user.id)
-      .single();
-
-    if (perfil?.rol !== 'super_admin' && perfil?.rol !== 'direccion' && perfil?.rol !== 'editor_contenido') {
-      return NextResponse.json({ error: 'No autorizado' }, { status: 403 });
-    }
+    const auth = await authorizeApiRoles(['super_admin', 'direccion', 'editor_contenido']);
+    if (auth instanceof NextResponse) return auth;
 
     const body = await request.json();
     const { id, estado, notas } = body;
 
-    if (!id) return NextResponse.json({ error: 'ID requerido' }, { status: 400 });
+    if (typeof id !== 'string' || id.length !== 36 || !LEAD_ID_PATTERN.test(id)) return NextResponse.json({ error: 'ID de lead inválido' }, { status: 400 });
+    if (estado !== undefined && !['nuevo', 'contactado', 'convertido', 'descartado'].includes(estado)) return NextResponse.json({ error: 'Estado de lead inválido' }, { status: 400 });
+    if (notas !== undefined && notas !== null && typeof notas !== 'string') return NextResponse.json({ error: 'Las notas deben ser texto.' }, { status: 400 });
 
     const updateData: Record<string, unknown> = {};
     if (estado !== undefined) updateData.estado = estado;
@@ -366,14 +352,14 @@ export async function DELETE(request: NextRequest) {
 
     const { data: perfil } = await supabase
       .from('usuarios')
-      .select('rol')
+      .select('rol, activo')
       .eq('auth_id', user.id)
       .single();
 
     // Intencionalmente mas restrictivo que PUT: solo roles administrativos
     // altos pueden eliminar. 'editor_contenido' puede gestionar leads
     // pero no borrarlos.
-    if (perfil?.rol !== 'super_admin' && perfil?.rol !== 'direccion') {
+    if (!perfil?.activo || (perfil.rol !== 'super_admin' && perfil.rol !== 'direccion')) {
       return NextResponse.json({ error: 'No autorizado' }, { status: 403 });
     }
 
