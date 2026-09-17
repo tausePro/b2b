@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authorizeApiRoles } from '@/lib/auth/apiRouteGuards';
+import { mergeCategoryPresentation } from '@/lib/empaques/product-images';
 
 const EDITOR_ROLES = ['super_admin', 'direccion', 'editor_contenido'] as const;
 const SELECT_FIELDS = 'id, storefront_config_id, odoo_categ_id, nombre_publico, slug, descripcion_corta, descripcion_larga, imagen_url, orden, visible, destacado, seo_title, seo_description, contenido_extra, estado_publicacion, creado_por, actualizado_por, publicado_at, created_at, updated_at';
@@ -90,6 +91,14 @@ export async function POST(
     return NextResponse.json({ error: 'MIGRATION_PENDING', details: 'Falta la migración 039_storefront_editorial_overrides.sql.' }, { status: 409 });
   }
   if (existingError) return NextResponse.json({ error: existingError.message }, { status: 500 });
+  const asObject = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  const incomingExtra = { ...asObject(body.contenido_extra) };
+  delete incomingExtra.imagen_presentacion;
+  let extra = { ...asObject(existing?.contenido_extra), ...incomingExtra };
+  if ('imagen_presentacion' in body) {
+    try { extra = mergeCategoryPresentation(extra, body.imagen_presentacion); }
+    catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : 'Encuadre inválido.' }, { status: 400 }); }
+  }
 
   const { data, error } = await resolved.auth.admin
     .from('storefront_category_overrides')
@@ -107,8 +116,7 @@ export async function POST(
         destacado: typeof body.destacado === 'boolean' ? body.destacado : false,
         seo_title: 'seo_title' in body ? cleanText(body.seo_title) : existing?.seo_title ?? null,
         seo_description: 'seo_description' in body ? cleanText(body.seo_description) : existing?.seo_description ?? null,
-        contenido_extra: body.contenido_extra && typeof body.contenido_extra === 'object' && !Array.isArray(body.contenido_extra)
-          ? body.contenido_extra : existing?.contenido_extra ?? {},
+        contenido_extra: extra,
         ...(!existing ? { creado_por: resolved.auth.actor.id } : {}),
         estado_publicacion: estadoPublicacion,
         actualizado_por: resolved.auth.actor.id,

@@ -27,6 +27,8 @@ import {
 } from '@/lib/pricing/cost-staleness';
 import {
   getBase64Mime,
+  readCategoryPresentation,
+  type EmpaquesCategoryPresentation,
   hasOdooBinary,
   toEmpaquesImageVersion,
   type EmpaquesOdooImageSize,
@@ -92,6 +94,7 @@ export interface EmpaquesCategoryNode {
   slug: string;
   descripcion_corta: string | null;
   imagen_url: string | null;
+  imagen_presentacion?: EmpaquesCategoryPresentation | null;
   destacado: boolean;
   orden: number;
   parentId: number | null;
@@ -240,6 +243,7 @@ interface StorefrontMargenRow {
 }
 
 interface StorefrontCategoryOverrideRow {
+  contenido_extra?: unknown;
   odoo_categ_id: number;
   nombre_publico: string | null;
   slug: string | null;
@@ -472,6 +476,7 @@ export function buildCategoryTree(
       slug: override?.slug?.trim() || slugify(completeName),
       descripcion_corta: override?.descripcion_corta?.trim() || null,
       imagen_url: override?.imagen_url?.trim() || null,
+      imagen_presentacion: readCategoryPresentation(override?.contenido_extra),
       destacado: override?.destacado ?? false,
       orden: override?.orden ?? 0,
       parentId: getParentId(category),
@@ -860,7 +865,7 @@ async function loadStorefrontEditorialContext(storefrontId: string): Promise<Sto
   const [categoriesRes, productsRes] = await Promise.all([
     admin
       .from('storefront_category_overrides')
-      .select('odoo_categ_id, nombre_publico, slug, descripcion_corta, imagen_url, orden, visible, destacado')
+      .select('odoo_categ_id, nombre_publico, slug, descripcion_corta, imagen_url, contenido_extra, orden, visible, destacado')
       .eq('storefront_config_id', storefrontId)
       .eq('estado_publicacion', 'publicado'),
     admin

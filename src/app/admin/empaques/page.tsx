@@ -2,6 +2,8 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
+import { buildEmpaquesCategoryHref, normalizeCategoryPresentation, readCategoryPresentation, categoryImageStyle, categoryImageOverlay, type EmpaquesCategoryPresentation } from '@/lib/empaques/product-images';
 import {
   AlertCircle,
   AlertTriangle,
@@ -195,6 +197,7 @@ interface CategoryEditorialOption {
 }
 
 interface CategoryEditorialDraft {
+  imagen_presentacion: EmpaquesCategoryPresentation | null;
   odoo_categ_id: number;
   nombre_publico: string;
   slug: string;
@@ -276,6 +279,7 @@ function getDescription(config: StorefrontConfig | null) {
 
 function buildCategoryDraft({ id, category, override }: CategoryEditorialOption): CategoryEditorialDraft {
   return {
+    imagen_presentacion: readCategoryPresentation(override?.contenido_extra),
     odoo_categ_id: id,
     nombre_publico: override?.nombre_publico ?? category?.name ?? '',
     slug: override?.slug ?? (category ? slugify(category.complete_name) : ''),
@@ -312,6 +316,58 @@ async function parseJsonResponse<T>(response: Response): Promise<T> {
     throw new Error(data?.error || data?.details || 'No se pudo completar la operación.');
   }
   return data as T;
+}
+
+function CategoryImageEditor({ image, name, value, disabled, onChange }: {
+  image: string; name: string; value: EmpaquesCategoryPresentation | null; disabled: boolean;
+  onChange: (value: EmpaquesCategoryPresentation | null) => void;
+}) {
+  const presentation = normalizeCategoryPresentation(value);
+  const sliders = [
+    { key: 'posicion_x', label: 'Posición horizontal', hint: '0: izquierda · 100: derecha' },
+    { key: 'posicion_y', label: 'Posición vertical', hint: '0: arriba · 100: abajo' },
+    { key: 'opacidad', label: 'Intensidad de la fotografía', hint: '100 muestra la imagen sin transparencia' },
+    { key: 'sombra', label: 'Sombra detrás del texto', hint: 'Aumenta para facilitar la lectura' },
+  ] as const;
+  return (
+    <fieldset disabled={disabled} className="space-y-4 rounded-xl border border-border bg-slate-50 p-4">
+      <legend className="px-2 text-sm font-bold text-slate-800">Cómo se muestra la imagen</legend>
+      <label className="block space-y-2 text-sm font-semibold text-slate-700" htmlFor="categoria-ajuste">
+        Ajuste de la fotografía
+        <select id="categoria-ajuste" value={value?.ajuste ?? 'auto'} onChange={(event) => onChange(event.target.value === 'auto' ? null : { ...presentation, ajuste: event.target.value as 'cover' | 'contain' })} className="block w-full rounded-lg border border-border bg-white px-3 py-2">
+          <option value="auto">Automático (conservar el aspecto anterior)</option>
+          <option value="contain">Imagen completa, sin recortar</option>
+          <option value="cover">Rellenar tarjeta, con recorte</option>
+        </select>
+      </label>
+      <p className="text-xs text-slate-500">Para una foto vertical que debe verse completa, elige “Imagen completa”. El encuadre no modifica el archivo original y se aplica al publicar.</p>
+      <div className="grid gap-4 sm:grid-cols-2">
+        {sliders.map(({ key, label, hint }) => (
+          <label key={key} htmlFor={`categoria-${key}`} className="block space-y-1 text-sm text-slate-700">
+            <span className="flex justify-between gap-2 font-semibold">{label}<span>{value ? `${presentation[key]}%` : 'Automático'}</span></span>
+            <input id={`categoria-${key}`} type="range" min="0" max="100" step="1" disabled={!value} value={presentation[key]} onChange={(event) => onChange({ ...presentation, [key]: Number(event.target.value) })} aria-describedby={`categoria-${key}-ayuda`} className="w-full accent-primary" />
+            <span id={`categoria-${key}-ayuda`} className="block text-xs text-slate-500">{hint}</span>
+          </label>
+        ))}
+      </div>
+      {image ? (
+        <div className="grid items-start gap-4 sm:grid-cols-[2fr_1fr]">
+          {(['horizontal', 'vertical'] as const).map((shape) => {
+            const display = normalizeCategoryPresentation(value, shape === 'vertical' ? 50 : 100);
+            return <figure key={shape} className="space-y-2">
+              <div className={`relative overflow-hidden rounded-xl bg-gradient-to-br from-emerald-900 via-teal-800 to-slate-950 ${shape === 'vertical' ? 'aspect-[1/2]' : 'aspect-[2/1]'}`}>
+                <Image src={image} alt={`Encuadre ${shape} de ${name}`} fill sizes="(max-width: 640px) 100vw, 400px" style={categoryImageStyle(display)} />
+                <div className="absolute inset-0" style={{ background: categoryImageOverlay(display) }} />
+                <p className="absolute inset-x-0 bottom-0 break-words p-4 text-sm font-black text-white">{name}</p>
+              </div>
+              <figcaption className="text-xs font-semibold text-slate-600">Vista {shape}</figcaption>
+            </figure>;
+          })}
+        </div>
+      ) : <p className="text-sm text-slate-500">Sube una imagen para previsualizar el encuadre.</p>}
+      <p className="text-xs text-slate-500">Vistas orientativas: el tamaño real depende de la pantalla, el orden y el número de tarjetas. En automático se conserva la posición anterior de cada formato.</p>
+    </fieldset>
+  );
 }
 
 export default function AdminEmpaquesPage() {
@@ -758,6 +814,7 @@ export default function AdminEmpaquesPage() {
             slug: categoryDraft.slug,
             descripcion_corta: categoryDraft.descripcion_corta,
             imagen_url: categoryDraft.imagen_url,
+            imagen_presentacion: categoryDraft.imagen_presentacion,
             orden: Number(categoryDraft.orden),
             visible: categoryDraft.visible,
             destacado: categoryDraft.destacado,
@@ -1377,6 +1434,8 @@ export default function AdminEmpaquesPage() {
               {categoryDraft && (
                 <>
                   <p className="text-xs text-slate-500">Categoría Odoo #{categoryDraft.odoo_categ_id}. Las categorías con edición guardada siguen disponibles aquí aunque estén ocultas en el catálogo.</p>
+                  <Link href={buildEmpaquesCategoryHref(categoryDraft.odoo_categ_id)} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 text-sm font-semibold text-primary underline underline-offset-4"><ArrowUpRight className="h-4 w-4" />Ver catálogo público de esta categoría</Link>
+                  <p className="text-xs text-slate-500">El enlace muestra la versión publicada, no los cambios sin guardar. Una categoría oculta no tendrá un catálogo público disponible.</p>
                   <div className="grid gap-4 md:grid-cols-2">
                     <label className="space-y-2 block">
                       <span className="text-sm font-semibold text-slate-700">Nombre público</span>
@@ -1427,6 +1486,9 @@ export default function AdminEmpaquesPage() {
                       />
                     </label>
                   </div>
+                  <CategoryImageEditor image={categoryDraft.imagen_url} name={categoryDraft.nombre_publico} value={categoryDraft.imagen_presentacion}
+                    disabled={savingEditorial || uploadingCategoryImage}
+                    onChange={(value) => setCategoryDraft((current) => current?.odoo_categ_id === categoryDraft.odoo_categ_id ? { ...current, imagen_presentacion: value } : current)} />
                   <div className="grid gap-3 md:grid-cols-3">
                     <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2.5 text-sm font-semibold text-slate-700">
                       <input
