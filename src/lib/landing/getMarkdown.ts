@@ -6,6 +6,15 @@ import {
   getPublicCatalogRootCategories,
 } from '@/lib/catalogoPublico';
 import type { PublicCatalogCategoryNode } from '@/types/publicCatalog';
+import { getEmpaquesLandingConfig } from '@/lib/empaques/landing-config';
+import { DEFAULT_LANDING_CONFIG } from '@/lib/empaques/landing-config-shared';
+import {
+  EMPAQUES_CANONICAL_ORIGIN,
+  buildEmpaquesHomeCanonical,
+  buildEmpaquesPersonalizadosCanonical,
+  buildEmpaquesProductCanonical,
+} from '@/lib/empaques/seo';
+import { loadEmpaquesSiteIndex } from '@/lib/empaques/site-index';
 
 interface ContactoContenido {
   telefono?: string;
@@ -65,6 +74,8 @@ export const RUTAS_MARKDOWN: ReadonlySet<string> = new Set([
   '/terminos',
   '/privacidad',
   '/catalogo',
+  '/empaques',
+  '/empaques/personalizados',
 ]);
 
 function normalizarPath(path: string): string {
@@ -333,6 +344,83 @@ async function renderCatalogo(baseUrl: string): Promise<MarkdownResult> {
   return { title, body, full: construirFrontmatter(title, baseUrl + '/catalogo', descripcion) + body };
 }
 
+async function renderEmpaques(): Promise<MarkdownResult> {
+  const landing = await getEmpaquesLandingConfig().catch(() => DEFAULT_LANDING_CONFIG);
+  const title = 'Empaques Imprima';
+  const descripcion = landing.hero.subtitulo?.trim()
+    || 'Soluciones de empaque para empresas en Colombia: bolsas kraft, empaques reciclables y personalización CMYK.';
+
+  const lineas: string[] = ['# ' + title, '', descripcion, ''];
+  lineas.push('Precios publicados antes de IVA. Las solicitudes se atienden con asesoría comercial de Imprima S.A.S.');
+  lineas.push('');
+  lineas.push(`- [Empaques personalizados](${buildEmpaquesPersonalizadosCanonical()}): impresión CMYK sobre bolsas kraft, una o dos caras.`);
+  lineas.push('- [Contacto](https://imprima.com.co/contacto)');
+  lineas.push('');
+
+  try {
+    const index = await loadEmpaquesSiteIndex();
+    if (index.categories.length > 0) {
+      lineas.push('## Categorías');
+      lineas.push('');
+      for (const category of index.categories) {
+        lineas.push(`${'  '.repeat(Math.max(0, category.level))}- [${category.name}](${buildEmpaquesHomeCanonical(category.id)})`);
+      }
+      lineas.push('');
+    }
+    if (index.products.length > 0) {
+      lineas.push(`## Productos publicados (${index.totalProducts})`);
+      lineas.push('');
+      for (const product of index.products) {
+        const reference = typeof product.default_code === 'string' && product.default_code ? ` — ref. ${product.default_code}` : '';
+        lineas.push(`- [${product.name}](${buildEmpaquesProductCanonical(product.id)})${reference}`);
+      }
+      if (index.truncated) lineas.push(`- Catálogo completo: ${EMPAQUES_CANONICAL_ORIGIN}/sitemap.xml`);
+      lineas.push('');
+    }
+  } catch {
+    lineas.push('El listado de productos no está disponible temporalmente; consulta el catálogo en línea.');
+    lineas.push('');
+  }
+
+  const body = lineas.join('\n').trim() + '\n';
+  return { title, body, full: construirFrontmatter(title, EMPAQUES_CANONICAL_ORIGIN + '/', descripcion) + body };
+}
+
+async function renderEmpaquesPersonalizados(): Promise<MarkdownResult> {
+  const landing = await getEmpaquesLandingConfig().catch(() => DEFAULT_LANDING_CONFIG);
+  const config = landing.personalizados;
+  const title = config.titulo?.trim() || 'Empaques Personalizados';
+  const descripcion = config.subtitulo?.trim() || 'Impresión CMYK sobre referencias de bolsas kraft.';
+
+  const lineas: string[] = ['# ' + title, '', descripcion, ''];
+  lineas.push('Cómo funciona: elige una bolsa kraft disponible, selecciona producción o muestra y una o dos caras, y sube un archivo TIFF por cada cara impresa. El arte se ajusta al área imprimible sin recortes ni estiramientos.');
+  lineas.push('');
+  lineas.push('El envío del formulario no genera un precio automático: el equipo revisa la viabilidad técnica y prepara la propuesta comercial.');
+  lineas.push('');
+
+  const referencias = config.referencias.filter((referencia) => referencia.activo);
+  if (referencias.length > 0) {
+    lineas.push('## Referencias disponibles');
+    lineas.push('');
+    for (const referencia of referencias) {
+      lineas.push(`- **${referencia.nombre}** (ref. ${referencia.sku}) — área imprimible ${referencia.alto_cm} × ${referencia.ancho_cm} cm (alto × ancho). El área corresponde a impresión, no a las medidas de la bolsa.`);
+    }
+    lineas.push('');
+  }
+
+  lineas.push('## Requisitos del arte');
+  lineas.push('');
+  lineas.push('- Formato TIFF, uno por cara impresa (frente o frente y reverso).');
+  lineas.push('- Resolución mínima 150 ppp efectivos al tamaño colocado; recomendada 300 ppp.');
+  lineas.push('- Tamaño máximo 100 MiB por archivo. Los archivos y sus vistas previas son privados.');
+  lineas.push('');
+  lineas.push(`[Configurar un empaque](${buildEmpaquesPersonalizadosCanonical()})`);
+  lineas.push('');
+
+  const body = lineas.join('\n').trim() + '\n';
+  return { title, body, full: construirFrontmatter(title, buildEmpaquesPersonalizadosCanonical(), descripcion) + body };
+}
+
 // ────────────────── API pública ──────────────────
 
 /**
@@ -342,6 +430,10 @@ async function renderCatalogo(baseUrl: string): Promise<MarkdownResult> {
 export async function getMarkdownForPath(path: string): Promise<MarkdownResult | null> {
   const normalizado = normalizarPath(path);
   if (!RUTAS_MARKDOWN.has(normalizado)) return null;
+
+  // Las vistas de Empaques no dependen del CMS corporativo.
+  if (normalizado === '/empaques') return await renderEmpaques();
+  if (normalizado === '/empaques/personalizados') return await renderEmpaquesPersonalizados();
 
   const baseUrl = getSiteUrl();
   const secciones = await getSeccionesActivas();

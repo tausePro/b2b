@@ -217,7 +217,8 @@ export type TipoNotificacion =
   | 'pedido_aprobado'
   | 'pedido_rechazado'
   | 'pedido_validado'
-  | 'pedido_procesado_odoo';
+  | 'pedido_procesado_odoo'
+  | 'lead_creado';
 
 export type NivelNotificacion = 'info' | 'success' | 'warning' | 'danger';
 
@@ -275,7 +276,12 @@ export type NotificationEmailTemplateVariableKey =
   | 'ruta'
   | 'sede'
   | 'total_items'
-  | 'valor_total_label';
+  | 'valor_total_label'
+  | 'lead_nombre'
+  | 'lead_empresa'
+  | 'lead_contacto'
+  | 'lead_fuente'
+  | 'lead_resumen';
 
 export interface NotificationEmailTemplateVariable {
   key: NotificationEmailTemplateVariableKey;

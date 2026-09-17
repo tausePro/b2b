@@ -20,6 +20,14 @@ import {
   getEmpaquesProductImageSrc,
   hasEmpaquesEditorialImage,
 } from '@/lib/empaques/product-images';
+import {
+  buildEmpaquesBreadcrumbJsonLd,
+  buildEmpaquesHomeCanonical,
+  buildEmpaquesProductCanonical,
+  buildEmpaquesProductJsonLd,
+  getEmpaquesProductSeoDescription,
+  jsonLdScriptProps,
+} from '@/lib/empaques/seo';
 
 type EmpaquesProductPageProps = {
   params: Promise<{ id: string }>;
@@ -54,17 +62,19 @@ export async function generateMetadata({ params }: EmpaquesProductPageProps): Pr
   if (!data) return { title: 'Producto no encontrado | Empaques Imprima' };
 
   const { product } = data;
-  const description = product.seo_description
-    || getDescription(product)
-    || product.descripcion_larga
-    || `${product.name} — Soluciones de Empaques Imprima`;
+  const description = getEmpaquesProductSeoDescription(product);
+  const canonical = buildEmpaquesProductCanonical(product.id);
 
   return {
     title: product.seo_title || `${product.name} | Empaques Imprima`,
     description: description.slice(0, 160),
+    alternates: { canonical },
     openGraph: {
       title: product.seo_title || product.name,
       description: description.slice(0, 160),
+      url: canonical,
+      siteName: 'Empaques Imprima',
+      locale: 'es_CO',
       images: product.image_url ? [{ url: product.image_url, alt: product.name }] : undefined,
     },
   };
@@ -125,6 +135,14 @@ export default async function EmpaquesProductPage({ params }: EmpaquesProductPag
 
   return (
     <div className="min-h-screen bg-[#F8F8F5] text-slate-950 antialiased">
+      <script {...jsonLdScriptProps(buildEmpaquesProductJsonLd(product))} />
+      <script
+        {...jsonLdScriptProps(buildEmpaquesBreadcrumbJsonLd([
+          { name: 'Empaques', url: buildEmpaquesHomeCanonical(null) },
+          { name: category.name, url: buildEmpaquesHomeCanonical(category.id) },
+          { name: product.name, url: buildEmpaquesProductCanonical(product.id) },
+        ]))}
+      />
       <EmpaquesHeader sectionBasePath="/empaques" />
       <main>
         <section className="px-4 pb-24 pt-10 sm:px-6 lg:px-8 lg:pb-28 lg:pt-16">
