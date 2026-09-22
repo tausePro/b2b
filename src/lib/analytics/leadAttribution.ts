@@ -18,6 +18,8 @@
  * datos a través del payload del POST /api/leads.
  */
 
+import { canUseEmpaquesAttribution, isEmpaquesAdsHost } from './adsScope';
+
 export interface LeadAttribution {
   gclid?: string;
   utm_source?: string;
@@ -50,12 +52,12 @@ const ATTRIBUTION_KEYS: Array<keyof LeadAttribution> = [
 
 /** Lee la cookie de atribución. Devuelve objeto vacío si no existe. */
 export function readLeadAttributionCookie(): LeadAttribution {
-  if (typeof document === 'undefined') return {};
-  const match = document.cookie
-    .split('; ')
-    .find((row) => row.startsWith(`${COOKIE_NAME}=`));
-  if (!match) return {};
+  if (typeof document === 'undefined' || !canUseEmpaquesAttribution()) return {};
   try {
+    const match = document.cookie
+      .split('; ')
+      .find((row) => row.startsWith(`${COOKIE_NAME}=`));
+    if (!match) return {};
     const raw = decodeURIComponent(match.split('=')[1] ?? '');
     if (!raw) return {};
     const parsed = JSON.parse(raw) as Record<string, unknown>;
@@ -78,10 +80,10 @@ export function readLeadAttributionCookie(): LeadAttribution {
  * Merge-friendly: si ya hay cookie, solo sobreescribe los campos
  * nuevos que vengan con valor (no borra los previos).
  */
-function writeLeadAttributionCookie(partial: LeadAttribution) {
+function writeLeadAttributionCookie(partial: LeadAttribution, replace = false) {
   if (typeof document === 'undefined') return;
   const current = readLeadAttributionCookie();
-  const merged: LeadAttribution = { ...current };
+  const merged: LeadAttribution = replace ? {} : { ...current };
   for (const key of ATTRIBUTION_KEYS) {
     const val = partial[key];
     if (typeof val === 'string' && val.length > 0) {
@@ -97,7 +99,7 @@ function writeLeadAttributionCookie(partial: LeadAttribution) {
     typeof window !== 'undefined' && window.location.protocol === 'https:'
       ? '; Secure'
       : '';
-  document.cookie = `${COOKIE_NAME}=${value}; Max-Age=${maxAge}; Path=/; SameSite=Lax${secure}`;
+  try { document.cookie = `${COOKIE_NAME}=${value}; Max-Age=${maxAge}; Path=/; SameSite=Lax${secure}`; } catch {}
 }
 
 /**
@@ -111,9 +113,11 @@ function writeLeadAttributionCookie(partial: LeadAttribution) {
  * existente.
  */
 export function captureLeadAttributionFromUrl(): void {
-  if (typeof window === 'undefined') return;
+  if (typeof window === 'undefined' || !canUseEmpaquesAttribution()) return;
 
   const url = new URL(window.location.href);
+  const isEmpaques = isEmpaquesAdsHost(url.hostname);
+  if (isEmpaques) url.hash = '';
   const params = url.searchParams;
 
   const captured: LeadAttribution = {};
@@ -134,6 +138,11 @@ export function captureLeadAttributionFromUrl(): void {
 
   const hasNewAttribution = Object.keys(captured).length > 0;
   if (!hasNewAttribution) return;
+  if (isEmpaques) {
+    const previous = readLeadAttributionCookie();
+    if (previous.landing_url === url.href && previous.gclid === captured.gclid
+      && utmKeys.every((key) => previous[key] === captured[key])) return;
+  }
 
   // Guardamos contexto adicional solo cuando registramos atribución
   // fresca. Esto garantiza que click_at corresponde al click real
@@ -144,5 +153,5 @@ export function captureLeadAttributionFromUrl(): void {
     captured.referrer = document.referrer;
   }
 
-  writeLeadAttributionCookie(captured);
+  writeLeadAttributionCookie(captured, isEmpaques);
 }

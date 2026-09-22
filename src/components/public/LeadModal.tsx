@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { X, Loader2, MessageCircle } from 'lucide-react';
 import { readLeadAttributionCookie } from '@/lib/analytics/leadAttribution';
+import { reportEmpaquesLeadConversion } from '@/lib/analytics/googleAds';
 
 interface LeadModalProps {
   isOpen: boolean;
@@ -74,6 +75,7 @@ export default function LeadModal({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
+      reportEmpaquesLeadConversion({ ok: res.ok, leadId: data.lead?.id });
 
       if (data.whatsapp_url) {
         window.open(data.whatsapp_url, '_blank');
