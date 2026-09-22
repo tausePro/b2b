@@ -83,7 +83,7 @@ const ATRIBUCION_OPCIONES = [
   { value: 'todos', label: 'Toda la atribución' },
   { value: 'google_ads', label: 'Google Ads (gclid)' },
   { value: 'utm', label: 'Con UTM (campaña/email)' },
-  { value: 'organico_o_directo', label: 'Orgánico / directo' },
+  { value: 'organico_o_directo', label: 'Sin atribución registrada' },
 ];
 
 function matchesAtribucion(lead: Lead, filtro: string): boolean {
@@ -704,7 +704,7 @@ export default function LeadsPage() {
                           UTM
                         </span>
                       ) : (
-                        <span className="text-[11px] text-slate-400">Directo / orgánico</span>
+                        <span className="text-[11px] text-slate-400">Sin atribución registrada</span>
                       )}
                       {(lead.utm_source || lead.utm_campaign || lead.utm_medium) && (
                         <div className="mt-1 text-[11px] text-slate-500 leading-tight space-y-0.5">

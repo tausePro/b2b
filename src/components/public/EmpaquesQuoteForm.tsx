@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { CheckCircle2, Loader2, Send } from 'lucide-react';
 import { readLeadAttributionCookie } from '@/lib/analytics/leadAttribution';
+import { reportEmpaquesLeadConversion } from '@/lib/analytics/googleAds';
 
 interface EmpaquesQuoteFormProps {
   categoryOptions: string[];
@@ -52,6 +53,7 @@ export default function EmpaquesQuoteForm({ categoryOptions }: EmpaquesQuoteForm
         throw new Error(data.error || 'No se pudo enviar la solicitud');
       }
 
+      reportEmpaquesLeadConversion({ ok: response.ok, leadId: data.lead?.id });
       setSuccess({ whatsappUrl: data.whatsapp_url || null });
       setForm({ nombre: '', empresa: '', email: '', telefono: '', tipoEmpaque: '', mensaje: '' });
     } catch (err) {
