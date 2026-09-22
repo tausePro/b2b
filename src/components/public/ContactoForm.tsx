@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { CheckCircle2, Loader2, Send } from 'lucide-react';
 import { readLeadAttributionCookie } from '@/lib/analytics/leadAttribution';
+import { reportEmpaquesLeadConversion } from '@/lib/analytics/googleAds';
 
 // Formulario de contacto publico en /contacto. Reusa la API de leads
 // (POST /api/leads) para registrar cada submission como lead con
@@ -43,6 +44,7 @@ export default function ContactoForm() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'No se pudo enviar tu mensaje');
+      reportEmpaquesLeadConversion({ ok: res.ok, leadId: data.lead?.id });
 
       setSuccess({ whatsappUrl: data.whatsapp_url || null });
       setForm({ nombre: '', empresa: '', email: '', telefono: '', mensaje: '' });

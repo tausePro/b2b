@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
 import { CheckCircle2, FileText, Loader2, Send, Upload, X } from 'lucide-react';
 import { readLeadAttributionCookie } from '@/lib/analytics/leadAttribution';
+import { reportEmpaquesLeadConversion } from '@/lib/analytics/googleAds';
 import type { EmpaquesPersonalizadosConfig } from '@/lib/empaques/landing-config-shared';
 import {
   EMPAQUES_MIN_PPP,
@@ -414,6 +415,7 @@ export default function EmpaquesPersonalizadosForm({ config }: EmpaquesPersonali
         throw new Error(message);
       }
       if (typeof data.lead_id !== 'string' || !data.lead_id) throw new Error('No recibimos la referencia de confirmación. Reintenta sin cambiar los datos para consultar el mismo envío.');
+      reportEmpaquesLeadConversion({ ok: response.ok && data.ok === true, leadId: data.lead_id });
       setSuccess({ leadId: data.lead_id, whatsappUrl: esUrlSegura(data.whatsapp_url) ? data.whatsapp_url : null });
       setForm(INITIAL_FORM);
       descartarArtes();
