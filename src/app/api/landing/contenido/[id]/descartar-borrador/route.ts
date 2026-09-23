@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
 import { obtenerContextoCms } from '@/lib/landing/authCms';
+import { isInternalLandingSection } from '@/lib/landing/privateSections';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -23,6 +24,7 @@ export async function POST(
     }
 
     const { id } = await context.params;
+    if (isInternalLandingSection(id)) return NextResponse.json({ error: 'Sección no disponible.' }, { status: 404 });
     if (!id || typeof id !== 'string') {
       return NextResponse.json({ error: 'ID de sección requerido' }, { status: 400 });
     }

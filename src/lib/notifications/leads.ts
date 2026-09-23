@@ -6,6 +6,7 @@ import {
   renderEditableNotificationTemplate,
 } from '@/lib/notifications/emailTemplateStore';
 import { processPendingEmailNotifications } from '@/lib/notifications/processPendingEmails';
+import { LEAD_NOTIFICATION_SETTINGS_ID, LEAD_NOTIFICATION_SETTINGS_TABLE, recipientsFromPrivateSettings } from '@/lib/notifications/leadRecipients';
 
 type LeadRow = {
   id: string;
@@ -56,7 +57,7 @@ function normalizeRecipient(value: unknown): LeadRecipient | null {
  * LEADS_NOTIFICATION_EMAILS como respaldo de emergencia. Se deduplica por
  * correo y se acota para evitar listas accidentalmente masivas.
  */
-export async function loadLeadNotificationRecipients(): Promise<LeadRecipient[]> {
+async function loadLegacyLeadNotificationRecipients(): Promise<LeadRecipient[]> {
   const admin = getSupabaseAdmin();
   const { data, error } = await admin
     .from('landing_contenido')
@@ -64,12 +65,13 @@ export async function loadLeadNotificationRecipients(): Promise<LeadRecipient[]>
     .eq('id', RECIPIENTS_CONFIG_ID)
     .maybeSingle();
 
+  if (!error && data?.activo === false) return [];
   const raw: unknown[] = [];
   if (!error && data?.activo !== false) {
     const contenido = data?.contenido as { destinatarios?: unknown } | null;
     if (Array.isArray(contenido?.destinatarios)) raw.push(...contenido.destinatarios);
   }
-  if (raw.length === 0) {
+  if (raw.length === 0 && !data) {
     raw.push(...(process.env.LEADS_NOTIFICATION_EMAILS ?? '').split(','));
   }
 
@@ -79,6 +81,18 @@ export async function loadLeadNotificationRecipients(): Promise<LeadRecipient[]>
     if (recipient && !byEmail.has(recipient.email)) byEmail.set(recipient.email, recipient);
   }
   return Array.from(byEmail.values()).slice(0, MAX_RECIPIENTS);
+}
+
+export async function loadLeadNotificationRecipients(): Promise<LeadRecipient[]> {
+  const { data, error } = await getSupabaseAdmin()
+    .from(LEAD_NOTIFICATION_SETTINGS_TABLE)
+    .select('activo, destinatarios')
+    .eq('id', LEAD_NOTIFICATION_SETTINGS_ID)
+    .maybeSingle();
+  if (error?.code === 'PGRST205' || error?.code === '42P01') return loadLegacyLeadNotificationRecipients();
+  if (error) throw new Error('No se pudo leer la configuración privada de notificaciones.');
+  if (!data) throw new Error('Falta la configuración privada de notificaciones.');
+  return recipientsFromPrivateSettings(data);
 }
 
 function truncate(value: string, max: number) {
