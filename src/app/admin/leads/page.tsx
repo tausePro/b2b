@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import Image from 'next/image';
+import Link from 'next/link';
 import {
   Loader2, UserPlus, Filter, MessageCircle, Mail, Phone,
   Building2, Calendar, ChevronDown, Check, AlertCircle, Target,
@@ -498,6 +499,7 @@ export default function LeadsPage() {
       <div>
         <h1 className="text-2xl font-bold text-foreground">Leads</h1>
         <p className="text-sm text-muted mt-1">Gestiona los contactos recibidos desde el sitio público</p>
+        {user?.rol === 'super_admin' && <Link href="/admin/configuracion#leads-notificaciones" className="mt-3 inline-flex min-h-11 items-center gap-2 rounded-lg border border-border bg-white px-4 py-2 text-sm font-semibold text-primary hover:bg-primary/5"><Mail className="h-4 w-4" />Configurar correos de notificación</Link>}
       </div>
 
       {error && (

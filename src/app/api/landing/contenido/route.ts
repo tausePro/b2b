@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { revalidateTag } from 'next/cache';
 import { LANDING_CACHE_TAG } from '@/lib/landing/getContenido';
 import { obtenerContextoCms } from '@/lib/landing/authCms';
+import { INTERNAL_LEAD_NOTIFICATION_SECTION, PUBLIC_LANDING_FIELDS, isInternalLandingSection } from '@/lib/landing/privateSections';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -12,10 +13,14 @@ const supabaseAdmin = createClient(
 export async function GET(request: NextRequest) {
   try {
     const showAll = request.nextUrl.searchParams.get('all') === 'true';
+    if (showAll && !await obtenerContextoCms()) {
+      return NextResponse.json({ error: 'No autorizado' }, { status: 403, headers: { 'Cache-Control': 'private, no-store' } });
+    }
 
     let query = supabaseAdmin
       .from('landing_contenido')
-      .select('*')
+      .select(showAll ? undefined : PUBLIC_LANDING_FIELDS)
+      .neq('id', INTERNAL_LEAD_NOTIFICATION_SECTION)
       .order('orden');
 
     if (!showAll) {
@@ -30,7 +35,7 @@ export async function GET(request: NextRequest) {
       contenido[item.id] = item;
     }
 
-    return NextResponse.json({ contenido });
+    return NextResponse.json({ contenido }, { headers: { 'Cache-Control': showAll ? 'private, no-store' : 'no-store' } });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Error al cargar contenido';
     return NextResponse.json({ error: message }, { status: 500 });
@@ -54,6 +59,8 @@ export async function PUT(request: NextRequest) {
     if (!id || typeof id !== 'string') {
       return NextResponse.json({ error: 'ID de sección requerido' }, { status: 400 });
     }
+
+    if (isInternalLandingSection(id)) return NextResponse.json({ error: 'Esta configuración se gestiona desde Configuración de Correo.' }, { status: 403 });
 
     const nowIso = new Date().toISOString();
     const updateData: Record<string, unknown> = {

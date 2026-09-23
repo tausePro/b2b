@@ -16,6 +16,7 @@ import {
   Zap,
 } from 'lucide-react';
 import type { NotificationEmailTemplatePreview, TipoNotificacion } from '@/types';
+import LeadNotificationSettings from '@/components/admin/LeadNotificationSettings';
 
 type DiagnosticsResponse = {
   configuration: {
@@ -437,6 +438,8 @@ export default function ConfiguracionAdminPage() {
           </div>
         </div>
       )}
+
+      <LeadNotificationSettings />
 
       <div className="rounded-xl border border-border bg-white p-6 shadow-sm">
         <div className="flex flex-col gap-2 border-b border-border pb-4 sm:flex-row sm:items-center sm:justify-between">

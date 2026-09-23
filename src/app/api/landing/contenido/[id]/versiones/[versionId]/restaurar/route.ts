@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { revalidateTag } from 'next/cache';
 import { LANDING_CACHE_TAG } from '@/lib/landing/getContenido';
 import { obtenerContextoCms } from '@/lib/landing/authCms';
+import { isInternalLandingSection } from '@/lib/landing/privateSections';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -37,6 +38,7 @@ export async function POST(
     }
 
     const { id, versionId } = await context.params;
+    if (isInternalLandingSection(id)) return NextResponse.json({ error: 'Sección no disponible.' }, { status: 404 });
     if (!id || typeof id !== 'string') {
       return NextResponse.json({ error: 'ID de sección requerido' }, { status: 400 });
     }
