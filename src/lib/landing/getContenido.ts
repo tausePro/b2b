@@ -2,6 +2,7 @@ import 'server-only';
 
 import { createClient } from '@supabase/supabase-js';
 import { unstable_cache } from 'next/cache';
+import { INTERNAL_LEAD_NOTIFICATION_SECTION, PUBLIC_LANDING_FIELDS, isInternalLandingSection } from './privateSections';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -25,13 +26,14 @@ const fetchSeccion = unstable_cache(
   async (id: string): Promise<LandingSeccion | null> => {
     const { data } = await supabaseAdmin
       .from('landing_contenido')
-      .select('*')
+      .select(PUBLIC_LANDING_FIELDS)
+      .neq('id', INTERNAL_LEAD_NOTIFICATION_SECTION)
       .eq('id', id)
       .eq('activo', true)
       .single();
     return data as LandingSeccion | null;
   },
-  ['landing-seccion'],
+  ['landing-seccion-public-v2'],
   { revalidate: LANDING_CACHE_REVALIDATE, tags: [LANDING_CACHE_TAG] }
 );
 
@@ -39,7 +41,8 @@ const fetchSecciones = unstable_cache(
   async (ids: string[]): Promise<Record<string, LandingSeccion>> => {
     const { data } = await supabaseAdmin
       .from('landing_contenido')
-      .select('*')
+      .select(PUBLIC_LANDING_FIELDS)
+      .neq('id', INTERNAL_LEAD_NOTIFICATION_SECTION)
       .in('id', ids)
       .eq('activo', true);
 
@@ -49,7 +52,7 @@ const fetchSecciones = unstable_cache(
     }
     return result;
   },
-  ['landing-secciones'],
+  ['landing-secciones-public-v2'],
   { revalidate: LANDING_CACHE_REVALIDATE, tags: [LANDING_CACHE_TAG] }
 );
 
@@ -57,7 +60,8 @@ const fetchSeccionesActivas = unstable_cache(
   async (): Promise<Record<string, LandingSeccion>> => {
     const { data } = await supabaseAdmin
       .from('landing_contenido')
-      .select('*')
+      .select(PUBLIC_LANDING_FIELDS)
+      .neq('id', INTERNAL_LEAD_NOTIFICATION_SECTION)
       .eq('activo', true)
       .order('orden');
     const result: Record<string, LandingSeccion> = {};
@@ -66,11 +70,12 @@ const fetchSeccionesActivas = unstable_cache(
     }
     return result;
   },
-  ['landing-secciones-activas'],
+  ['landing-secciones-activas-public-v2'],
   { revalidate: LANDING_CACHE_REVALIDATE, tags: [LANDING_CACHE_TAG] }
 );
 
 export async function getSeccion(id: string): Promise<LandingSeccion | null> {
+  if (isInternalLandingSection(id)) return null;
   return fetchSeccion(id);
 }
 
