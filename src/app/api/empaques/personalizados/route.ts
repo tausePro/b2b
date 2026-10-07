@@ -6,6 +6,7 @@ import {
   personalizacionJson, readPersonalizacionJson,
 } from '@/lib/empaques/personalizados.server';
 import { safeEnqueueLeadNotifications } from '@/lib/notifications/leads';
+import { LeadValidationError, validateLeadContact } from '@/lib/leads/validation';
 
 const ATTRIBUTION_KEYS = ['gclid', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'referrer', 'landing_url'] as const;
 
@@ -63,12 +64,16 @@ export async function POST(request: NextRequest) {
       suppliedCaras.add(raw.cara);
       return { id: raw.id.toLowerCase(), token_hash: hashArteToken(raw.token) };
     });
-    const nombre = text(body, 'nombre', 120);
     const uso = text(body, 'uso_producto', 500);
-    const email = text(body, 'email', 180);
-    const telefono = text(body, 'telefono', 50);
-    if (nombre.length < 2 || uso.length < 2 || (!email && !telefono)) throw new PersonalizadosError(400, 'Completa nombre, uso del producto y un correo o teléfono.');
-    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new PersonalizadosError(400, 'El correo no tiene un formato válido.');
+    if (uso.length < 2) throw new PersonalizadosError(400, 'Describe el uso del producto.');
+    let contact;
+    try {
+      contact = validateLeadContact({ nombre: body.nombre, empresa: body.empresa, email: body.email, telefono: body.telefono });
+    } catch (validationError) {
+      if (validationError instanceof LeadValidationError) throw new PersonalizadosError(400, validationError.message);
+      throw validationError;
+    }
+    const { nombre, email, telefono } = contact;
     if (typeof body.cantidad !== 'number' || !Number.isInteger(body.cantidad) || body.cantidad <= 0 || body.cantidad > 10_000_000) {
       throw new PersonalizadosError(400, 'La cantidad debe ser un entero mayor a cero.');
     }
@@ -103,7 +108,7 @@ export async function POST(request: NextRequest) {
     const { data: leadId, error } = await admin.rpc('registrar_empaques_tiff', {
       p_solicitud_id: body.solicitud_id,
       p_payload: {
-        nombre, empresa: text(body, 'empresa', 160) || null, email: email || null, telefono: telefono || null,
+        nombre, empresa: contact.empresa, email, telefono,
         mensaje: summary, storefront_config_id: storefrontId, tipo_empaque: referencia.nombre,
         uso_producto: uso, material: 'Papel kraft', impresion, cantidad: body.cantidad,
         ciudad_entrega: ciudad || null, fecha_requerida: fecha || null, comentarios: comentarios || null,

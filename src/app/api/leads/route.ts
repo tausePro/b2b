@@ -5,6 +5,9 @@ import { authorizeApiRoles } from '@/lib/auth/apiRouteGuards';
 import { LEAD_ID_PATTERN, parseAdminLeadQuery } from '@/lib/leads-query';
 import { safeEnqueueLeadNotifications } from '@/lib/notifications/leads';
 import {
+  LEAD_DUPLICATE_WINDOW_MS, LeadValidationError, isLeadHoneypotFilled, normalizeLeadSource, validateLeadContact,
+} from '@/lib/leads/validation';
+import {
   EMPAQUES_PERSONALIZADOS_FILE_TYPES,
   type EmpaquesPersonalizadosArchivo,
   type EmpaquesPersonalizadosDetalle,
@@ -131,8 +134,24 @@ function sanitizeClickAt(raw: unknown): string | null {
 // POST — público: crear lead
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { nombre, empresa, email, telefono, mensaje, fuente } = body;
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return NextResponse.json({ error: 'Solicitud inválida.' }, { status: 400 });
+    }
+    if (isLeadHoneypotFilled(body)) {
+      return NextResponse.json({ error: 'No se pudo registrar la solicitud.' }, { status: 400 });
+    }
+    let contact;
+    try {
+      contact = validateLeadContact(body);
+    } catch (validationError) {
+      if (validationError instanceof LeadValidationError) {
+        return NextResponse.json({ error: validationError.message, field: validationError.field }, { status: 400 });
+      }
+      throw validationError;
+    }
+    const { nombre, empresa, email, telefono, mensaje } = contact;
+    const fuente = normalizeLeadSource(body.fuente);
     // numero_whatsapp_override permite redirigir la conversacion a un
     // numero distinto al global (ej: WhatsApp de la comercial especifica
     // cuando el lead viene de una tarjeta del equipo). Se sanitiza a
@@ -142,10 +161,6 @@ export async function POST(request: NextRequest) {
         ? body.numero_whatsapp_override
         : '';
     const numeroOverride = overrideRaw.replace(/\D/g, '');
-
-    if (!nombre || typeof nombre !== 'string' || nombre.trim().length < 2) {
-      return NextResponse.json({ error: 'Nombre es requerido' }, { status: 400 });
-    }
 
     // Extrae y sanitiza la atribución desde el payload (cookie lead_attr
     // reenviada por el cliente). Cualquier valor vacío o mal formado se
@@ -160,27 +175,46 @@ export async function POST(request: NextRequest) {
     }
     const clickAt = sanitizeClickAt(attrSource.click_at);
 
-    const { data, error } = await supabaseAdmin
+    // Reenvíos (doble clic, reintentos de red) del mismo contacto y canal en
+    // pocos minutos reutilizan el lead ya creado: no duplican registros,
+    // avisos por correo ni conversiones.
+    let duplicateQuery = supabaseAdmin
       .from('leads')
-      .insert({
-        nombre: nombre.trim(),
-        empresa: empresa?.trim() || null,
-        email: email?.trim() || null,
-        telefono: telefono?.trim() || null,
-        mensaje: mensaje?.trim() || null,
-        fuente: fuente || 'landing',
-        estado: 'nuevo',
-        whatsapp_enviado: true,
-        ...attribution,
-        click_at: clickAt,
-      })
       .select()
-      .single();
+      .eq('fuente', fuente)
+      .ilike('nombre', nombre)
+      .gte('created_at', new Date(Date.now() - LEAD_DUPLICATE_WINDOW_MS).toISOString())
+      .order('created_at', { ascending: false })
+      .limit(1);
+    duplicateQuery = email ? duplicateQuery.eq('email', email) : duplicateQuery.is('email', null);
+    duplicateQuery = telefono ? duplicateQuery.eq('telefono', telefono) : duplicateQuery.is('telefono', null);
+    const { data: duplicates, error: duplicateError } = await duplicateQuery;
+    if (duplicateError) throw duplicateError;
 
-    if (error) throw error;
+    let data = duplicates?.[0] ?? null;
+    if (!data) {
+      const inserted = await supabaseAdmin
+        .from('leads')
+        .insert({
+          nombre,
+          empresa,
+          email,
+          telefono,
+          mensaje,
+          fuente,
+          estado: 'nuevo',
+          whatsapp_enviado: true,
+          ...attribution,
+          click_at: clickAt,
+        })
+        .select()
+        .single();
+      if (inserted.error) throw inserted.error;
+      data = inserted.data;
 
-    // Aviso interno por correo (outbox con reintentos). Nunca bloquea el lead.
-    await safeEnqueueLeadNotifications(String(data.id));
+      // Aviso interno por correo (outbox con reintentos). Nunca bloquea el lead.
+      await safeEnqueueLeadNotifications(String(data.id));
+    }
 
     // Obtener config WhatsApp
     const { data: config } = await supabaseAdmin
