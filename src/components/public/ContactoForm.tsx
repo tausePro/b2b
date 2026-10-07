@@ -4,6 +4,8 @@ import { useState } from 'react';
 import { CheckCircle2, Loader2, Send } from 'lucide-react';
 import { readLeadAttributionCookie } from '@/lib/analytics/leadAttribution';
 import { reportEmpaquesLeadConversion } from '@/lib/analytics/googleAds';
+import { LEAD_LIMITS, LeadValidationError, validateLeadContact } from '@/lib/leads/validation';
+import LeadHoneypot from '@/components/public/LeadHoneypot';
 
 // Formulario de contacto publico en /contacto. Reusa la API de leads
 // (POST /api/leads) para registrar cada submission como lead con
@@ -22,11 +24,21 @@ export default function ContactoForm() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<{ whatsappUrl: string | null } | null>(null);
+  const [sitioWeb, setSitioWeb] = useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
+    if (loading) return;
     setError(null);
+    let contact;
+    try {
+      contact = validateLeadContact(form);
+    } catch (validationError) {
+      setError(validationError instanceof LeadValidationError ? validationError.message : 'Revisa tus datos.');
+      (e.currentTarget as HTMLFormElement).scrollIntoView({ block: 'start', behavior: 'smooth' });
+      return;
+    }
+    setLoading(true);
 
     try {
       // Atribución de Google Ads / UTM persistida en cookie first-party.
@@ -37,12 +49,13 @@ export default function ContactoForm() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          ...form,
+          ...contact,
           fuente: 'contacto_formulario',
+          sitio_web: sitioWeb,
           attribution,
         }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'No se pudo enviar tu mensaje');
       reportEmpaquesLeadConversion({ ok: res.ok, leadId: data.lead?.id });
 
@@ -92,8 +105,10 @@ export default function ContactoForm() {
   return (
     <form
       onSubmit={handleSubmit}
-      className="rounded-2xl border border-slate-200 bg-white p-6 sm:p-8 shadow-sm space-y-4"
+      noValidate
+      className="relative rounded-2xl border border-slate-200 bg-white p-6 sm:p-8 shadow-sm space-y-4"
     >
+      <LeadHoneypot value={sitioWeb} onChange={setSitioWeb} />
       <div>
         <h3 className="text-xl font-bold text-slate-900">Escríbenos</h3>
         <p className="mt-1 text-sm text-slate-500">
@@ -102,7 +117,7 @@ export default function ContactoForm() {
       </div>
 
       {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           {error}
         </div>
       )}
@@ -116,6 +131,9 @@ export default function ContactoForm() {
             type="text"
             required
             minLength={2}
+            name="nombre"
+            autoComplete="name"
+            maxLength={LEAD_LIMITS.nombre}
             value={form.nombre}
             onChange={(e) => setForm((f) => ({ ...f, nombre: e.target.value }))}
             className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
@@ -126,6 +144,9 @@ export default function ContactoForm() {
           <label className="block text-xs font-semibold text-slate-600 mb-1">Empresa</label>
           <input
             type="text"
+            name="empresa"
+            autoComplete="organization"
+            maxLength={LEAD_LIMITS.empresa}
             value={form.empresa}
             onChange={(e) => setForm((f) => ({ ...f, empresa: e.target.value }))}
             className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
@@ -139,6 +160,10 @@ export default function ContactoForm() {
           <label className="block text-xs font-semibold text-slate-600 mb-1">Email</label>
           <input
             type="email"
+            name="email"
+            autoComplete="email"
+            inputMode="email"
+            maxLength={LEAD_LIMITS.email}
             value={form.email}
             onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
             className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
@@ -149,6 +174,10 @@ export default function ContactoForm() {
           <label className="block text-xs font-semibold text-slate-600 mb-1">Teléfono</label>
           <input
             type="tel"
+            name="telefono"
+            autoComplete="tel"
+            inputMode="tel"
+            maxLength={LEAD_LIMITS.telefono}
             value={form.telefono}
             onChange={(e) => setForm((f) => ({ ...f, telefono: e.target.value }))}
             className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
@@ -161,6 +190,8 @@ export default function ContactoForm() {
         <label className="block text-xs font-semibold text-slate-600 mb-1">Mensaje</label>
         <textarea
           rows={4}
+          name="mensaje"
+          maxLength={LEAD_LIMITS.mensaje}
           value={form.mensaje}
           onChange={(e) => setForm((f) => ({ ...f, mensaje: e.target.value }))}
           className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 resize-none"

@@ -4,6 +4,8 @@ import { useState } from 'react';
 import { CheckCircle2, Loader2, Send } from 'lucide-react';
 import { readLeadAttributionCookie } from '@/lib/analytics/leadAttribution';
 import { reportEmpaquesLeadConversion } from '@/lib/analytics/googleAds';
+import { LEAD_LIMITS, LeadValidationError, validateLeadContact } from '@/lib/leads/validation';
+import LeadHoneypot from '@/components/public/LeadHoneypot';
 
 interface EmpaquesQuoteFormProps {
   categoryOptions: string[];
@@ -21,33 +23,39 @@ export default function EmpaquesQuoteForm({ categoryOptions }: EmpaquesQuoteForm
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<{ whatsappUrl: string | null } | null>(null);
+  const [sitioWeb, setSitioWeb] = useState('');
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
-    setLoading(true);
+    if (loading) return;
     setError(null);
+    let contact;
+    try {
+      contact = validateLeadContact({
+        ...form,
+        mensaje: [form.tipoEmpaque ? `Tipo de empaque: ${form.tipoEmpaque}` : null, form.mensaje].filter(Boolean).join('\n\n'),
+      });
+    } catch (validationError) {
+      setError(validationError instanceof LeadValidationError ? validationError.message : 'Revisa tus datos.');
+      (event.currentTarget as HTMLFormElement).scrollIntoView({ block: 'start', behavior: 'smooth' });
+      return;
+    }
+    setLoading(true);
 
     try {
       const attribution = readLeadAttributionCookie();
-      const mensaje = [
-        form.tipoEmpaque ? `Tipo de empaque: ${form.tipoEmpaque}` : null,
-        form.mensaje,
-      ].filter(Boolean).join('\n\n');
 
       const response = await fetch('/api/leads', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          nombre: form.nombre,
-          empresa: form.empresa,
-          email: form.email,
-          telefono: form.telefono,
-          mensaje,
+          ...contact,
           fuente: 'empaques_cotizacion',
+          sitio_web: sitioWeb,
           attribution,
         }),
       });
-      const data = await response.json();
+      const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
         throw new Error(data.error || 'No se pudo enviar la solicitud');
@@ -95,9 +103,10 @@ export default function EmpaquesQuoteForm({ categoryOptions }: EmpaquesQuoteForm
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
+    <form onSubmit={handleSubmit} noValidate className="relative space-y-6">
+      <LeadHoneypot value={sitioWeb} onChange={setSitioWeb} />
       {error && (
-        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">
+        <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">
           {error}
         </div>
       )}
@@ -109,6 +118,9 @@ export default function EmpaquesQuoteForm({ categoryOptions }: EmpaquesQuoteForm
             required
             minLength={2}
             type="text"
+            name="nombre"
+            autoComplete="name"
+            maxLength={LEAD_LIMITS.nombre}
             value={form.nombre}
             onChange={(event) => setForm((current) => ({ ...current, nombre: event.target.value }))}
             placeholder="Tu nombre completo"
@@ -119,6 +131,9 @@ export default function EmpaquesQuoteForm({ categoryOptions }: EmpaquesQuoteForm
           <label className="text-sm font-black text-slate-950">Empresa</label>
           <input
             type="text"
+            name="empresa"
+            autoComplete="organization"
+            maxLength={LEAD_LIMITS.empresa}
             value={form.empresa}
             onChange={(event) => setForm((current) => ({ ...current, empresa: event.target.value }))}
             placeholder="Nombre de tu empresa"
@@ -132,6 +147,10 @@ export default function EmpaquesQuoteForm({ categoryOptions }: EmpaquesQuoteForm
           <label className="text-sm font-black text-slate-950">Correo Corporativo</label>
           <input
             type="email"
+            name="email"
+            autoComplete="email"
+            inputMode="email"
+            maxLength={LEAD_LIMITS.email}
             value={form.email}
             onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))}
             placeholder="correo@empresa.com"
@@ -142,6 +161,10 @@ export default function EmpaquesQuoteForm({ categoryOptions }: EmpaquesQuoteForm
           <label className="text-sm font-black text-slate-950">Teléfono</label>
           <input
             type="tel"
+            name="telefono"
+            autoComplete="tel"
+            inputMode="tel"
+            maxLength={LEAD_LIMITS.telefono}
             value={form.telefono}
             onChange={(event) => setForm((current) => ({ ...current, telefono: event.target.value }))}
             placeholder="+57 300 000 0000"
@@ -168,6 +191,8 @@ export default function EmpaquesQuoteForm({ categoryOptions }: EmpaquesQuoteForm
         <label className="text-sm font-black text-slate-950">Detalles del Proyecto / Volumen Estimado</label>
         <textarea
           rows={4}
+          name="mensaje"
+          maxLength={LEAD_LIMITS.mensaje - 200}
           value={form.mensaje}
           onChange={(event) => setForm((current) => ({ ...current, mensaje: event.target.value }))}
           placeholder="Describe brevemente tus necesidades..."
