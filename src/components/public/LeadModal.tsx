@@ -4,6 +4,8 @@ import { useState, useEffect } from 'react';
 import { X, Loader2, MessageCircle } from 'lucide-react';
 import { readLeadAttributionCookie } from '@/lib/analytics/leadAttribution';
 import { reportEmpaquesLeadConversion } from '@/lib/analytics/googleAds';
+import { LEAD_LIMITS, LeadValidationError, validateLeadContact } from '@/lib/leads/validation';
+import LeadHoneypot from '@/components/public/LeadHoneypot';
 
 interface LeadModalProps {
   isOpen: boolean;
@@ -39,6 +41,7 @@ export default function LeadModal({
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sitioWeb, setSitioWeb] = useState('');
 
   // Cuando el modal se abre (o cambia el prefill), reiniciamos el
   // textarea al prefill. Asi cada apertura empieza con el mensaje
@@ -51,8 +54,16 @@ export default function LeadModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
+    if (loading) return;
     setError(null);
+    let contact;
+    try {
+      contact = validateLeadContact(form);
+    } catch (validationError) {
+      setError(validationError instanceof LeadValidationError ? validationError.message : 'Revisa tus datos.');
+      return;
+    }
+    setLoading(true);
 
     try {
       // Adjuntamos la atribución (gclid + utm_*) persistida en cookie
@@ -64,8 +75,9 @@ export default function LeadModal({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          ...form,
+          ...contact,
           fuente,
+          sitio_web: sitioWeb,
           // Si hay override de numero, el backend construye wa.me contra
           // este valor en vez del global. Campo vacio/undefined = flujo
           // por defecto (numero global).
@@ -73,8 +85,8 @@ export default function LeadModal({
           attribution,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'No se pudo enviar tu solicitud. Intenta de nuevo.');
       reportEmpaquesLeadConversion({ ok: res.ok, leadId: data.lead?.id });
 
       if (data.whatsapp_url) {
@@ -112,15 +124,19 @@ export default function LeadModal({
         </div>
 
         {error && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4 text-sm text-red-700">{error}</div>
+          <div role="alert" className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4 text-sm text-red-700">{error}</div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} noValidate className="relative space-y-4">
+          <LeadHoneypot value={sitioWeb} onChange={setSitioWeb} />
           <div>
             <label className="block text-xs font-semibold text-slate-500 mb-1">Nombre *</label>
             <input
               type="text"
               required
+              name="nombre"
+              autoComplete="name"
+              maxLength={LEAD_LIMITS.nombre}
               value={form.nombre}
               onChange={(e) => setForm({ ...form, nombre: e.target.value })}
               placeholder="Tu nombre completo"
@@ -132,6 +148,9 @@ export default function LeadModal({
             <label className="block text-xs font-semibold text-slate-500 mb-1">Empresa</label>
             <input
               type="text"
+              name="empresa"
+              autoComplete="organization"
+              maxLength={LEAD_LIMITS.empresa}
               value={form.empresa}
               onChange={(e) => setForm({ ...form, empresa: e.target.value })}
               placeholder="Nombre de tu empresa"
@@ -144,6 +163,10 @@ export default function LeadModal({
               <label className="block text-xs font-semibold text-slate-500 mb-1">Email</label>
               <input
                 type="email"
+                name="email"
+                autoComplete="email"
+                inputMode="email"
+                maxLength={LEAD_LIMITS.email}
                 value={form.email}
                 onChange={(e) => setForm({ ...form, email: e.target.value })}
                 placeholder="tu@email.com"
@@ -154,6 +177,10 @@ export default function LeadModal({
               <label className="block text-xs font-semibold text-slate-500 mb-1">Teléfono</label>
               <input
                 type="tel"
+                name="telefono"
+                autoComplete="tel"
+                inputMode="tel"
+                maxLength={LEAD_LIMITS.telefono}
                 value={form.telefono}
                 onChange={(e) => setForm({ ...form, telefono: e.target.value })}
                 placeholder="+57 300..."
@@ -165,6 +192,8 @@ export default function LeadModal({
           <div>
             <label className="block text-xs font-semibold text-slate-500 mb-1">¿En qué podemos ayudarte?</label>
             <textarea
+              name="mensaje"
+              maxLength={LEAD_LIMITS.mensaje}
               value={form.mensaje}
               onChange={(e) => setForm({ ...form, mensaje: e.target.value })}
               placeholder="Cuéntanos brevemente tu necesidad..."
