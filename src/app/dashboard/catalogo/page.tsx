@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useCart } from '@/contexts/CartContext';
 import type { VariantCartInput } from '@/contexts/CartContext';
@@ -10,6 +10,7 @@ import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import VariantSelectorModal from '@/components/catalogo/VariantSelectorModal';
 import type { VariantSelection } from '@/components/catalogo/VariantSelectorModal';
+import { matchesCatalogProductSearch } from '@/lib/pricing/catalog-visibility';
 
 interface ProductoOdooRaw {
   id: number;
@@ -24,6 +25,7 @@ interface ProductoOdooRaw {
   image_128: string | false;
   default_code: string | false;
   product_variant_count?: number;
+  pricelist_variant_codes?: string[];
   attribute_line_ids?: number[];
 }
 
@@ -44,12 +46,19 @@ export default function CatalogoPage() {
   const [categoriaActiva, setCategoriaActiva] = useState<number | 'todos'>('todos');
   const [addedIds, setAddedIds] = useState<Set<number>>(new Set());
   const [variantModalProduct, setVariantModalProduct] = useState<ProductoOdooRaw | null>(null);
+  const catalogRequest = useRef<AbortController | null>(null);
 
   const fetchProductos = useCallback(async () => {
     if (!user) return;
+    catalogRequest.current?.abort();
+    const controller = new AbortController();
+    catalogRequest.current = controller;
     setLoading(true);
     setErrorOdoo(null);
     setAvisoCatalogo(null);
+    setProductos([]);
+    setCategorias([{ id: 'todos', label: 'Todos' }]);
+    setVariantModalProduct(null);
 
     try {
       const supabase = createClient();
@@ -86,8 +95,10 @@ export default function CatalogoPage() {
 
       // 2. Obtener productos desde Odoo filtrados por el partner_id
       const catalogParams = new URLSearchParams({ partner_id: String(empresa.odoo_partner_id) });
-      const res = await fetch(`/api/odoo/productos?${catalogParams.toString()}`);
+      if (controller.signal.aborted) return;
+      const res = await fetch(`/api/odoo/productos?${catalogParams.toString()}`, { cache: 'no-store', signal: controller.signal });
       const data = await res.json();
+      if (controller.signal.aborted) return;
 
       if (!res.ok) throw new Error(data.error || 'Error cargando productos');
 
@@ -113,15 +124,17 @@ export default function CatalogoPage() {
         ...Array.from(categMap.entries()).map(([id, label]) => ({ id, label })),
       ];
       setCategorias(cats);
+      setCategoriaActiva(current => current !== 'todos' && !categMap.has(current) ? 'todos' : current);
     } catch (err) {
-      setErrorOdoo(err instanceof Error ? err.message : 'Error desconocido');
+      if (!controller.signal.aborted) setErrorOdoo(err instanceof Error ? err.message : 'Error desconocido');
     }
 
-    setLoading(false);
+    if (!controller.signal.aborted) setLoading(false);
   }, [user]);
 
   useEffect(() => {
-    fetchProductos();
+    void fetchProductos();
+    return () => catalogRequest.current?.abort();
   }, [fetchProductos]);
 
   const handleAddToCart = (producto: ProductoOdooRaw) => {
@@ -182,10 +195,7 @@ export default function CatalogoPage() {
     const matchCateg =
       categoriaActiva === 'todos' ||
       (Array.isArray(p.categ_id) && p.categ_id[0] === categoriaActiva);
-    const matchBusqueda =
-      !busqueda.trim() ||
-      p.name.toLowerCase().includes(busqueda.toLowerCase()) ||
-      (typeof p.default_code === 'string' && p.default_code.toLowerCase().includes(busqueda.toLowerCase()));
+    const matchBusqueda = matchesCatalogProductSearch(p, busqueda);
     return matchCateg && matchBusqueda;
   });
 
