@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { X, Loader2, Package, Check, AlertCircle, Plus, Minus, ShoppingCart } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -72,12 +72,17 @@ export default function VariantSelectorModal({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<VariantsResponse | null>(null);
+  const variantRequest = useRef<AbortController | null>(null);
   // Map<variantId, quantity>
   const [selected, setSelected] = useState<Map<number, number>>(new Map());
 
   const fetchVariants = useCallback(async () => {
+    variantRequest.current?.abort();
+    const controller = new AbortController();
+    variantRequest.current = controller;
     setLoading(true);
     setError(null);
+    setData(null);
     setSelected(new Map());
     try {
       const params = new URLSearchParams();
@@ -86,24 +91,28 @@ export default function VariantSelectorModal({
       }
       if (empresaId) params.set('empresa_id', empresaId);
       const queryString = params.toString();
-      const res = await fetch(`/api/odoo/productos/${product.id}/variantes${queryString ? `?${queryString}` : ''}`);
+      const res = await fetch(`/api/odoo/productos/${product.id}/variantes${queryString ? `?${queryString}` : ''}`, {
+        cache: 'no-store', signal: controller.signal,
+      });
       if (!res.ok) {
         const payload = await res.json();
         throw new Error(payload.error || 'Error cargando variantes');
       }
       const json: VariantsResponse = await res.json();
+      if (controller.signal.aborted) return;
       setData(json);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error desconocido');
+      if (!controller.signal.aborted) setError(err instanceof Error ? err.message : 'Error desconocido');
     } finally {
-      setLoading(false);
+      if (!controller.signal.aborted) setLoading(false);
     }
   }, [empresaId, product.id, product.list_price]);
 
   useEffect(() => {
     if (open) {
-      fetchVariants();
+      void fetchVariants();
     }
+    return () => variantRequest.current?.abort();
   }, [open, fetchVariants]);
 
   if (!open) return null;

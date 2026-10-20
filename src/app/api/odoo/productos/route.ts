@@ -27,6 +27,7 @@ const COST_VISIBLE_ROLES = new Set(['super_admin', 'direccion', 'asesor']);
 const AUTHENTICATED_PRODUCT_ROLES = ['super_admin', 'direccion', 'asesor', 'comprador', 'aprobador'] as const;
 const AUTHENTICATED_MAX_LIMIT = 500;
 const PUBLIC_MAX_LIMIT = 50;
+export const dynamic = 'force-dynamic';
 
 function normalizeLimit(rawValue: string | null, fallback: number, max: number) {
   const parsed = Number.parseInt(rawValue || '', 10);
@@ -64,7 +65,7 @@ export async function GET(request: NextRequest) {
     const search = searchParams.get('search')?.trim() || '';
     const includeTagNames = searchParams.get('include_tag_names') === 'true';
     const parsedPartnerId = partnerId ? parseInt(partnerId, 10) : null;
-    const parsedPricelistId = pricelistIdParam ? parseInt(pricelistIdParam, 10) : null;
+    const parsedPricelistId = pricelistIdParam ? Number(pricelistIdParam) : null;
     const parsedCategIds = (categIds || '')
       .split(',')
       .map((id) => parseInt(id.trim(), 10))
@@ -82,6 +83,9 @@ export async function GET(request: NextRequest) {
         { error: 'partner_id inválido' },
         { status: 400 }
       );
+    }
+    if (pricelistIdParam && (!Number.isSafeInteger(Number(pricelistIdParam)) || Number(pricelistIdParam) <= 0)) {
+      return NextResponse.json({ error: 'pricelist_id inválido' }, { status: 400 });
     }
 
     let actorRole: string | null = null;
@@ -206,6 +210,14 @@ export async function GET(request: NextRequest) {
     const effectivePricelistId =
       parsedPricelistId ?? partnerContext?.pricelist?.id ?? null;
 
+    if (pricingCtx?.modoPricing === 'pricelist' && !effectivePricelistId) {
+      return NextResponse.json({ error: 'La empresa no tiene una tarifa asignada en Odoo.' }, { status: 409 });
+    }
+    if ((actorRole === 'comprador' || actorRole === 'aprobador')
+      && parsedPricelistId && parsedPricelistId !== partnerContext?.pricelist?.id) {
+      return NextResponse.json({ error: 'No puedes sustituir la tarifa asignada a tu empresa.' }, { status: 403 });
+    }
+
     if (parsedPartnerId) {
       // Prioridad: 1) Lista de precios (override o Odoo), 2) Etiquetas del partner, 3) Catálogo general
       if (effectivePricelistId) {
@@ -215,9 +227,7 @@ export async function GET(request: NextRequest) {
           categIds: parsedCategIds,
           search,
         });
-      }
-
-      if (productos.length === 0) {
+      } else {
         const partnerTagIds = partnerContext?.tag_ids ?? [];
         if (partnerTagIds.length > 0) {
           productos = await getProductos(session, {
@@ -228,15 +238,14 @@ export async function GET(request: NextRequest) {
             search,
           });
         }
-      }
-
-      if (productos.length === 0) {
-        productos = await getProductos(session, {
-          limit,
-          offset,
-          categIds: parsedCategIds,
-          search,
-        });
+        if (productos.length === 0) {
+          productos = await getProductos(session, {
+            limit,
+            offset,
+            categIds: parsedCategIds,
+            search,
+          });
+        }
       }
     } else if (parsedPricelistId) {
       productos = await getProductosByPricelist(session, parsedPricelistId, {
@@ -301,10 +310,11 @@ export async function GET(request: NextRequest) {
         total: productosConEtiquetas.length,
         partner_context: partnerContext,
         etiquetas_producto: etiquetas,
-      });
+      }, { headers: { 'Cache-Control': 'private, no-store' } });
     }
 
-    return NextResponse.json({ productos: productosTransformados, total: productosTransformados.length, partner_context: partnerContext });
+    return NextResponse.json({ productos: productosTransformados, total: productosTransformados.length, partner_context: partnerContext },
+      { headers: { 'Cache-Control': 'private, no-store' } });
   } catch (err) {
     console.error('[API /odoo/productos]', err);
     return NextResponse.json(
