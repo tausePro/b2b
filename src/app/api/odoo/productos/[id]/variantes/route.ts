@@ -10,10 +10,12 @@ import { getServerOdooConfig } from '@/lib/odoo/serverConfig';
 import { authorizeApiRoles, getAccessibleEmpresaIds } from '@/lib/auth/apiRouteGuards';
 import { loadPricingContext, resolveProductPrice, type PricingContext } from '@/lib/pricing/margins';
 import { loadEmpresaPricelistRules } from '@/lib/pricing/pricelist';
+import { getPricelistVariantIds } from '@/lib/pricing/catalog-visibility';
 import { getOdooCostAgeStatus, markupOnCost } from '@/lib/pricing/cost-staleness';
 import { loadStorefrontPricingContextById } from '@/lib/empaques/catalogo';
 
 const ALLOWED_ROLES = ['super_admin', 'direccion', 'asesor', 'comprador', 'aprobador'] as const;
+export const dynamic = 'force-dynamic';
 
 /**
  * Roles que pueden ver costo, antigüedad y markup en el modal de variantes.
@@ -49,7 +51,6 @@ export async function GET(
     }
 
     const session = await authenticate(config);
-    const result = await getProductVariants(session, templateId);
 
     const fallbackPriceParam = Number(request.nextUrl.searchParams.get('fallback_price') ?? 0);
     const fallbackPrice = Number.isFinite(fallbackPriceParam) && fallbackPriceParam > 0 ? fallbackPriceParam : 0;
@@ -64,8 +65,15 @@ export async function GET(
     //   1. ?empresa_id=<uuid>     → loadPricingContext (catálogo cliente).
     //   2. ?storefront_id=<uuid>  → loadStorefrontPricingContextById (empaques).
     //   3. fallback               → actor.empresa_id (usuario comprador / aprobador).
-    const queryEmpresaId = request.nextUrl.searchParams.get('empresa_id');
-    const queryStorefrontId = request.nextUrl.searchParams.get('storefront_id');
+    const queryEmpresaId = request.nextUrl.searchParams.get('empresa_id')?.trim() || null;
+    const queryStorefrontId = request.nextUrl.searchParams.get('storefront_id')?.trim() || null;
+    const isCustomer = authorized.actor.rol === 'comprador' || authorized.actor.rol === 'aprobador';
+    if (queryEmpresaId && queryStorefrontId) {
+      return NextResponse.json({ error: 'Consulta un solo contexto de catálogo.' }, { status: 400 });
+    }
+    if (isCustomer && (queryStorefrontId || (!queryEmpresaId && !authorized.actor.empresa_id))) {
+      return NextResponse.json({ error: 'FORBIDDEN' }, { status: 403 });
+    }
 
     if (queryEmpresaId) {
       const accessibleEmpresaIds = await getAccessibleEmpresaIds(authorized);
@@ -105,18 +113,18 @@ export async function GET(
     // heredaban el precio de la card y dos variantes con precios distintos se
     // cobraban igual.
     let pricelistRules: PricelistRuleSet | null = null;
-    const empresaIdForPricelist = queryEmpresaId ?? authorized.actor.empresa_id;
-    if (pricingCtx?.modoPricing === 'pricelist' && empresaIdForPricelist) {
-      try {
-        pricelistRules = await loadEmpresaPricelistRules(empresaIdForPricelist, session);
-      } catch (pricelistErr) {
-        console.warn(
-          '[API /odoo/productos/[id]/variantes] No se pudo cargar la tarifa del cliente:',
-          pricelistErr
-        );
+    const empresaIdForPricelist = queryStorefrontId ? null : queryEmpresaId ?? authorized.actor.empresa_id;
+    if (empresaIdForPricelist) {
+      pricelistRules = await loadEmpresaPricelistRules(empresaIdForPricelist, session);
+      if (pricingCtx?.modoPricing === 'pricelist' && !pricelistRules) {
+        return NextResponse.json({ error: 'La empresa no tiene una tarifa asignada en Odoo.' }, { status: 409 });
       }
     }
 
+    const allowedVariantIds = pricelistRules
+      ? getPricelistVariantIds(pricelistRules, templateId, templateCategId)
+      : null;
+    const result = await getProductVariants(session, templateId, allowedVariantIds ?? undefined);
     const canSeeCost = COST_VISIBLE_ROLES.has(authorized.actor.rol);
 
     return NextResponse.json({
@@ -141,7 +149,7 @@ export async function GET(
 
         // Precio real de esta variante en la tarifa del cliente. Va antes de
         // resolveProductPrice para que un override manual siga ganando.
-        if (pricelistRules) {
+        if (pricelistRules && pricingCtx?.modoPricing === 'pricelist') {
           const tarifaPrice = resolvePricelistPrice(pricelistRules, {
             templateId,
             variantId: v.id,
@@ -227,7 +235,7 @@ export async function GET(
 
         return base;
       }),
-    });
+    }, { headers: { 'Cache-Control': 'private, no-store' } });
   } catch (err) {
     console.error('[API /odoo/productos/[id]/variantes]', err);
     return NextResponse.json(

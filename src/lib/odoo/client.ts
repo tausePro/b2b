@@ -5,6 +5,8 @@
  * Documentación: https://www.odoo.com/documentation/18.0/developer/reference/external_api.html
  */
 
+import { getPricelistVariantIds, matchesCatalogProductSearch } from '@/lib/pricing/catalog-visibility';
+
 export interface OdooConfig {
   url: string;
   db: string;
@@ -484,6 +486,7 @@ export interface OdooProduct {
   image_1920?: string | false;
   default_code: string | false;
   product_variant_count?: number;
+  pricelist_variant_codes?: string[];
   attribute_line_ids?: number[];
   last_purchase_date?: string | false;
   last_purchase_days?: number;
@@ -562,6 +565,8 @@ export interface OdooPricelistItem {
   percent_price: number;
   base: string;
   min_quantity: number;
+  date_start?: string | false;
+  date_end?: string | false;
 }
 
 export interface OdooSaleOrderLineInput {
@@ -886,8 +891,10 @@ export interface ProductVariantsResult {
 
 export async function getProductVariants(
   session: OdooSession,
-  templateId: number
+  templateId: number,
+  allowedVariantIds?: readonly number[],
 ): Promise<ProductVariantsResult> {
+  if (allowedVariantIds?.length === 0) return { variants: [], attributes: [] };
   // 1. Obtener las líneas de atributo del template
   const attrLines = await searchRead(
     'product.template.attribute.line',
@@ -931,13 +938,25 @@ export async function getProductVariants(
   }).filter((a) => a.values.length > 0);
 
   // 4. Obtener variantes (product.product)
+  const variantDomain: unknown[] = [['product_tmpl_id', '=', templateId], ['active', '=', true]];
+  if (allowedVariantIds) variantDomain.push(['id', 'in', [...allowedVariantIds]], ['sale_ok', '=', true]);
   const variants = await searchRead(
     'product.product',
-    [['product_tmpl_id', '=', templateId], ['active', '=', true]],
+    variantDomain,
     ['id', 'name', 'product_tmpl_id', 'default_code', 'image_128', 'lst_price', 'standard_price', 'product_template_attribute_value_ids', 'active', 'last_purchase_date', 'last_purchase_days', 'last_purchase_days_label', 'write_date'],
     { order: 'name asc', session }
   ) as unknown as OdooProductVariant[];
 
+  if (allowedVariantIds) {
+    const visibleValues = new Set(variants.flatMap(variant => variant.product_template_attribute_value_ids));
+    return {
+      variants,
+      attributes: attributes.map(attribute => ({
+        ...attribute,
+        values: attribute.values.filter(value => visibleValues.has(value.ptavId)),
+      })).filter(attribute => attribute.values.length > 0),
+    };
+  }
   return { variants, attributes };
 }
 
@@ -1515,7 +1534,7 @@ export async function getProductos(
   }
   if (options.search && options.search.trim().length >= 2) {
     const term = options.search.trim();
-    domain.push('|', ['name', 'ilike', term], ['default_code', 'ilike', term]);
+    domain.push('|', '|', ['name', 'ilike', term], ['default_code', 'ilike', term], ['product_variant_ids.default_code', 'ilike', term]);
   }
 
   const result = await searchRead(
@@ -1569,6 +1588,8 @@ const PRICELIST_ITEM_FIELDS = [
   'percent_price',
   'base',
   'min_quantity',
+  'date_start',
+  'date_end',
 ];
 
 function pushRule(map: Map<number, OdooPricelistItem[]>, key: number, rule: OdooPricelistItem) {
@@ -1579,11 +1600,17 @@ function pushRule(map: Map<number, OdooPricelistItem[]>, key: number, rule: Odoo
 
 export async function loadPricelistRuleSet(
   session: OdooSession,
-  pricelistId: number
+  pricelistId: number,
+  at: Date = new Date(),
 ): Promise<PricelistRuleSet> {
+  const effectiveDate = formatOdooDatetime(at);
   const items = (await searchRead(
     'product.pricelist.item',
-    [['pricelist_id', '=', pricelistId]],
+    [
+      ['pricelist_id', '=', pricelistId],
+      '|', ['date_start', '=', false], ['date_start', '<=', effectiveDate],
+      '|', ['date_end', '=', false], ['date_end', '>=', effectiveDate],
+    ],
     PRICELIST_ITEM_FIELDS,
     { order: 'applied_on asc,id asc', session }
   )) as unknown as OdooPricelistItem[];
@@ -1620,11 +1647,11 @@ export async function loadPricelistRuleSet(
   }
 
   if (variantIds.size > 0) {
-    const variantRows = await read(
+    const variantRows = await searchRead(
       'product.product',
-      Array.from(variantIds),
+      [['id', 'in', Array.from(variantIds)], ['active', '=', true], ['sale_ok', '=', true]],
       ['id', 'product_tmpl_id'],
-      session
+      { session }
     );
     for (const row of variantRows) {
       if (!Array.isArray(row.product_tmpl_id)) continue;
@@ -1726,6 +1753,37 @@ function sortAndSliceProductos(
   return ordered.slice(offset, offset + limit);
 }
 
+async function withPricelistVariantCodes(
+  session: OdooSession,
+  rules: PricelistRuleSet,
+  products: OdooProduct[],
+): Promise<OdooProduct[]> {
+  const allowedByTemplate = new Map(products.map(product => [
+    product.id,
+    getPricelistVariantIds(rules, product.id, Array.isArray(product.categ_id) ? product.categ_id[0] : null),
+  ]));
+  const codesByTemplate = new Map<number, Set<string>>();
+  for (let offset = 0; offset < products.length; offset += 50) {
+    const variants = await searchRead('product.product', [
+      ['product_tmpl_id', 'in', products.slice(offset, offset + 50).map(product => product.id)],
+      ['active', '=', true], ['sale_ok', '=', true],
+    ], ['id', 'product_tmpl_id', 'default_code'], { session });
+    for (const variant of variants) {
+      if (!Array.isArray(variant.product_tmpl_id)) continue;
+      const templateId = Number(variant.product_tmpl_id[0]);
+      const allowed = allowedByTemplate.get(templateId);
+      if (allowed === undefined || (allowed !== null && !allowed.includes(Number(variant.id)))) continue;
+      const codes = codesByTemplate.get(templateId) ?? new Set<string>();
+      if (typeof variant.default_code === 'string' && variant.default_code) codes.add(variant.default_code);
+      codesByTemplate.set(templateId, codes);
+    }
+  }
+  return products.filter(product => codesByTemplate.has(product.id)).map(product => ({
+    ...product,
+    pricelist_variant_codes: [...codesByTemplate.get(product.id)!],
+  }));
+}
+
 export async function getProductosByPricelist(
   session: OdooSession,
   pricelistId: number,
@@ -1773,7 +1831,7 @@ export async function getProductosByPricelist(
       }
       if (options.search && options.search.trim().length >= 2) {
         const term = options.search.trim();
-        explicitDomain.push('|', ['name', 'ilike', term], ['default_code', 'ilike', term]);
+        explicitDomain.push('|', ['name', 'ilike', term], ['product_variant_ids.default_code', 'ilike', term]);
       }
 
       const explicitProducts = await searchRead(
@@ -1795,7 +1853,7 @@ export async function getProductosByPricelist(
         const catDomain: unknown[] = [['sale_ok', '=', true], ['active', '=', true], ['categ_id', 'in', allowedCategoryIds]];
         if (options.search && options.search.trim().length >= 2) {
           const term = options.search.trim();
-          catDomain.push('|', ['name', 'ilike', term], ['default_code', 'ilike', term]);
+          catDomain.push('|', ['name', 'ilike', term], ['product_variant_ids.default_code', 'ilike', term]);
         }
         const categoryProducts = await searchRead(
           'product.template',
@@ -1813,8 +1871,14 @@ export async function getProductosByPricelist(
         productosMap.set(producto.id, producto);
       }
     }
-    productos = sortAndSliceProductos(Array.from(productosMap.values()), options);
+    productos = Array.from(productosMap.values());
   }
+
+  productos = await withPricelistVariantCodes(session, rules, productos);
+  if (options.search?.trim()) {
+    productos = productos.filter(product => matchesCatalogProductSearch(product, options.search!));
+  }
+  if (!globalRule) productos = sortAndSliceProductos(productos, options);
 
   return productos.map((producto) => {
     const categoryId = Array.isArray(producto.categ_id) ? producto.categ_id[0] : null;
