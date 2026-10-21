@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import test from 'node:test';
+import test, { after } from 'node:test';
 import { config } from 'dotenv';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { authenticate, read, searchCount, searchRead, type OdooSession } from '../src/lib/odoo/client';
@@ -26,8 +26,25 @@ import {
   normalizeFinancialLine,
   type FinancialDataset,
 } from '../src/lib/gerencia/finanzas.server';
+import { buildOpenBalanceReport, overdueDays } from '../src/lib/gerencia/cartera';
+import { loadOpenBalanceDataset } from '../src/lib/gerencia/cartera.server';
 
 config({ path: '.env.local', quiet: true });
+
+const originalFetch = globalThis.fetch;
+globalThis.fetch = (input, init) => {
+  const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
+  if (url.pathname.endsWith('/xmlrpc/2/object')) {
+    const params = [...String(init?.body).matchAll(/<param>([\s\S]*?)<\/param>/g)];
+    const method = params[4]?.[1].match(/<string>(.*?)<\/string>/)?.[1];
+    assert.ok(method && ['read', 'search_read', 'search_count', 'fields_get'].includes(method), 'La prueba bloquea mutaciones Odoo.');
+  } else if (!url.pathname.endsWith('/xmlrpc/2/common')) {
+    const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
+    assert.ok(method === 'GET' || method === 'HEAD', 'La prueba bloquea mutaciones Supabase.');
+  }
+  return originalFetch(input, init);
+};
+after(() => { globalThis.fetch = originalFetch; });
 
 type Row = Record<string, unknown>;
 const DAY_MS = 86_400_000;
@@ -122,7 +139,8 @@ async function loadIndependentRows(session: OdooSession, dataset: FinancialDatas
   const previous = previousFinancialRange(range);
   const invoiceDomain = [
     ['state', '=', 'posted'], ['move_type', 'in', ['out_invoice', 'out_refund']],
-    ['invoice_date', '>=', previous.from], ['invoice_date', '<=', range.to],
+    '|', '&', ['invoice_date', '>=', previous.from], ['invoice_date', '<=', previous.to],
+    '&', ['invoice_date', '>=', range.from], ['invoice_date', '<=', range.to],
   ];
   const [invoices, categories, namedCategories] = await Promise.all([
     boundedSearch(session, 'account.move', invoiceDomain, invoiceFields, 10_000),
@@ -167,6 +185,10 @@ function assertTotals(totals: FinancialTotals, lines: FinancialLine[]) {
   assert.equal(totals.missingCostLines, missingCosts);
   assert.equal(totals.knownCost, sum(costKnown.map((line) => line.cost!)));
   assert.equal(totals.verifiedProfit, sum(costKnown.map((line) => line.profit!)));
+  assert.equal(totals.verifiedSales, sum(costKnown.map(line => line.netSales)));
+  assert.equal(totals.unverifiedSales, sum(lines.filter(line => line.cost === null).map(line => line.netSales)));
+  assert.equal(totals.missingCostInvoices, new Set(lines.filter(line => line.cost === null).map(line => line.invoiceId)).size);
+  assert.equal(totals.verifiedMarginPercent, totals.verifiedSales > 0 ? roundCurrency(totals.verifiedProfit / totals.verifiedSales * 100) : null);
   assert.equal(totals.cost, missingCosts ? null : totals.knownCost);
   assert.equal(totals.profit, missingCosts ? null : totals.verifiedProfit);
   assert.equal(totals.marginPercent, totals.profit === null || totals.netSales <= 0 ? null : roundCurrency(totals.profit / totals.netSales * 100));
@@ -191,6 +213,20 @@ test('Gerencia: Odoo y Supabase reales, lecturas acotadas y bono sin mutaciones'
   t.diagnostic(`Conciliación de siete días completos hasta ${yesterday}; la facturación de hoy se mantiene fuera de las lecturas comparativas.`);
   const before = await readBonusSnapshot(admin);
   try {
+    await t.test('INIM23801: el Coste mostrado en Odoo es unitario y concilia con el margen de factura', async () => {
+      const [invoice] = await readChunks(session, 'account.move', [276521], invoiceFields);
+      assert.equal(invoice.name, 'INIM23801');
+      const [raw] = await readChunks(session, 'account.move.line', [947688], lineFields);
+      const [product] = await readChunks(session, 'product.product', [relationId(raw.product_id)!], ['id', 'default_code', 'categ_id']);
+      const line = normalizeFinancialLine({ ...invoice, companyCurrencyId: relationId(invoice.company_currency_id) }, raw, product, new Set([26]), new Set(), null);
+      assert.equal(line.quantity, 24);
+      assert.equal(line.unitCost, 1260.54);
+      assert.equal(line.cost, 30252.96);
+      assert.equal(line.profit, 15347.04);
+      assert.equal(line.cost, invoice.cost_total);
+      assert.equal(line.profit, invoice.margin_signed);
+      assert.equal(line.marginPercent, 33.66);
+    });
     await t.test('normalización de la NC real 269551, línea 922982: cantidad, costo y comisión con signo de devolución', async () => {
       const [invoices, rawLines, products, genericCategories] = await Promise.all([
         readChunks(session, 'account.move', [269551], invoiceFields),
@@ -250,7 +286,8 @@ test('Gerencia: Odoo y Supabase reales, lecturas acotadas y bono sin mutaciones'
       assert.deepEqual(validateFinancialRange(defaults.from, defaults.to), defaults);
       assert.deepEqual(report.range, range);
       assert.deepEqual(report.previousRange, previous);
-      assert.equal(Date.parse(`${range.from}T00:00:00Z`) - Date.parse(`${previous.to}T00:00:00Z`), DAY_MS);
+      if (report.comparisonMode === 'equal_days') assert.equal(Date.parse(`${range.from}T00:00:00Z`) - Date.parse(`${previous.to}T00:00:00Z`), DAY_MS);
+      else assert.ok(previous.from.endsWith('-01'));
       assert.equal((Date.parse(`${previous.to}T00:00:00Z`) - Date.parse(`${previous.from}T00:00:00Z`)) / DAY_MS + 1, 7);
       assert.equal(current.length + old.length, dataset.lines.length);
       assertTotals(report.totals, current);
@@ -432,6 +469,14 @@ test('Gerencia: Odoo y Supabase reales, lecturas acotadas y bono sin mutaciones'
       t.diagnostic(JSON.stringify({ reportPages: report.pagination.totalPages, odooLineBatches: Math.ceil(dataset.lines.length / 500) }));
     });
 
+    await t.test('filtrar pendientes cambia solo el detalle, sin perder importes verificados de los KPI', () => {
+      const pending = buildFinancialReport(dataset.lines, range, { page: 1, onlyMissingCost: true }, dataset.generatedAt);
+      assert.deepEqual(pending.totals, report.totals);
+      assert.deepEqual(pending.advisors, report.advisors);
+      assert.equal(pending.pagination.total, current.filter(line => line.cost === null).length);
+      assert.ok(pending.lines.every(line => line.cost === null));
+    });
+
     await t.test('getFinancialReport sin caché coincide con el dataset y su filtro real, sin recalcular liquidaciones', async () => {
       const selected = current.find((line) => line.advisorId !== null);
       assert.ok(selected, 'No hay una asesora Odoo real en el periodo para verificar el servicio.');
@@ -449,6 +494,20 @@ test('Gerencia: Odoo y Supabase reales, lecturas acotadas y bono sin mutaciones'
         assert.deepEqual(empty.selectedAdvisor, actual.selectedAdvisor, 'La identidad del bono no debe desaparecer al filtrar sin resultados.');
       }
     });
+
+    await t.test('septiembre de Gloria incluye agosto completo en el comparativo, también el día uno', async () => {
+      const [reference] = await readChunks(session, 'account.move', [276521], ['invoice_user_id']);
+      const advisorId = relationId(reference.invoice_user_id);
+      assert.ok(advisorId);
+      const monthly = await getFinancialReport(admin, { from: '2026-09-01', to: '2026-09-30' }, { advisorId, page: 1 }, false);
+      assert.deepEqual(monthly.previousRange, { from: '2026-08-01', to: '2026-08-31' });
+      assert.equal(monthly.comparisonMode, 'calendar_months');
+      const august = await boundedSearch(session, 'account.move', [
+        ['state', '=', 'posted'], ['move_type', 'in', ['out_invoice', 'out_refund']],
+        ['invoice_user_id', '=', advisorId], ['invoice_date', '>=', '2026-08-01'], ['invoice_date', '<=', '2026-08-31'],
+      ], ['id', 'amount_untaxed_signed'], 10000);
+      assert.equal(monthly.previousTotals.netSales, roundCurrency(august.reduce((sum, invoice) => sum + numeric(invoice.amount_untaxed_signed), 0)));
+    });
   } finally {
     await t.test('Supabase: snapshots, detalles, estados, versiones y bono 0,5% idénticos antes/después de consultar', async (subtest) => {
       const after = await readBonusSnapshot(admin);
@@ -456,4 +515,62 @@ test('Gerencia: Odoo y Supabase reales, lecturas acotadas y bono sin mutaciones'
       subtest.diagnostic(JSON.stringify({ rows: Object.fromEntries(Object.entries(after.tables).map(([table, summary]) => [table, summary.count])), states: after.states, persistedSnapshotsAvailable: (after.states.cerrado ?? 0) + (after.states.pagado ?? 0) > 0 }));
     });
   }
+});
+
+test('Cartera: los saldos actuales concilian con partidas reales de Odoo y conservan abonos y vencimientos', { timeout: 600_000 }, async () => {
+  const config = await getServerOdooConfig();
+  assert.ok(config);
+  const session = await authenticate(config);
+  const dataset = await loadOpenBalanceDataset(false);
+  const fields = ['id', 'move_id', 'account_type', 'amount_residual', 'date_maturity', 'date', 'company_currency_id'];
+  const domain = [
+    ['parent_state', '=', 'posted'], ['account_id.account_type', 'in', ['asset_receivable', 'liability_payable']],
+    ['reconciled', '=', false], ['amount_residual', '!=', 0], ['date', '<=', dataset.asOfDate],
+  ];
+  const raw = await boundedSearch(session, 'account.move.line', domain, fields, 25000);
+  assert.equal(dataset.lines.length, await searchCount('account.move.line', domain, session));
+  assert.deepEqual(dataset.lines.map(line => line.id).sort((a, b) => a - b), raw.map(line => numeric(line.id)).sort((a, b) => a - b));
+  const byId = new Map(raw.map(line => [numeric(line.id), line]));
+  for (const line of dataset.lines) {
+    const source = byId.get(line.id)!;
+    assert.equal((source.company_currency_id as [number, string])[1], 'COP');
+    assert.equal(line.balance, roundCurrency(numeric(source.amount_residual) * (source.account_type === 'liability_payable' ? -1 : 1)));
+    assert.equal(line.dueDate, source.date_maturity || null);
+    assert.equal(line.daysOverdue, overdueDays(line.dueDate, dataset.asOfDate));
+    assert.ok(line.date <= dataset.asOfDate);
+  }
+  const report = buildOpenBalanceReport(dataset.lines, dataset.asOfDate, dataset.generatedAt, { side: 'receivable', status: 'all', search: '', page: 1 });
+  for (const [side, accountType] of [['receivable', 'asset_receivable'], ['payable', 'liability_payable']] as const) {
+    const rows = raw.filter(line => line.account_type === accountType);
+    const values = rows.map(line => roundCurrency(numeric(line.amount_residual) * (side === 'payable' ? -1 : 1)));
+    assert.equal(report[side].balance, roundCurrency(values.reduce((sum, value) => sum + value, 0)));
+    assert.equal(report[side].documentCount, new Set(rows.map(line => relationId(line.move_id))).size);
+    assert.equal(report[side].charges, roundCurrency(values.filter(value => value > 0).reduce((sum, value) => sum + value, 0)));
+    assert.equal(report[side].credits, roundCurrency(values.filter(value => value < 0).reduce((sum, value) => sum + value, 0)));
+    const expectedOverdue = rows.reduce((sum, row, index) => sum + (values[index] > 0 && typeof row.date_maturity === 'string' && row.date_maturity < dataset.asOfDate ? values[index] : 0), 0);
+    assert.equal(report[side].overdue, roundCurrency(expectedOverdue));
+    assert.equal(roundCurrency(report[side].aging.reduce((sum, bucket) => sum + bucket.amount, 0)), report[side].overdue);
+    const credits = buildOpenBalanceReport(dataset.lines, dataset.asOfDate, dataset.generatedAt, { side, status: 'credit', search: '', page: 1 });
+    assert.ok(credits.lines.every(line => line.balance < 0 && line.side === side));
+    assert.deepEqual(credits.receivable, report.receivable);
+    assert.deepEqual(credits.payable, report.payable);
+    const total = values.length;
+    const pageCount = Math.max(1, Math.ceil(total / 50));
+    const ids: number[] = [];
+    for (let page = 1; page <= pageCount; page++) {
+      const result = buildOpenBalanceReport(dataset.lines, dataset.asOfDate, dataset.generatedAt, { side, status: 'all', search: '', page });
+      ids.push(...result.lines.map(line => line.id));
+      assert.equal(result.pagination.total, total);
+    }
+    assert.equal(new Set(ids).size, total);
+  }
+  const invoiceBalance = dataset.lines.filter(line => line.documentId === 276521 && line.side === 'receivable');
+  const [invoice] = await readChunks(session, 'account.move', [276521], ['amount_residual_signed']);
+  assert.equal(roundCurrency(invoiceBalance.reduce((sum, line) => sum + line.balance, 0)), invoice.amount_residual_signed);
+  const selected = dataset.lines.find(line => line.partnerId !== null);
+  assert.ok(selected);
+  const filtered = buildOpenBalanceReport(dataset.lines, dataset.asOfDate, dataset.generatedAt, { side: selected.side, status: 'all', search: selected.partnerName, page: 1 });
+  assert.ok(filtered.lines.every(line => `${line.partnerName} ${line.documentName} ${line.reference ?? ''} ${line.accountName}`.toLocaleLowerCase('es').includes(selected.partnerName.toLocaleLowerCase('es'))));
+  assert.deepEqual(filtered.receivable, report.receivable);
+  assert.deepEqual(filtered.payable, report.payable);
 });
