@@ -9,6 +9,7 @@ import {
 } from '../src/lib/odoo/client';
 import { getPricelistVariantIds, matchesCatalogProductSearch } from '../src/lib/pricing/catalog-visibility';
 import { loadPricingContext, resolveProductPrice } from '../src/lib/pricing/margins';
+import { buildVariantAttributeMap } from '../src/lib/odoo/variant-attributes';
 
 config({ path: '.env.local', quiet: true });
 
@@ -93,6 +94,23 @@ test('ARIS: el selector solo devuelve las variantes asignadas en su tarifa vigen
     active.map(row => Number(row.id)).sort((a, b) => a - b));
   const visibleValues = new Set(result.variants.flatMap(row => row.product_template_attribute_value_ids));
   assert.ok(result.attributes.every(attribute => attribute.values.every(value => visibleValues.has(value.ptavId))));
+});
+
+test('la consulta comercial identifica los atributos reales de cada variante por su PTAV', async () => {
+  const { session, templateId, categoryId, rules } = await current();
+  const result = await getProductVariants(session, templateId, getPricelistVariantIds(rules, templateId, categoryId) ?? undefined);
+  const labels = buildVariantAttributeMap(result.attributes);
+  const ptavIds = [...new Set(result.variants.flatMap(variant => variant.product_template_attribute_value_ids))];
+  assert.ok(ptavIds.length > 0);
+  const expected = await read('product.template.attribute.value', ptavIds, ['id', 'name', 'attribute_id', 'html_color'], session);
+  for (const value of expected) {
+    assert.deepEqual(labels.get(Number(value.id)), {
+      attrName: (value.attribute_id as [number, string])[1],
+      valueName: value.name,
+      color: typeof value.html_color === 'string' ? value.html_color : null,
+    });
+  }
+  assert.equal(labels.size, ptavIds.length);
 });
 
 test('ARIS: catálogo y buscador usan los SKU vigentes sin saltarse la selección de variante', async () => {

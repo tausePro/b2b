@@ -1,8 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, FileText, Loader2, ShoppingCart, Sparkles, X } from 'lucide-react';
 import { formatMarkupPercent } from '@/lib/pricing/cost-staleness';
+import { buildVariantAttributeMap, type VariantAttributes } from '@/lib/odoo/variant-attributes';
 
 /**
  * Modal que lista las variantes (product.product) de un template.
@@ -41,18 +42,6 @@ export interface VariantsModalProps {
   storefrontId?: string;
 }
 
-interface AttributeValueResponse {
-  id: number;
-  name: string;
-  html_color: string | false;
-}
-
-interface AttributeResponse {
-  id: number;
-  name: string;
-  values: AttributeValueResponse[];
-}
-
 interface VariantResponse {
   id: number;
   name: string;
@@ -82,7 +71,7 @@ interface VariantResponse {
 interface VariantsApiResponse {
   template_id: number;
   variant_count: number;
-  attributes: AttributeResponse[];
+  attributes: VariantAttributes;
   variants: VariantResponse[];
   can_see_cost: boolean;
 }
@@ -220,18 +209,22 @@ export function VariantsModal({ templateId, productName, open, onClose, fallback
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<VariantsApiResponse | null>(null);
+  const request = useRef<AbortController | null>(null);
+  const dialogRef = useRef<HTMLDialogElement | null>(null);
 
-  // Cerrar con ESC.
   useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+    const dialog = dialogRef.current;
+    if (!open || !dialog) return;
+    dialog.showModal();
+    return () => {
+      if (dialog.open) dialog.close();
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+  }, [open]);
 
   const fetchVariants = useCallback(async () => {
+    request.current?.abort();
+    const controller = new AbortController();
+    request.current = controller;
     setLoading(true);
     setError(null);
     setData(null);
@@ -248,17 +241,18 @@ export function VariantsModal({ templateId, productName, open, onClose, fallback
       }
       const qs = params.toString();
       const url = `/api/odoo/productos/${templateId}/variantes${qs ? `?${qs}` : ''}`;
-      const res = await fetch(url, { credentials: 'include' });
+      const res = await fetch(url, { credentials: 'include', cache: 'no-store', signal: controller.signal });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body?.error || `Error ${res.status} consultando variantes.`);
       }
       const json = (await res.json()) as VariantsApiResponse;
+      if (controller.signal.aborted) return;
       setData(json);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error desconocido.');
+      if (!controller.signal.aborted) setError(err instanceof Error ? err.message : 'Error desconocido.');
     } finally {
-      setLoading(false);
+      if (!controller.signal.aborted) setLoading(false);
     }
   }, [templateId, fallbackPrice, empresaId, storefrontId]);
 
@@ -266,6 +260,7 @@ export function VariantsModal({ templateId, productName, open, onClose, fallback
     if (open) {
       void fetchVariants();
     }
+    return () => request.current?.abort();
   }, [open, fetchVariants]);
 
   if (!open) return null;
@@ -273,25 +268,13 @@ export function VariantsModal({ templateId, productName, open, onClose, fallback
   const variantes = data?.variants ?? [];
   const canSeeCost = data?.can_see_cost === true;
 
-  // Construir mapa de valor de atributo para etiquetas.
-  const attrValueMap = new Map<number, { attrName: string; valueName: string; color?: string | null }>();
-  if (data?.attributes) {
-    for (const attr of data.attributes) {
-      for (const val of attr.values) {
-        attrValueMap.set(val.id, {
-          attrName: attr.name,
-          valueName: val.name,
-          color: typeof val.html_color === 'string' ? val.html_color : null,
-        });
-      }
-    }
-  }
+  const attrValueMap = buildVariantAttributeMap(data?.attributes ?? []);
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6"
-      role="dialog"
-      aria-modal="true"
+    <dialog
+      ref={dialogRef}
+      className="fixed inset-0 z-50 m-0 flex h-full max-h-none w-full max-w-none items-center justify-center border-0 bg-transparent p-4 sm:p-6 backdrop:bg-transparent"
+      onCancel={onClose}
       aria-labelledby="variants-modal-title"
     >
       {/* Backdrop */}
@@ -313,6 +296,7 @@ export function VariantsModal({ templateId, productName, open, onClose, fallback
             </p>
           </div>
           <button
+            type="button"
             onClick={onClose}
             className="-mr-2 -mt-1 rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition-colors"
             aria-label="Cerrar"
@@ -343,7 +327,7 @@ export function VariantsModal({ templateId, productName, open, onClose, fallback
 
           {!loading && !error && variantes.length === 0 && (
             <div className="px-6 py-8 text-center text-sm text-slate-500">
-              Este producto no tiene variantes activas.
+              No hay variantes disponibles para este catálogo.
             </div>
           )}
 
@@ -483,6 +467,6 @@ export function VariantsModal({ templateId, productName, open, onClose, fallback
           </div>
         )}
       </div>
-    </div>
+    </dialog>
   );
 }
