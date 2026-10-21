@@ -11,6 +11,7 @@ export interface FinancialFilters {
   clientId?: number;
   productId?: number;
   invoiceId?: number;
+  onlyMissingCost?: boolean;
   page: number;
 }
 export interface FinancialLine {
@@ -35,6 +36,7 @@ export interface FinancialLine {
   unitName: string;
   quantity: number;
   netSales: number;
+  unitCost: number | null;
   cost: number | null;
   profit: number | null;
   marginPercent: number | null;
@@ -55,6 +57,10 @@ export interface FinancialTotals {
   profit: number | null;
   knownCost: number;
   verifiedProfit: number;
+  verifiedSales: number;
+  unverifiedSales: number;
+  verifiedMarginPercent: number | null;
+  missingCostInvoices: number;
   marginPercent: number | null;
   costCoveragePercent: number | null;
   missingCostLines: number;
@@ -78,6 +84,7 @@ export interface FinancialReport {
   selectedAdvisor?: FinancialAdvisor | null;
   range: FinancialRange;
   previousRange: FinancialRange;
+  comparisonMode: 'calendar_months' | 'month_progress' | 'equal_days';
   filters: FinancialFilters;
   currency: 'COP';
   generatedAt: string;
@@ -113,13 +120,40 @@ export function validateFinancialRange(from: string, to: string, today = getBogo
   return { from, to };
 }
 
-export function previousFinancialRange(range: FinancialRange): FinancialRange {
+export function financialComparison(range: FinancialRange): { range: FinancialRange; mode: FinancialReport['comparisonMode'] } {
   const start = calendarDate(range.from);
-  const days = (calendarDate(range.to) - start) / 86400000 + 1;
+  const end = calendarDate(range.to);
+  if (end < start) throw new Error('La fecha inicial no puede ser posterior a la final.');
+  const first = new Date(start);
+  const last = new Date(end);
+  const lastDay = new Date(Date.UTC(last.getUTCFullYear(), last.getUTCMonth() + 1, 0)).getUTCDate();
+  const iso = (date: Date) => date.toISOString().slice(0, 10);
+  if (first.getUTCDate() === 1 && last.getUTCDate() === lastDay) {
+    const months = (last.getUTCFullYear() - first.getUTCFullYear()) * 12 + last.getUTCMonth() - first.getUTCMonth() + 1;
+    return {
+      range: { from: iso(new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() - months, 1))), to: iso(new Date(start - 86400000)) },
+      mode: 'calendar_months',
+    };
+  }
+  if (first.getUTCDate() === 1 && range.from.slice(0, 7) === range.to.slice(0, 7)) {
+    const previousEnd = new Date(start - 86400000);
+    return {
+      range: {
+        from: iso(new Date(Date.UTC(previousEnd.getUTCFullYear(), previousEnd.getUTCMonth(), 1))),
+        to: iso(new Date(Date.UTC(previousEnd.getUTCFullYear(), previousEnd.getUTCMonth(), Math.min(last.getUTCDate(), previousEnd.getUTCDate())))),
+      },
+      mode: 'month_progress',
+    };
+  }
+  const days = (end - start) / 86400000 + 1;
   return {
-    from: new Date(start - days * 86400000).toISOString().slice(0, 10),
-    to: new Date(start - 86400000).toISOString().slice(0, 10),
+    range: { from: iso(new Date(start - days * 86400000)), to: iso(new Date(start - 86400000)) },
+    mode: 'equal_days',
   };
+}
+
+export function previousFinancialRange(range: FinancialRange): FinancialRange {
+  return financialComparison(range).range;
 }
 
 export function regularCommissionRate(categoryId: number | null, genericCategoryIds: ReadonlySet<number>): number | null {
@@ -146,6 +180,8 @@ export function summarizeFinancialLines(lines: readonly FinancialLine[]): Financ
   let creditNotes = 0;
   let knownCost = 0;
   let verifiedProfit = 0;
+  let verifiedSales = 0;
+  const missingCostInvoices = new Set<number>();
   let knownCommission = 0;
   let missingCostLines = 0;
   let missingCommissionLines = 0;
@@ -162,10 +198,14 @@ export function summarizeFinancialLines(lines: readonly FinancialLine[]): Financ
       creditNotes += line.netSales;
     }
     if (line.clientId !== null) clients.add(line.clientId);
-    if (line.cost === null || line.profit === null) missingCostLines++;
+    if (line.cost === null || line.profit === null) {
+      missingCostLines++;
+      missingCostInvoices.add(line.invoiceId);
+    }
     else {
       knownCost += line.cost;
       verifiedProfit += line.profit;
+      verifiedSales += line.netSales;
       coveredSales += Math.abs(line.netSales);
     }
     if (line.commission === null) missingCommissionLines++;
@@ -174,11 +214,14 @@ export function summarizeFinancialLines(lines: readonly FinancialLine[]): Financ
   netSales = roundCurrency(netSales);
   knownCost = roundCurrency(knownCost);
   verifiedProfit = roundCurrency(verifiedProfit);
+  verifiedSales = roundCurrency(verifiedSales);
   const profit = missingCostLines ? null : verifiedProfit;
   return {
     netSales, invoicedSales: roundCurrency(invoicedSales), creditNotes: roundCurrency(creditNotes),
     invoiceCount: invoiceIds.size, creditNoteCount: creditIds.size, clientCount: clients.size, lineCount: lines.length,
     cost: missingCostLines ? null : knownCost, profit, knownCost, verifiedProfit,
+    verifiedSales, unverifiedSales: roundCurrency(netSales - verifiedSales),
+    verifiedMarginPercent: financialMargin(verifiedProfit, verifiedSales), missingCostInvoices: missingCostInvoices.size,
     marginPercent: financialMargin(profit, netSales),
     costCoveragePercent: lines.length ? (absoluteSales ? roundCurrency(coveredSales / absoluteSales * 100) : missingCostLines ? 0 : 100) : null,
     missingCostLines, commission: missingCommissionLines ? null : roundCurrency(knownCommission),
@@ -220,7 +263,8 @@ export function buildFinancialReport(allLines: readonly FinancialLine[], range: 
     if (seen.has(line.id)) throw new Error('Odoo devolvió una línea de factura duplicada.');
     seen.add(line.id);
   }
-  const previousRange = previousFinancialRange(range);
+  const comparison = financialComparison(range);
+  const previousRange = comparison.range;
   const filtered = filterFinancialLines(allLines, filters);
   const current = filtered.filter((line) => line.invoiceDate >= range.from && line.invoiceDate <= range.to);
   const previous = filtered.filter((line) => line.invoiceDate >= previousRange.from && line.invoiceDate <= previousRange.to);
@@ -230,11 +274,12 @@ export function buildFinancialReport(allLines: readonly FinancialLine[], range: 
     rows.push(line);
     byDate.set(line.invoiceDate, rows);
   }
-  const totalPages = Math.max(1, Math.ceil(current.length / FINANCIAL_PAGE_SIZE));
+  const details = filters.onlyMissingCost ? current.filter(line => line.cost === null) : current;
+  const totalPages = Math.max(1, Math.ceil(details.length / FINANCIAL_PAGE_SIZE));
   const page = Math.min(filters.page, totalPages);
-  const ordered = [...current].sort((a, b) => b.invoiceDate.localeCompare(a.invoiceDate) || b.invoiceId - a.invoiceId || a.id - b.id);
+  const ordered = [...details].sort((a, b) => b.invoiceDate.localeCompare(a.invoiceDate) || b.invoiceId - a.invoiceId || a.id - b.id);
   return {
-    range, previousRange, filters: { ...filters, page }, currency: 'COP', generatedAt,
+    range, previousRange, comparisonMode: comparison.mode, filters: { ...filters, page }, currency: 'COP', generatedAt,
     totals: summarizeFinancialLines(current), previousTotals: summarizeFinancialLines(previous),
     advisors: groupFinancialLines(current, 'advisor'), clients: groupFinancialLines(current, 'client'), products: groupFinancialLines(current, 'product'),
     trend: [...byDate].sort(([a], [b]) => a.localeCompare(b)).map(([date, rows]) => {
@@ -242,7 +287,7 @@ export function buildFinancialReport(allLines: readonly FinancialLine[], range: 
       return { date, netSales: totals.netSales, profit: totals.profit, commission: totals.commission };
     }),
     lines: ordered.slice((page - 1) * FINANCIAL_PAGE_SIZE, page * FINANCIAL_PAGE_SIZE),
-    pagination: { page, pageSize: FINANCIAL_PAGE_SIZE, total: current.length, totalPages },
+    pagination: { page, pageSize: FINANCIAL_PAGE_SIZE, total: details.length, totalPages },
     warnings: [...new Set(warnings)],
   };
 }

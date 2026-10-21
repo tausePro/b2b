@@ -11,6 +11,7 @@ import { getBogotaCalendarDate, getCommissionPeriodRange, PLATFORM_BONUS_START_D
 import type { CommissionPeriodStatus, PlatformBonusTotals } from '@/lib/comisiones/bonoPlataforma';
 import { defaultFinancialRange, validateFinancialRange } from '@/lib/gerencia/finanzas';
 import type { FinancialFilters, FinancialGroup, FinancialRange, FinancialReport, FinancialTotals } from '@/lib/gerencia/finanzas';
+import type { BalanceSide, BalanceStatus, OpenBalanceReport } from '@/lib/gerencia/cartera';
 
 const PAGE_SIZE = 50;
 const buttonClass = 'inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-border bg-white px-3 py-2 text-sm font-medium text-foreground hover:bg-background-light focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-50';
@@ -136,8 +137,8 @@ function Pagination({ page, totalPages, total, onChange, label }: { page: number
 function AmountCell({ value, verified }: { value: number | null; verified?: number }) {
   return (
     <td className={cellClass}>
-      <span className={value === null ? 'font-medium text-amber-800' : undefined}>{money(value)}</span>
-      {value === null && verified !== undefined && <span className="mt-1 block text-xs text-muted">Subtotal verificado: {currencyFormatter.format(verified)}</span>}
+      <span className={value === null ? 'font-medium text-amber-800' : undefined}>{money(value ?? verified ?? null)}</span>
+      {value === null && verified !== undefined && <span className="mt-1 block text-xs text-amber-800">Parcial verificado · total pendiente</span>}
     </td>
   );
 }
@@ -164,7 +165,7 @@ function GroupTable({ title, groups, kind, navigation }: { title: string; groups
           <thead><tr className="border-b border-border bg-background-light/50">
             <th scope="col" className="px-4 py-3 text-left font-medium text-muted">{kind === 'advisor' ? 'Asesora' : kind === 'client' ? 'Cliente' : 'Producto / unidad'}</th>
             {kind === 'product' && <th scope="col" className={headingCellClass}>Cantidad</th>}
-            <th scope="col" className={headingCellClass}>Facturas / NC</th><th scope="col" className={headingCellClass}>Venta neta</th><th scope="col" className={headingCellClass}>Costo de factura</th><th scope="col" className={headingCellClass}>Utilidad</th><th scope="col" className={headingCellClass}>Margen</th><th scope="col" className={headingCellClass}>Cobertura de costo</th><th scope="col" className={headingCellClass}>Comisión habitual</th>
+            <th scope="col" className={headingCellClass}>Facturas / NC</th><th scope="col" className={headingCellClass}>Venta neta</th><th scope="col" className={headingCellClass}>Costo de factura</th><th scope="col" className={headingCellClass}>Utilidad bruta</th><th scope="col" className={headingCellClass}>Margen bruto</th><th scope="col" className={headingCellClass}>Cobertura de costo</th><th scope="col" className={headingCellClass}>Comisión habitual</th>
           </tr></thead>
           <tbody>{rows.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE).map((group) => (
             <tr key={group.key} className="border-b border-border/50">
@@ -175,7 +176,7 @@ function GroupTable({ title, groups, kind, navigation }: { title: string; groups
               {kind === 'product' && <td className={cellClass}>{group.quantity === undefined ? 'No disponible' : quantityFormatter.format(group.quantity)} {group.unitName}</td>}
               <td className={cellClass}>{group.invoiceCount} / {group.creditNoteCount}</td>
               <AmountCell value={group.netSales} /><AmountCell value={group.cost} verified={group.knownCost} /><AmountCell value={group.profit} verified={group.verifiedProfit} />
-              <td className={cellClass}>{percent(group.marginPercent)}</td>
+              <td className={cellClass}>{percent(group.marginPercent ?? group.verifiedMarginPercent)}{group.marginPercent === null && group.verifiedMarginPercent !== null && <span className="mt-1 block text-xs text-amber-800">Sobre venta con costo verificado</span>}</td>
               <td className={cellClass}>{percent(group.costCoveragePercent)}<span className="mt-1 block text-xs text-muted">{group.missingCostLines} líneas pendientes</span></td>
               <td className={cellClass}><span className={group.commission === null ? 'font-medium text-amber-800' : undefined}>{money(group.commission)}</span>{group.commission === null && <span className="mt-1 block text-xs text-muted">Subtotal verificado: {currencyFormatter.format(group.knownCommission)} · {group.missingCommissionLines} líneas pendientes</span>}</td>
             </tr>
@@ -191,14 +192,19 @@ function GroupTable({ title, groups, kind, navigation }: { title: string; groups
 function Comparison({ report }: { report: FinancialReport }) {
   const metrics: { label: string; field: keyof Pick<FinancialTotals, 'netSales' | 'cost' | 'profit' | 'commission'>; verified?: 'knownCost' | 'verifiedProfit' | 'knownCommission' }[] = [
     { label: 'Venta neta', field: 'netSales' }, { label: 'Costo de factura', field: 'cost', verified: 'knownCost' },
-    { label: 'Utilidad', field: 'profit', verified: 'verifiedProfit' }, { label: 'Comisión habitual calculada', field: 'commission', verified: 'knownCommission' },
+    { label: 'Utilidad bruta de ventas', field: 'profit', verified: 'verifiedProfit' }, { label: 'Comisión habitual calculada', field: 'commission', verified: 'knownCommission' },
   ];
+  const basis = {
+    calendar_months: 'Meses calendario completos, desde el día uno. La cantidad de días puede variar entre meses.',
+    month_progress: 'Mismo avance del mes anterior desde el día uno, hasta su último día disponible.',
+    equal_days: 'Períodos consecutivos con el mismo número de días.',
+  }[report.comparisonMode];
   return (
     <section className="overflow-hidden rounded-xl border border-border bg-white" aria-label="Comparación con periodo anterior">
-      <div className="border-b border-border px-5 py-4"><h2 className="font-semibold text-foreground">Comparación con periodo anterior</h2><p className="mt-1 text-xs text-muted">Igual número de días y mismos filtros. Los subtotales verificados no son totales completos.</p></div>
+      <div className="border-b border-border px-5 py-4"><h2 className="font-semibold text-foreground">Comparación con periodo anterior</h2><p className="mt-1 text-xs text-muted">{basis} Mismos filtros comerciales. Los importes marcados como parciales no son totales completos.</p></div>
       <div className="overflow-x-auto" role="region" aria-label="Tabla comparativa de periodos" tabIndex={0}>
         <table className="w-full text-sm">
-          <caption className="sr-only">Comparación del rango actual con el periodo inmediatamente anterior de igual duración</caption>
+          <caption className="sr-only">Comparación del rango actual y anterior. {basis}</caption>
           <thead><tr className="border-b border-border bg-background-light/50"><th scope="col" className="px-4 py-3 text-left font-medium text-muted">Indicador</th><th scope="col" className={headingCellClass}>Actual: {dateLabel(report.range.from)} – {dateLabel(report.range.to)}</th><th scope="col" className={headingCellClass}>Anterior: {dateLabel(report.previousRange.from)} – {dateLabel(report.previousRange.to)}</th></tr></thead>
           <tbody>
             {metrics.map((metric) => <tr key={metric.field} className="border-b border-border/50"><th scope="row" className="px-4 py-3 text-left font-medium">{metric.label}</th><AmountCell value={report.totals[metric.field]} verified={metric.verified ? report.totals[metric.verified] : undefined} /><AmountCell value={report.previousTotals[metric.field]} verified={metric.verified ? report.previousTotals[metric.verified] : undefined} /></tr>)}
@@ -220,7 +226,7 @@ function TrendTable({ report }: { report: FinancialReport }) {
       <summary className="cursor-pointer px-5 py-4 font-semibold text-foreground">Evolución diaria de la facturación</summary>
       <p className="px-5 pb-4 text-xs text-muted">Solo fechas con líneas registradas. Agregados completos del rango consultado, no de la página de detalle.</p>
       <div className="overflow-x-auto" role="region" aria-label="Tabla de evolución diaria" tabIndex={0}>
-        <table className="w-full text-sm"><caption className="sr-only">Venta neta, utilidad y comisión habitual por fecha de factura</caption><thead><tr className="border-y border-border bg-background-light/50"><th scope="col" className="px-4 py-3 text-left font-medium text-muted">Fecha</th><th scope="col" className={headingCellClass}>Venta neta</th><th scope="col" className={headingCellClass}>Utilidad</th><th scope="col" className={headingCellClass}>Comisión habitual</th></tr></thead><tbody>{report.trend.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE).map((row) => <tr key={row.date} className="border-b border-border/50"><th scope="row" className="px-4 py-3 text-left font-medium">{dateLabel(row.date)}</th><AmountCell value={row.netSales} /><AmountCell value={row.profit} /><AmountCell value={row.commission} /></tr>)}</tbody></table>
+        <table className="w-full text-sm"><caption className="sr-only">Venta neta, utilidad bruta y comisión habitual por fecha de factura</caption><thead><tr className="border-y border-border bg-background-light/50"><th scope="col" className="px-4 py-3 text-left font-medium text-muted">Fecha</th><th scope="col" className={headingCellClass}>Venta neta</th><th scope="col" className={headingCellClass}>Utilidad bruta</th><th scope="col" className={headingCellClass}>Comisión habitual</th></tr></thead><tbody>{report.trend.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE).map((row) => <tr key={row.date} className="border-b border-border/50"><th scope="row" className="px-4 py-3 text-left font-medium">{dateLabel(row.date)}</th><AmountCell value={row.netSales} /><AmountCell value={row.profit} /><AmountCell value={row.commission} /></tr>)}</tbody></table>
       </div>
       {report.trend.length === 0 && <p className="px-5 py-6 text-sm text-muted">No hay fechas con facturación en esta consulta.</p>}
       <Pagination label="evolución diaria" page={currentPage} totalPages={totalPages} total={report.trend.length} onChange={setPage} />
@@ -275,6 +281,93 @@ function AdvisorBonus({ portalAdvisorId, period, onPeriodChange, today, userId }
   );
 }
 
+function OpenBalances({ userId, refresh }: { userId: string; refresh: number }) {
+  const [side, setSide] = useState<BalanceSide>('receivable');
+  const [status, setStatus] = useState<BalanceStatus>('all');
+  const [draftSearch, setDraftSearch] = useState('');
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [localRefresh, setLocalRefresh] = useState(0);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const id = useId();
+  const query = new URLSearchParams({ tipo: side === 'receivable' ? 'cobrar' : 'pagar', estado: status, buscar: search, pagina: String(page) });
+  const validate = useCallback((data: OpenBalanceReport) => {
+    if (data.currency !== 'COP' || !data.receivable || !data.payable || !Array.isArray(data.lines)
+      || data.filters?.side !== side || data.filters?.status !== status || data.filters?.search !== search
+      || !data.pagination || data.pagination.page !== Math.min(page, data.pagination.totalPages)
+      || data.filters.page !== data.pagination.page || !/^\d{4}-\d{2}-\d{2}$/.test(data.asOfDate)) {
+      throw new Error('La respuesta de cartera no corresponde a la consulta. Actualiza los saldos.');
+    }
+  }, [side, status, search, page]);
+  const { data, error, loading } = useReadonlyJson<OpenBalanceReport>(`/api/gerencia/cartera?${query}`, userId, refresh + localRefresh, validate);
+  return (
+    <section className="space-y-4" aria-labelledby={`${id}-title`}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 id={`${id}-title`} className="text-lg font-semibold text-foreground">Cuentas por cobrar y por pagar</h2>
+          <p className="mt-1 text-sm text-muted">Saldos actuales de Imprima en Odoo, de todos los períodos. Son independientes de los filtros de ventas.</p>
+        </div>
+        <button type="button" className={buttonClass} onClick={() => setLocalRefresh(value => value + 1)}><RefreshCw className="h-4 w-4" aria-hidden="true" />Actualizar saldos</button>
+      </div>
+      <form aria-label="Filtros del detalle de cartera" className="grid grid-cols-1 items-end gap-3 rounded-xl border border-border bg-white p-4 sm:grid-cols-2 xl:grid-cols-4" onSubmit={event => {
+        event.preventDefault(); setSearch(draftSearch.trim()); setPage(1); setDetailsOpen(true); setLocalRefresh(value => value + 1);
+      }}>
+        <div><label htmlFor={`${id}-side`} className="text-sm font-medium">Consultar documentos</label><select id={`${id}-side`} className={inputClass} value={side} onChange={event => { setSide(event.target.value as BalanceSide); setPage(1); setDetailsOpen(true); }}><option value="receivable">Cuentas por cobrar</option><option value="payable">Cuentas por pagar</option></select></div>
+        <div><label htmlFor={`${id}-status`} className="text-sm font-medium">Estado del saldo</label><select id={`${id}-status`} className={inputClass} value={status} onChange={event => { setStatus(event.target.value as BalanceStatus); setPage(1); setDetailsOpen(true); }}><option value="all">Todos</option><option value="overdue">Cargos vencidos</option><option value="not_due">Cargos no vencidos</option><option value="credit">Abonos / notas crédito</option><option value="no_due_date">Sin vencimiento informado</option></select></div>
+        <div><label htmlFor={`${id}-search`} className="text-sm font-medium">Tercero, documento o referencia</label><input id={`${id}-search`} className={inputClass} type="search" maxLength={120} value={draftSearch} onChange={event => setDraftSearch(event.target.value)} /></div>
+        <button type="submit" className={buttonClass}>Buscar en los saldos</button>
+      </form>
+      {error && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</p>}
+      {loading && <LoadingReport />}
+      {data && <>
+        <p className="text-xs text-muted">Consultado: {timestampFormatter.format(new Date(data.generatedAt))} (Bogotá). Saldos contables en COP, incluidos impuestos, retenciones y pagos aplicados. La lectura puede reutilizarse durante un minuto.</p>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <KpiCard title="Por cobrar · saldo neto" value={money(data.receivable.balance)} subtitle={`${data.receivable.documentCount} documentos · ${data.receivable.partnerCount} terceros`} icon={<DollarSign className="h-5 w-5" aria-hidden="true" />} />
+          <KpiCard title="Cargos por cobrar vencidos" value={money(data.receivable.overdue)} subtitle={`Con fecha informada, sin compensar abonos. Cargos sin vencimiento: ${money(data.receivable.withoutDueDate)}`} icon={<FileText className="h-5 w-5" aria-hidden="true" />} />
+          <KpiCard title="Por pagar · saldo neto" value={money(data.payable.balance)} subtitle={`${data.payable.documentCount} documentos · ${data.payable.partnerCount} terceros`} icon={<DollarSign className="h-5 w-5" aria-hidden="true" />} />
+          <KpiCard title="Cargos por pagar vencidos" value={money(data.payable.overdue)} subtitle={`Con fecha informada, sin compensar abonos. Cargos sin vencimiento: ${money(data.payable.withoutDueDate)}`} icon={<FileText className="h-5 w-5" aria-hidden="true" />} />
+        </div>
+        <details className="rounded-xl border border-border bg-white p-4">
+          <summary className="cursor-pointer font-semibold">Composición y antigüedad de los saldos</summary>
+          <div className="mt-3 overflow-x-auto" role="region" aria-label="Composición de la cartera" tabIndex={0}>
+            <table className="w-full text-sm">
+              <caption className="sr-only">Cargos y abonos, con antigüedad de los cargos vencidos sin compensar abonos.</caption>
+              <thead><tr><th scope="col" className="px-4 py-3 text-left">Concepto</th><th scope="col" className={headingCellClass}>Por cobrar</th><th scope="col" className={headingCellClass}>Por pagar</th></tr></thead>
+              <tbody>
+                {([
+                  ['Cargos pendientes', 'charges'], ['Abonos / NC sin conciliar (con signo)', 'credits'],
+                  ['Cargos no vencidos', 'notDue'], ['Cargos sin vencimiento informado', 'withoutDueDate'],
+                ] as const).map(([label, field]) => <tr key={field} className="border-t border-border"><th scope="row" className="px-4 py-3 text-left font-medium">{label}</th><AmountCell value={data.receivable[field]} /><AmountCell value={data.payable[field]} /></tr>)}
+                {data.receivable.aging.map((bucket, index) => <tr key={bucket.label} className="border-t border-border"><th scope="row" className="px-4 py-3 text-left font-medium">Vencido: {bucket.label}</th><AmountCell value={bucket.amount} /><AmountCell value={data.payable.aging[index].amount} /></tr>)}
+              </tbody>
+            </table>
+          </div>
+          <ul className="mt-3 list-disc space-y-2 pl-5 text-xs text-muted">{data.warnings.map(warning => <li key={warning}>{warning}</li>)}</ul>
+        </details>
+        <details className="overflow-hidden rounded-xl border border-border bg-white" open={detailsOpen} onToggle={event => setDetailsOpen(event.currentTarget.open)}>
+          <summary className="cursor-pointer px-5 py-4 font-semibold">Detalle de documentos {side === 'receivable' ? 'por cobrar' : 'por pagar'} ({data.pagination.total})</summary>
+          <div className="border-b border-border px-5 pb-4"><p className="text-xs text-muted">Saldo de las coincidencias: {money(data.filteredBalance)} · {data.pagination.total} partidas abiertas. Un documento puede tener varios vencimientos. Los cuatro indicadores superiores conservan el saldo global.</p></div>
+          <div className="overflow-x-auto" role="region" aria-label="Detalle de cuentas por cobrar y por pagar" tabIndex={0}>
+            <table className="w-full text-sm">
+              <caption className="sr-only">Partidas contables pendientes, con tercero, documento, vencimiento y saldo. Valores negativos: abonos o notas crédito sin conciliar.</caption>
+              <thead><tr><th scope="col" className="px-4 py-3 text-left font-medium text-muted">Tercero / cuenta</th><th scope="col" className="px-4 py-3 text-left font-medium text-muted">Documento</th><th scope="col" className={headingCellClass}>Fecha contable</th><th scope="col" className={headingCellClass}>Vencimiento</th><th scope="col" className={headingCellClass}>Estado</th><th scope="col" className={headingCellClass}>Saldo COP</th></tr></thead>
+              <tbody>{data.lines.map(line => <tr key={line.id} className="border-t border-border">
+                <th scope="row" className="min-w-52 px-4 py-3 text-left align-top font-medium">{line.partnerName}<span className="mt-1 block text-xs font-normal text-muted">{line.accountName} · {line.companyName}</span></th>
+                <td className="min-w-40 px-4 py-3 align-top">{line.documentName}<span className="mt-1 block text-xs text-muted">{line.reference ?? ''}</span></td>
+                <td className={cellClass}>{dateLabel(line.date)}</td><td className={cellClass}>{line.dueDate ? dateLabel(line.dueDate) : 'Sin informar'}</td>
+                <td className={`${cellClass} ${line.balance > 0 && line.daysOverdue && line.daysOverdue > 0 ? 'text-amber-800' : ''}`}>{line.balance < 0 ? 'Abono / NC' : line.daysOverdue === null ? 'Revisar vencimiento' : line.daysOverdue > 0 ? `${line.daysOverdue} días vencido` : 'No vencido'}</td>
+                <AmountCell value={line.balance} />
+              </tr>)}</tbody>
+            </table>
+          </div>
+          {data.lines.length === 0 && <p className="p-6 text-sm text-muted">No hay saldos abiertos que coincidan con estos filtros.</p>}
+          <Pagination label="cartera" page={data.pagination.page} totalPages={data.pagination.totalPages} total={data.pagination.total} onChange={setPage} />
+        </details>
+      </>}
+    </section>
+  );
+}
+
 function FinancialView({ advisorId, initialQuery, bonusPeriod, onBonusPeriodChange }: GerenciaFinanzasProps & { initialQuery: string; bonusPeriod: string; onBonusPeriodChange: (period: string) => void }) {
   const { user, loading: authLoading } = useAuth();
   const today = useBogotaToday();
@@ -292,21 +385,24 @@ function FinancialView({ advisorId, initialQuery, bonusPeriod, onBonusPeriodChan
   });
   const [page, setPage] = useState(1);
   const [refresh, setRefresh] = useState(0);
+  const [onlyMissingCost, setOnlyMissingCost] = useState(() => new URLSearchParams(initialQuery).get('pendientes_costo') === '1');
   let validationError = rangeError(rangePending ? draftRange : range, today);
   let requestedFilters: FinancialFilters = { page };
   try {
-    requestedFilters = { page, advisorId: filters.asesora === 'none' ? null : positiveId(filters.asesora, 'Asesora'), clientId: positiveId(filters.cliente, 'Cliente'), productId: positiveId(filters.producto, 'Producto'), invoiceId: positiveId(filters.factura, 'Factura') };
+    requestedFilters = { page, onlyMissingCost, advisorId: filters.asesora === 'none' ? null : positiveId(filters.asesora, 'Asesora'), clientId: positiveId(filters.cliente, 'Cliente'), productId: positiveId(filters.producto, 'Producto'), invoiceId: positiveId(filters.factura, 'Factura') };
   } catch (error) {
     validationError ??= error instanceof Error ? error.message : 'Revisa los filtros.';
   }
   const query = new URLSearchParams({ desde: range.from, hasta: range.to, pagina: String(page) });
   for (const [name, value] of Object.entries(filters)) if (value) query.set(name, value);
+  if (onlyMissingCost) query.set('pendientes_costo', '1');
   const expectedFilters = JSON.stringify(requestedFilters);
   const validate = useCallback((payload: FinancialReport) => {
     const expected = JSON.parse(expectedFilters) as FinancialFilters;
     if (payload.range?.from !== range.from || payload.range?.to !== range.to || payload.currency !== 'COP'
       || !payload.filters || payload.filters.advisorId !== expected.advisorId || payload.filters.clientId !== expected.clientId
       || payload.filters.productId !== expected.productId || payload.filters.invoiceId !== expected.invoiceId
+      || Boolean(payload.filters.onlyMissingCost) !== Boolean(expected.onlyMissingCost)
       || !payload.pagination || payload.pagination.page !== Math.min(expected.page, payload.pagination.totalPages)
       || payload.filters.page !== payload.pagination.page
       || (payload.selectedAdvisor && payload.selectedAdvisor.id !== expected.advisorId)) {
@@ -321,6 +417,7 @@ function FinancialView({ advisorId, initialQuery, bonusPeriod, onBonusPeriodChan
   const advisorHref = (id: number | null) => {
     const params = new URLSearchParams(dateQuery);
     for (const name of ['cliente', 'producto', 'factura'] as const) if (filters[name]) params.set(name, filters[name]);
+    if (onlyMissingCost) params.set('pendientes_costo', '1');
     return `/dashboard/comisiones/asesoras/${id ?? 'none'}?${params}`;
   };
   const editRange = (nextRange: FinancialRange) => {
@@ -331,6 +428,7 @@ function FinancialView({ advisorId, initialQuery, bonusPeriod, onBonusPeriodChan
     if (rangeError(nextRange, getBogotaCalendarDate())) return;
     const params = new URLSearchParams({ desde: nextRange.from, hasta: nextRange.to });
     for (const [name, value] of Object.entries(filters)) if (value) params.set(name, value);
+    if (onlyMissingCost) params.set('pendientes_costo', '1');
     setDraftRange(nextRange);
     if (params.toString() !== initialQuery) {
       setRangePending(true);
@@ -343,7 +441,7 @@ function FinancialView({ advisorId, initialQuery, bonusPeriod, onBonusPeriodChan
     setRefresh((value) => value + 1);
   };
   const updateFilter = (name: keyof DrillFilters, value: string) => { setFilters((previous) => ({ ...previous, [name]: value })); setPage(1); };
-  const clearDetails = () => { setFilters((previous) => ({ ...previous, cliente: '', producto: '', factura: '' })); setPage(1); };
+  const clearDetails = () => { setFilters((previous) => ({ ...previous, cliente: '', producto: '', factura: '' })); setOnlyMissingCost(false); setPage(1); };
   const previousMonth = () => {
     const first = new Date(`${today.slice(0, 7)}-01T00:00:00Z`);
     const last = new Date(first.getTime() - 86_400_000).toISOString().slice(0, 10);
@@ -392,6 +490,7 @@ function FinancialView({ advisorId, initialQuery, bonusPeriod, onBonusPeriodChan
 
       <aside className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
         <p><strong>Alcance financiero:</strong> ventas netas en COP sin impuestos, con notas crédito descontadas según su signo contable. El costo procede de la factura registrada en Odoo, no del costo actual del catálogo. Los costos faltantes o no verificables dejan la utilidad pendiente.</p>
+        <p className="mt-2"><strong>Utilidad bruta de ventas:</strong> venta neta sin IVA menos costo de los productos facturados. Aún no descuenta nómina, arriendo, comisiones ni otros gastos de operación. Cuando faltan costos se muestra únicamente la parte verificada, no una utilidad total estimada.</p>
         <p className="mt-2"><strong>Comisión habitual calculada, no liquidada:</strong> 1% sobre el neto, excepto tóner genéricos de la categoría Odoo 26 (2%), aplicada por línea. No incluye el bono plataforma del 0,5% y aquí no se cierran ni pagan comisiones.</p>
       </aside>
       <div id="financial-error">{(validationError || error) && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{validationError || error}</p>}</div>
@@ -408,29 +507,39 @@ function FinancialView({ advisorId, initialQuery, bonusPeriod, onBonusPeriodChan
         )}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
           <KpiCard title="Venta neta sin impuestos" value={currencyFormatter.format(report.totals.netSales)} subtitle={`Facturación: ${currencyFormatter.format(report.totals.invoicedSales)} · Notas crédito (con signo): ${currencyFormatter.format(report.totals.creditNotes)}`} icon={<DollarSign aria-hidden="true" className="h-5 w-5" />} />
-          <KpiCard title="Costo registrado en factura" value={money(report.totals.cost)} subtitle={`Cobertura: ${percent(report.totals.costCoveragePercent)} · ${report.totals.missingCostLines} líneas pendientes`} icon={<FileText aria-hidden="true" className="h-5 w-5" />} />
-          <KpiCard title="Utilidad del rango" value={money(report.totals.profit)} subtitle={`Margen: ${percent(report.totals.marginPercent)}${report.totals.profit === null ? ' · No hay un total validado' : ''}`} icon={<TrendingUp aria-hidden="true" className="h-5 w-5" />} />
+          <KpiCard title={report.totals.cost === null ? 'Costo verificado · parcial' : 'Costo de ventas verificado'} value={money(report.totals.cost ?? report.totals.knownCost)} subtitle={`Cobertura sobre ventas en valor absoluto: ${percent(report.totals.costCoveragePercent)} · ${report.totals.missingCostLines} líneas pendientes`} icon={<FileText aria-hidden="true" className="h-5 w-5" />} />
+          <KpiCard title={report.totals.profit === null ? 'Utilidad bruta verificada · parcial' : 'Utilidad bruta de ventas'} value={money(report.totals.profit ?? report.totals.verifiedProfit)} subtitle={`Venta con costo verificado: ${money(report.totals.verifiedSales)} · Margen sobre esa venta: ${percent(report.totals.verifiedMarginPercent)}`} icon={<TrendingUp aria-hidden="true" className="h-5 w-5" />} />
           <KpiCard title="Comisión habitual calculada" value={money(report.totals.commission)} subtitle={`No liquidada · 1% / 2% por línea · ${report.totals.missingCommissionLines} líneas pendientes`} icon={<BadgeDollarSign aria-hidden="true" className="h-5 w-5" />} />
           <KpiCard title="Clientes facturados" value={String(report.totals.clientCount)} subtitle={`${report.totals.invoiceCount} facturas · ${report.totals.creditNoteCount} notas crédito · ${report.totals.lineCount} líneas`} icon={<Building2 aria-hidden="true" className="h-5 w-5" />} />
           <KpiCard title="Factura promedio sin impuestos" value={report.totals.averageInvoice === null ? 'No disponible' : currencyFormatter.format(report.totals.averageInvoice)} subtitle="Promedio de facturas, sin mezclar notas crédito" icon={<FileText aria-hidden="true" className="h-5 w-5" />} />
         </div>
-        {(report.totals.cost === null || report.totals.profit === null || report.totals.commission === null) && <section className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900" aria-label="Subtotales verificados, información incompleta"><h2 className="font-semibold">Información incompleta: estos subtotales NO son el total del rango</h2><p className="mt-2">Costo verificado: {currencyFormatter.format(report.totals.knownCost)} · Utilidad verificada: {currencyFormatter.format(report.totals.verifiedProfit)} · Comisión verificada: {currencyFormatter.format(report.totals.knownCommission)}.</p><p className="mt-1">Cobertura del costo: {percent(report.totals.costCoveragePercent)} de las ventas en valor absoluto. Pendientes: {report.totals.missingCostLines} líneas de costo y {report.totals.missingCommissionLines} de comisión. Un valor pendiente no equivale a cero.</p></section>}
+        {(report.totals.cost === null || report.totals.profit === null || report.totals.commission === null) && (
+          <section className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900" aria-label="Importes parciales y costos por revisar">
+            <h2 className="font-semibold">Los importes parciales incluyen solo las líneas con costo verificado</h2>
+            <p className="mt-2">Venta con costo verificado: {money(report.totals.verifiedSales)} · Venta cuyo costo requiere revisión: {money(report.totals.unverifiedSales)}.</p>
+            <p className="mt-1">{report.totals.missingCostLines} líneas en {report.totals.missingCostInvoices} documentos requieren revisar su costo en Odoo. Pendientes de comisión: {report.totals.missingCommissionLines}. Un costo cero registrado no se toma como rentabilidad confirmada.</p>
+            {report.totals.missingCostLines > 0 && <button type="button" className={`${buttonClass} mt-3`} onClick={() => { setOnlyMissingCost(true); setPage(1); }}>Mostrar líneas con costo pendiente en el detalle</button>}
+          </section>
+        )}
+      </>}
+      {!isAdvisor && <OpenBalances key={today} userId={user.id} refresh={refresh} />}
+      {report && !validationError && <>
         {report.totals.lineCount === 0 && <p className="rounded-xl border border-border bg-white p-6 text-sm text-muted" role="status">Odoo no devolvió líneas facturadas para este rango y filtros. Amplía las fechas o limpia los filtros; no se ha estimado facturación.</p>}
         <Comparison report={report} />
         <GroupTable title="Resumen por asesora" groups={report.advisors} kind="advisor" navigation={(group) => <Link href={advisorHref(group.id)} className={linkClass}>{group.name}</Link>} />
         <GroupTable title="Rentabilidad por cliente" groups={report.clients} kind="client" navigation={(group) => filterNavigation('cliente', group)} />
         <GroupTable title="Productos y unidades" groups={report.products} kind="product" navigation={(group) => filterNavigation('producto', group)} />
         <TrendTable report={report} />
-        <section className="overflow-hidden rounded-xl border border-border bg-white" aria-label="Líneas de facturas y notas crédito">
-          <div className="border-b border-border px-5 py-4"><h2 className="font-semibold text-foreground">Detalle de facturas y notas crédito</h2><p className="mt-1 text-xs text-muted">{report.pagination.pageSize} líneas por página desde Odoo. Los KPI y resúmenes incluyen todas las líneas del rango, no solo esta página. Selecciona un documento para consultar sus líneas dentro del rango y filtros.</p></div>
+        <section id="detalle-financiero" className="overflow-hidden rounded-xl border border-border bg-white" aria-label="Líneas de facturas y notas crédito">
+          <div className="border-b border-border px-5 py-4"><h2 className="font-semibold text-foreground">Detalle de facturas y notas crédito</h2><p className="mt-1 text-xs text-muted">{report.pagination.pageSize} líneas por página desde Odoo. Los KPI y resúmenes incluyen todas las líneas del rango, no solo esta página. Coste unitario y costo total expresados en COP; corresponden a la factura, sin sustituirlos por costos actuales del producto.</p><label className="mt-3 inline-flex items-center gap-2 text-sm"><input type="checkbox" checked={onlyMissingCost} onChange={event => { setOnlyMissingCost(event.target.checked); setPage(1); }} />Solo líneas con costo pendiente (no altera los KPI)</label></div>
           <div className="overflow-x-auto" role="region" aria-label="Tabla de líneas facturadas" tabIndex={0}>
             <table className="w-full text-sm"><caption className="sr-only">Detalle paginado de líneas Odoo con costo histórico, utilidad y comisión habitual calculada</caption>
-              <thead><tr className="border-b border-border bg-background-light/50"><th scope="col" className="px-4 py-3 text-left font-medium text-muted">Documento / fecha</th><th scope="col" className="px-4 py-3 text-left font-medium text-muted">Cliente / asesora</th><th scope="col" className="px-4 py-3 text-left font-medium text-muted">Producto / categoría</th><th scope="col" className={headingCellClass}>Cantidad / unidad</th><th scope="col" className={headingCellClass}>Venta neta</th><th scope="col" className={headingCellClass}>Costo de factura</th><th scope="col" className={headingCellClass}>Utilidad</th><th scope="col" className={headingCellClass}>Margen</th><th scope="col" className={headingCellClass}>Tasa habitual</th><th scope="col" className={headingCellClass}>Comisión habitual</th><th scope="col" className="px-4 py-3 text-left font-medium text-muted">Canal / incidencias</th></tr></thead>
+              <thead><tr className="border-b border-border bg-background-light/50"><th scope="col" className="px-4 py-3 text-left font-medium text-muted">Documento / fecha</th><th scope="col" className="px-4 py-3 text-left font-medium text-muted">Cliente / asesora</th><th scope="col" className="px-4 py-3 text-left font-medium text-muted">Producto / categoría</th><th scope="col" className={headingCellClass}>Cantidad / unidad</th><th scope="col" className={headingCellClass}>Venta neta</th><th scope="col" className={headingCellClass}>Coste unitario Odoo (COP)</th><th scope="col" className={headingCellClass}>Costo total</th><th scope="col" className={headingCellClass}>Utilidad bruta</th><th scope="col" className={headingCellClass}>Margen bruto</th><th scope="col" className={headingCellClass}>Tasa habitual</th><th scope="col" className={headingCellClass}>Comisión habitual</th><th scope="col" className="px-4 py-3 text-left font-medium text-muted">Canal / incidencias</th></tr></thead>
               <tbody>{report.lines.map((line) => <tr key={line.id} className="border-b border-border/50">
                 <th scope="row" className="min-w-44 px-4 py-3 text-left align-top font-medium"><button type="button" className={`${linkClass} text-left`} onClick={() => updateFilter('factura', String(line.invoiceId))}>{line.invoiceName}</button><span className="mt-1 block text-xs font-normal text-muted">{dateLabel(line.invoiceDate)} · {line.documentType === 'out_refund' ? 'Nota crédito' : 'Factura'}</span><span className="mt-1 block text-xs font-normal text-muted">{line.companyName} · ID {line.invoiceId} · Línea {line.id}</span></th>
                 <td className="min-w-44 px-4 py-3 align-top">{line.clientId === null ? line.clientName : <button type="button" className={`${linkClass} text-left`} onClick={() => updateFilter('cliente', String(line.clientId))}>{line.clientName}</button>}<Link className={`${linkClass} mt-2 block text-xs`} href={advisorHref(line.advisorId)}>{line.advisorName}</Link></td>
                 <td className="min-w-52 px-4 py-3 align-top">{line.productId === null ? line.productName : <button type="button" className={`${linkClass} text-left`} onClick={() => updateFilter('producto', String(line.productId))}>{line.productName}</button>}<span className="mt-1 block text-xs text-muted">SKU: {line.sku ?? 'No disponible'} · {line.categoryName ?? 'Categoría pendiente'}{line.categoryId !== null ? ` (ID ${line.categoryId})` : ''}</span></td>
-                <td className={cellClass}>{quantityFormatter.format(line.quantity)} {line.unitName}</td><AmountCell value={line.netSales} /><AmountCell value={line.cost} /><AmountCell value={line.profit} /><td className={cellClass}>{percent(line.marginPercent)}</td><td className={cellClass}>{line.commissionRate === null ? 'Pendiente' : percent(line.commissionRate)}</td><AmountCell value={line.commission} />
+                <td className={cellClass}>{quantityFormatter.format(line.quantity)} {line.unitName}</td><AmountCell value={line.netSales} /><AmountCell value={line.unitCost} /><AmountCell value={line.cost} /><AmountCell value={line.profit} /><td className={cellClass}>{percent(line.marginPercent)}</td><td className={cellClass}>{line.commissionRate === null ? 'Pendiente' : percent(line.commissionRate)}</td><AmountCell value={line.commission} />
                 <td className="min-w-52 px-4 py-3 align-top text-xs"><span>{{ portal: 'Portal', mixed: 'Mixto', other: 'Otros / sin vínculo al portal' }[line.channel]}</span>{line.issues.length > 0 && <ul className="mt-2 list-disc space-y-1 pl-4 text-amber-800">{line.issues.map((issue, index) => <li key={`${index}-${issue}`}>{issue}</li>)}</ul>}</td>
               </tr>)}</tbody>
             </table>

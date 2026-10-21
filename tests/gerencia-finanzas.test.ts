@@ -10,6 +10,7 @@ import {
   FINANCIAL_PAGE_SIZE,
   GENERIC_TONER_CATEGORY_ID,
   previousFinancialRange,
+  financialComparison,
   regularCommissionRate,
   summarizeFinancialLines,
   validateFinancialRange,
@@ -23,6 +24,7 @@ import {
 } from '../src/lib/comisiones/bonoPlataforma';
 
 import { canAccessDashboardPath } from '../src/lib/auth/routeAccess';
+import { overdueDays, summarizeOpenBalances } from '../src/lib/gerencia/cartera';
 
 const DAY_MS = 86_400_000;
 
@@ -71,13 +73,11 @@ test('preset mes actual: empieza el día uno y nunca añade días futuros', () =
   assert.equal(range.from, `${range.to.slice(0, 7)}-01`);
 });
 
-test('rango anterior: igual número de días inclusivos sin solapamiento entre meses o años', () => {
+test('rangos personalizados: igual número de días inclusivos sin solapamiento', () => {
   const cases: [FinancialRange, FinancialRange][] = [
     [{ from: '2026-09-28', to: '2026-09-28' }, { from: '2026-09-27', to: '2026-09-27' }],
     [{ from: '2026-09-22', to: '2026-09-28' }, { from: '2026-09-15', to: '2026-09-21' }],
-    [{ from: '2026-09-01', to: '2026-09-28' }, { from: '2026-08-04', to: '2026-08-31' }],
-    [{ from: '2027-01-01', to: '2027-01-07' }, { from: '2026-12-25', to: '2026-12-31' }],
-    [{ from: '2028-03-01', to: '2028-03-31' }, { from: '2028-01-30', to: '2028-02-29' }],
+    [{ from: '2027-01-02', to: '2027-01-07' }, { from: '2026-12-27', to: '2027-01-01' }],
   ];
   for (const [current, expected] of cases) {
     const previous = previousFinancialRange(current);
@@ -88,10 +88,34 @@ test('rango anterior: igual número de días inclusivos sin solapamiento entre m
   }
 });
 
+test('los meses completos comparan desde el día uno, incluyendo agosto y años bisiestos', () => {
+  for (const [range, previous] of [
+    [{ from: '2026-09-01', to: '2026-09-30' }, { from: '2026-08-01', to: '2026-08-31' }],
+    [{ from: '2026-08-01', to: '2026-08-31' }, { from: '2026-07-01', to: '2026-07-31' }],
+    [{ from: '2028-03-01', to: '2028-03-31' }, { from: '2028-02-01', to: '2028-02-29' }],
+    [{ from: '2026-03-01', to: '2026-03-31' }, { from: '2026-02-01', to: '2026-02-28' }],
+    [{ from: '2027-01-01', to: '2027-01-31' }, { from: '2026-12-01', to: '2026-12-31' }],
+    [{ from: '2026-08-01', to: '2026-09-30' }, { from: '2026-06-01', to: '2026-07-31' }],
+  ]) {
+    assert.deepEqual(financialComparison(range), { range: previous, mode: 'calendar_months' });
+  }
+});
+
+test('un mes parcial compara el mismo avance del mes anterior y respeta su último día', () => {
+  for (const [range, previous] of [
+    [{ from: '2026-10-01', to: '2026-10-21' }, { from: '2026-09-01', to: '2026-09-21' }],
+    [{ from: '2026-09-01', to: '2026-09-28' }, { from: '2026-08-01', to: '2026-08-28' }],
+    [{ from: '2027-01-01', to: '2027-01-07' }, { from: '2026-12-01', to: '2026-12-07' }],
+    [{ from: '2026-03-01', to: '2026-03-30' }, { from: '2026-02-01', to: '2026-02-28' }],
+  ]) {
+    assert.deepEqual(financialComparison(range), { range: previous, mode: 'month_progress' });
+  }
+});
+
 test('rango anterior: todos los tamaños autorizados mantienen días UTC exactos', () => {
-  const start = timestamp('2028-03-01');
+  const start = timestamp('2028-03-02');
   for (let days = 1; days <= FINANCIAL_MAX_DAYS; days++) {
-    const range = { from: '2028-03-01', to: new Date(start + (days - 1) * DAY_MS).toISOString().slice(0, 10) };
+    const range = { from: '2028-03-02', to: new Date(start + (days - 1) * DAY_MS).toISOString().slice(0, 10) };
     const previous = previousFinancialRange(range);
     assert.equal(inclusiveDays(previous), days);
     assert.equal(timestamp(previous.to) + DAY_MS, start);
@@ -102,7 +126,7 @@ test('límite inclusivo: acepta 366 días y rechaza 367, incluso en año bisiest
   assert.equal(FINANCIAL_MAX_DAYS, 366);
   const range = validateFinancialRange('2028-01-01', '2028-12-31', '2029-01-01');
   assert.equal(inclusiveDays(range), 366);
-  assert.equal(inclusiveDays(previousFinancialRange(range)), 366);
+  assert.deepEqual(previousFinancialRange(range), { from: '2027-01-01', to: '2027-12-31' });
   assert.deepEqual(validateFinancialRange('2027-01-01', '2028-01-01', '2028-01-02'), {
     from: '2027-01-01', to: '2028-01-01',
   });
@@ -201,10 +225,25 @@ test('sin filas: no inventa documentos, clientes ni rentabilidad porcentual', ()
     netSales: 0, invoicedSales: 0, creditNotes: 0,
     invoiceCount: 0, creditNoteCount: 0, clientCount: 0, lineCount: 0,
     cost: 0, profit: 0, knownCost: 0, verifiedProfit: 0,
+    verifiedSales: 0, unverifiedSales: 0, verifiedMarginPercent: null, missingCostInvoices: 0,
     marginPercent: null, costCoveragePercent: null, missingCostLines: 0,
     commission: 0, knownCommission: 0, missingCommissionLines: 0, averageInvoice: null,
   });
   assert.deepEqual(filterFinancialLines([], { advisorId: null, page: 1 }), []);
+});
+
+test('cartera: el vencimiento empieza al día siguiente y una fecha ausente no se inventa', () => {
+  assert.equal(overdueDays('2026-12-04', '2026-10-21'), 0);
+  assert.equal(overdueDays('2026-12-04', '2026-12-04'), 0);
+  assert.equal(overdueDays('2026-12-04', '2026-12-05'), 1);
+  assert.equal(overdueDays(null, '2026-10-21'), null);
+  assert.equal(overdueDays('2028-02-29', '2028-03-01'), 1);
+  assert.throws(() => overdueDays('2026-02-29', '2026-10-21'));
+  const totals = summarizeOpenBalances([]);
+  assert.equal(totals.balance, 0);
+  assert.equal(totals.documentCount, 0);
+  assert.equal(totals.partnerCount, 0);
+  assert.ok(totals.aging.every(bucket => bucket.amount === 0));
 });
 
 test('reporte vacío: conserva rangos, pagina una sola vez y deduplica advertencias', () => {

@@ -41,7 +41,7 @@ function idOf(row: Row): number {
   return id;
 }
 
-async function searchAll(session: OdooSession, model: string, domain: unknown[], fields: string[], limit: number, context?: Record<string, unknown>): Promise<Row[]> {
+export async function searchAll(session: OdooSession, model: string, domain: unknown[], fields: string[], limit: number, context?: Record<string, unknown>): Promise<Row[]> {
   const rows: Row[] = [];
   let lastId = 0;
   for (;;) {
@@ -52,12 +52,12 @@ async function searchAll(session: OdooSession, model: string, domain: unknown[],
       lastId = id;
       rows.push(row);
     }
-    if (rows.length > limit) throw new FinancialDataError('El rango devuelve demasiados registros. Reduce las fechas; no se muestran totales parciales.', 422);
+    if (rows.length > limit) throw new FinancialDataError('La consulta excede el límite de registros. Se necesita acotar su alcance; no se muestran totales incompletos.', 422);
     if (page.length < 1000) return rows;
   }
 }
 
-async function readIds(session: OdooSession, model: string, values: number[], fields: string[]): Promise<Row[]> {
+export async function readIds(session: OdooSession, model: string, values: number[], fields: string[]): Promise<Row[]> {
   const unique = [...new Set(values)];
   const result: Row[] = [];
   for (let i = 0; i < unique.length; i += 500) {
@@ -148,7 +148,10 @@ export function normalizeFinancialLine(invoice: Row, line: Row, product: Row | u
     sku: typeof product?.default_code === 'string' && product.default_code ? product.default_code : null,
     categoryId, categoryName: product ? relationName(product.categ_id) : null,
     unitId: relationId(line.product_uom_id), unitName: relationName(line.product_uom_id) ?? 'Sin unidad',
-    quantity: sign * quantity, netSales, cost, profit, marginPercent: financialMargin(profit, netSales),
+    quantity: sign * quantity, netSales,
+    unitCost: purchasePrice !== null && conversion !== null && Number.isFinite(conversion) && conversion > 0
+      ? roundCurrency(purchasePrice * conversion) : null,
+    cost, profit, marginPercent: financialMargin(profit, netSales),
     commissionRate, commission: advisorId === null ? null : calculateRegularCommission(netSales, commissionRate),
     channel: portalCount ? portalCount === saleLineIds.length ? 'portal' : 'mixed' : 'other', issues,
   };
@@ -165,7 +168,8 @@ async function fetchDataset(admin: SupabaseClient, session: OdooSession, range: 
   const [invoices, categories, portal] = await Promise.all([
     searchAll(session, 'account.move', [
       ['state', '=', 'posted'], ['move_type', 'in', ['out_invoice', 'out_refund']],
-      ['invoice_date', '>=', previous.from], ['invoice_date', '<=', range.to],
+      '|', '&', ['invoice_date', '>=', previous.from], ['invoice_date', '<=', previous.to],
+      '&', ['invoice_date', '>=', range.from], ['invoice_date', '<=', range.to],
     ], ['id', 'name', 'move_type', 'invoice_date', 'invoice_user_id', 'commercial_partner_id', 'partner_id', 'company_id', 'currency_id', 'amount_untaxed', 'amount_untaxed_signed', 'margin_signed', 'cost_total'], MAX_INVOICES),
     searchAll(session, 'product.category', [], ['id', 'name', 'parent_id'], 10000),
     portalContext(admin),
@@ -191,7 +195,9 @@ async function fetchDataset(admin: SupabaseClient, session: OdooSession, range: 
   }
   for (const invoice of invoices) {
     if (!['out_invoice', 'out_refund'].includes(String(invoice.move_type)) || typeof invoice.invoice_date !== 'string'
-      || !/^\d{4}-\d{2}-\d{2}$/.test(invoice.invoice_date) || invoice.invoice_date < previous.from || invoice.invoice_date > range.to) {
+      || !/^\d{4}-\d{2}-\d{2}$/.test(invoice.invoice_date)
+      || !((invoice.invoice_date >= previous.from && invoice.invoice_date <= previous.to)
+        || (invoice.invoice_date >= range.from && invoice.invoice_date <= range.to))) {
       throw new FinancialDataError('Odoo devolvió un documento fuera del tipo o rango solicitado.');
     }
     const id = relationId(invoice.invoice_user_id);
