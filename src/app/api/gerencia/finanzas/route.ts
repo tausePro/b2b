@@ -30,7 +30,11 @@ export async function GET(request: NextRequest) {
       advisorId: params.get('asesora') === 'none' ? null : positiveId(params.get('asesora'), 'asesora'),
       clientId: positiveId(params.get('cliente'), 'cliente'), productId: positiveId(params.get('producto'), 'producto'),
       invoiceId: positiveId(params.get('factura'), 'factura'), page: positiveId(params.get('pagina'), 'página') ?? 1,
+      onlyMissingCost: params.get('pendientes_costo') === '1',
     };
+    if (params.has('pendientes_costo') && params.get('pendientes_costo') !== '1') {
+      throw new FinancialDataError('El filtro de costos pendientes no es válido.', 400);
+    }
     const report = await getFinancialReport(auth.admin, range, filters);
     if (Buffer.byteLength(JSON.stringify(report)) > 3 * 1024 * 1024) {
       throw new FinancialDataError('El reporte es demasiado grande. Reduce el rango o selecciona una asesora o cliente.', 422);
