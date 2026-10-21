@@ -9,6 +9,9 @@ import BrandMark from '@/components/ui/BrandMark';
 import { formatCOP, formatDate } from '@/lib/utils';
 import KpiCard from '@/components/ui/KpiCard';
 import StatusBadge from '@/components/ui/StatusBadge';
+import { VariantsModal } from '@/components/admin/VariantsModal';
+import { userHasAnyRole } from '@/lib/auth/roles';
+import { matchesCatalogProductSearch } from '@/lib/pricing/catalog-visibility';
 import {
   ArrowLeft,
   Building2,
@@ -29,6 +32,7 @@ import {
   Plus,
   Trash2,
   AlertTriangle,
+  Layers,
 } from 'lucide-react';
 import { formatMarkupPercent } from '@/lib/pricing/cost-staleness';
 
@@ -48,7 +52,6 @@ interface EmpresaConfigDetalle {
   slug: string | null;
   logo_url: string | null;
   color_primario: string | null;
-  odoo_partner_id: number | null;
   configuracion_extra: Record<string, unknown> | null;
 }
 
@@ -88,6 +91,8 @@ interface ProductoOdooCliente {
   categ_id: [number, string] | false;
   image_128: string | false;
   default_code: string | false;
+  product_variant_count?: number;
+  pricelist_variant_codes?: string[];
   // Campos enriquecidos por /api/odoo/productos cuando el actor puede ver
   // costo (super_admin, direccion, asesor). Llegan como undefined para los
   // demás roles, por eso son opcionales.
@@ -135,6 +140,8 @@ export default function ClienteDetallePage() {
   const [productosOdoo, setProductosOdoo] = useState<ProductoOdooCliente[]>([]);
   const [loadingProductos, setLoadingProductos] = useState(false);
   const [busquedaProducto, setBusquedaProducto] = useState('');
+  const [variantsModal, setVariantsModal] = useState<{ empresaId: string; product: ProductoOdooCliente } | null>(null);
+  const canViewVariants = userHasAnyRole(user, ['super_admin', 'direccion', 'asesor']);
 
   // Pricing: gerencia y asesores pueden gestionar márgenes y overrides de
   // las empresas que les corresponden. El cambio de modo de pricing
@@ -156,6 +163,7 @@ export default function ClienteDetallePage() {
   const [pricingToast, setPricingToast] = useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     const fetchClienteDetalle = async () => {
       if (!user) return;
 
@@ -174,6 +182,7 @@ export default function ClienteDetallePage() {
           .eq('activo', true)
           .maybeSingle();
 
+        if (cancelled) return;
         if (asignacionError || !asignacion) {
           setForbidden(true);
           setCliente(null);
@@ -204,7 +213,7 @@ export default function ClienteDetallePage() {
           .single(),
         supabase
           .from('empresa_configs')
-          .select('slug, logo_url, color_primario, odoo_partner_id, configuracion_extra')
+          .select('slug, logo_url, color_primario, configuracion_extra')
           .eq('empresa_id', clienteId)
           .maybeSingle(),
         supabase
@@ -249,6 +258,7 @@ export default function ClienteDetallePage() {
           .eq('activo', true),
       ]);
 
+      if (cancelled) return;
       if (clienteRes.error || !clienteRes.data) {
         setCliente(null);
         setLoading(false);
@@ -294,7 +304,8 @@ export default function ClienteDetallePage() {
       setLoading(false);
     };
 
-    fetchClienteDetalle();
+    void fetchClienteDetalle();
+    return () => { cancelled = true; };
   }, [clienteId, user]);
 
   // Cargar datos de pricing
@@ -336,41 +347,42 @@ export default function ClienteDetallePage() {
   }, [canManagePricing, clienteId]);
 
   useEffect(() => {
-    const partnerDesdeConfig = config?.odoo_partner_id;
-    const partnerId = (partnerDesdeConfig && partnerDesdeConfig > 0) ? partnerDesdeConfig : cliente?.odoo_partner_id;
-    if (!partnerId || !cliente) return;
+    const partnerId = cliente?.odoo_partner_id;
+    if (!partnerId || partnerId <= 0 || !cliente || cliente.id !== clienteId) return;
+    const controller = new AbortController();
+    const restringirCatalogo = config?.configuracion_extra?.restringir_catalogo_portal === true;
 
     const fetchProductos = async () => {
       setLoadingProductos(true);
+      setProductosOdoo([]);
       try {
-        const res = await fetch(`/api/odoo/productos?partner_id=${partnerId}&limit=500&include_tag_names=true`);
+        const res = await fetch(`/api/odoo/productos?partner_id=${partnerId}&limit=500&include_tag_names=true`, {
+          cache: 'no-store', signal: controller.signal,
+        });
         const data = await res.json();
+        if (controller.signal.aborted) return;
         if (!res.ok) throw new Error(data.error);
 
         const todos = (data.productos || []) as ProductoOdooCliente[];
 
-        if (productosAutorizadosIds.size > 0) {
+        if (restringirCatalogo) {
           setProductosOdoo(todos.filter(p => productosAutorizadosIds.has(p.id)));
         } else {
           setProductosOdoo(todos);
         }
       } catch {
-        setProductosOdoo([]);
+        if (!controller.signal.aborted) setProductosOdoo([]);
       } finally {
-        setLoadingProductos(false);
+        if (!controller.signal.aborted) setLoadingProductos(false);
       }
     };
 
     void fetchProductos();
-  }, [cliente, config?.odoo_partner_id, productosAutorizadosIds]);
+    return () => controller.abort();
+  }, [cliente, clienteId, config?.configuracion_extra?.restringir_catalogo_portal, productosAutorizadosIds]);
 
   const productosFiltrados = useMemo(() => {
-    if (!busquedaProducto.trim()) return productosOdoo;
-    const term = busquedaProducto.toLowerCase();
-    return productosOdoo.filter(p =>
-      p.name.toLowerCase().includes(term) ||
-      (typeof p.default_code === 'string' && p.default_code.toLowerCase().includes(term))
-    );
+    return productosOdoo.filter(p => matchesCatalogProductSearch(p, busquedaProducto));
   }, [productosOdoo, busquedaProducto]);
 
   const usuariosActivos = useMemo(() => usuarios.filter((usuario) => usuario.activo).length, [usuarios]);
@@ -658,6 +670,19 @@ export default function ClienteDetallePage() {
                         )}
                         <div className="min-w-0 flex-1">
                           <p className="text-sm font-medium text-foreground leading-tight truncate">{producto.name}</p>
+                          {canViewVariants && ((producto.product_variant_count ?? 1) > 1 || producto.costo_requiere_variantes) && (
+                            <button
+                              type="button"
+                              onClick={() => setVariantsModal({ empresaId: cliente.id, product: producto })}
+                              className="mt-1 inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/5 px-2 py-0.5 text-[10px] font-semibold text-primary hover:bg-primary/10 transition-colors"
+                              aria-haspopup="dialog"
+                              aria-label={`Ver variantes de ${producto.name}`}
+                              title="Consultar referencias, atributos, precio y costo por variante"
+                            >
+                              <Layers className="h-3 w-3" />
+                              Ver variantes
+                            </button>
+                          )}
                           <p className="text-xs text-muted mt-1">
                             Ref: {typeof producto.default_code === 'string' ? producto.default_code : '—'}
                           </p>
@@ -1004,6 +1029,17 @@ export default function ClienteDetallePage() {
           </div>
         </div>
       </div>
+      {canViewVariants && variantsModal?.empresaId === clienteId && (
+        <VariantsModal
+          key={`${variantsModal.empresaId}:${variantsModal.product.id}`}
+          templateId={variantsModal.product.id}
+          productName={variantsModal.product.name}
+          fallbackPrice={variantsModal.product.list_price}
+          empresaId={variantsModal.empresaId}
+          open
+          onClose={() => setVariantsModal(null)}
+        />
+      )}
     </div>
   );
 }
