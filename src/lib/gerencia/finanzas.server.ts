@@ -13,7 +13,9 @@ import {
 
 type Row = Record<string, unknown>;
 export interface FinancialDataset { lines: FinancialLine[]; generatedAt: string; warnings: string[]; advisors: FinancialAdvisor[] }
-const MAX_INVOICES = 10000;
+export type FinancialDatasetScope = Pick<FinancialFilters, 'advisorId' | 'clientId' | 'productId' | 'invoiceId'>;
+const MAX_INVOICES_PER_PERIOD = 10000;
+const INVOICE_BATCH_SIZE = 500;
 const MAX_LINES = 100000;
 const datasetCache = new Map<string, { expires: number; promise: Promise<FinancialDataset> }>();
 
@@ -41,7 +43,7 @@ function idOf(row: Row): number {
   return id;
 }
 
-export async function searchAll(session: OdooSession, model: string, domain: unknown[], fields: string[], limit: number, context?: Record<string, unknown>): Promise<Row[]> {
+export async function searchAll(session: OdooSession, model: string, domain: unknown[], fields: string[], limit: number, context?: Record<string, unknown>, limitMessage?: string): Promise<Row[]> {
   const rows: Row[] = [];
   let lastId = 0;
   for (;;) {
@@ -52,7 +54,7 @@ export async function searchAll(session: OdooSession, model: string, domain: unk
       lastId = id;
       rows.push(row);
     }
-    if (rows.length > limit) throw new FinancialDataError('La consulta excede el límite de registros. Se necesita acotar su alcance; no se muestran totales incompletos.', 422);
+    if (rows.length > limit) throw new FinancialDataError(limitMessage ?? 'La consulta excede el límite de registros. Se necesita acotar su alcance; no se muestran totales incompletos.', 422);
     if (page.length < 1000) return rows;
   }
 }
@@ -157,7 +159,29 @@ export function normalizeFinancialLine(invoice: Row, line: Row, product: Row | u
   };
 }
 
-async function fetchDataset(admin: SupabaseClient, session: OdooSession, range: FinancialRange): Promise<FinancialDataset> {
+function invoiceDomain(range: FinancialRange, scope: FinancialDatasetScope): unknown[] {
+  const domain: unknown[] = [
+    ['state', '=', 'posted'], ['move_type', 'in', ['out_invoice', 'out_refund']],
+    ['invoice_date', '>=', range.from], ['invoice_date', '<=', range.to],
+  ];
+  if (scope.advisorId !== undefined) domain.push(['invoice_user_id', '=', scope.advisorId ?? false]);
+  if (scope.clientId !== undefined) {
+    domain.push('|', ['commercial_partner_id', '=', scope.clientId],
+      '&', ['commercial_partner_id', '=', false], ['partner_id', '=', scope.clientId]);
+  }
+  if (scope.productId !== undefined) domain.push(['invoice_line_ids.product_id', '=', scope.productId]);
+  if (scope.invoiceId !== undefined) domain.push(['id', '=', scope.invoiceId]);
+  return domain;
+}
+
+async function fetchInvoicePeriod(session: OdooSession, range: FinancialRange, scope: FinancialDatasetScope, label: string): Promise<Row[]> {
+  return searchAll(session, 'account.move', invoiceDomain(range, scope),
+    ['id', 'name', 'move_type', 'invoice_date', 'invoice_user_id', 'commercial_partner_id', 'partner_id', 'company_id', 'currency_id', 'amount_untaxed', 'amount_untaxed_signed', 'margin_signed', 'cost_total'],
+    MAX_INVOICES_PER_PERIOD, undefined,
+    `El período ${label} (${range.from} a ${range.to}) supera los 10.000 documentos. Filtra una asesora, cliente, producto o factura, o reduce las fechas. No se muestran totales incompletos.`);
+}
+
+async function fetchDataset(admin: SupabaseClient, session: OdooSession, range: FinancialRange, scope: FinancialDatasetScope): Promise<FinancialDataset> {
   const previous = previousFinancialRange(range);
   const warnings = [
     'Comisión habitual calculada, no liquidada: 1% general y 2% en la categoría Odoo 26 y sus descendientes. No registra pagos ni modifica liquidaciones.',
@@ -165,15 +189,16 @@ async function fetchDataset(admin: SupabaseClient, session: OdooSession, range: 
     'Utilidad bruta comercial según costo de factura; no es utilidad neta después de gastos. Costos cero o inconsistentes se señalan para revisión.',
     'Otros/sin vínculo identifica líneas sin vínculo verificable a pedidos del portal; no presume su canal comercial.',
   ];
-  const [invoices, categories, portal] = await Promise.all([
-    searchAll(session, 'account.move', [
-      ['state', '=', 'posted'], ['move_type', 'in', ['out_invoice', 'out_refund']],
-      '|', '&', ['invoice_date', '>=', previous.from], ['invoice_date', '<=', previous.to],
-      '&', ['invoice_date', '>=', range.from], ['invoice_date', '<=', range.to],
-    ], ['id', 'name', 'move_type', 'invoice_date', 'invoice_user_id', 'commercial_partner_id', 'partner_id', 'company_id', 'currency_id', 'amount_untaxed', 'amount_untaxed_signed', 'margin_signed', 'cost_total'], MAX_INVOICES),
+  const [currentInvoices, previousInvoices, categories, portal] = await Promise.all([
+    fetchInvoicePeriod(session, range, scope, 'actual'),
+    fetchInvoicePeriod(session, previous, scope, 'comparativo'),
     searchAll(session, 'product.category', [], ['id', 'name', 'parent_id'], 10000),
     portalContext(admin),
   ]);
+  const invoices = [...currentInvoices, ...previousInvoices].sort((a, b) => idOf(a) - idOf(b));
+  if (new Set(invoices.map(idOf)).size !== invoices.length) {
+    throw new FinancialDataError('Un documento cambió de período durante la lectura. Actualiza la consulta.');
+  }
   if (!categories.some((row) => row.id === GENERIC_TONER_CATEGORY_ID)) throw new FinancialDataError('No se encontró la categoría 26 de tóner genéricos. No se puede confirmar la regla del 2%.', 422);
   const genericCategoryIds = new Set([GENERIC_TONER_CATEGORY_ID]);
   for (let changed = true; changed;) {
@@ -186,7 +211,9 @@ async function fetchDataset(admin: SupabaseClient, session: OdooSession, range: 
     }
   }
   const advisorDirectory = new Map<number, FinancialAdvisor>();
-  const portalUsers = portal.advisorCandidates.size ? await searchAll(session, 'res.users', [['id', 'in', [...portal.advisorCandidates.keys()]]], ['id', 'name'], 10000, { active_test: false }) : [];
+  const advisorIds = new Set(portal.advisorCandidates.keys());
+  if (scope.advisorId !== undefined && scope.advisorId !== null) advisorIds.add(scope.advisorId);
+  const portalUsers = advisorIds.size ? await searchAll(session, 'res.users', [['id', 'in', [...advisorIds]]], ['id', 'name'], 10000, { active_test: false }) : [];
   for (const user of portalUsers) {
     const candidates = portal.advisorCandidates.get(idOf(user));
     if (typeof user.name === 'string' && user.name.trim()) advisorDirectory.set(idOf(user), {
@@ -219,71 +246,88 @@ async function fetchDataset(admin: SupabaseClient, session: OdooSession, range: 
   if (companies.some((company) => relationName(company.currency_id) !== 'COP')) {
     throw new FinancialDataError('Hay compañías cuya moneda no es COP. No se mezclan monedas en los totales.', 422);
   }
-  const invoiceById = new Map<number, Row>(invoices.map((invoice) => [idOf(invoice), { ...invoice, companyCurrencyId: companyCurrency.get(relationId(invoice.company_id)!) }]));
-  const rawLines = await searchAll(session, 'account.move.line', [
-    ['move_id', 'in', invoices.map(idOf)], ['display_type', '=', 'product'], ['tax_line_id', '=', false],
-  ], ['id', 'move_id', 'name', 'product_id', 'product_uom_id', 'quantity', 'balance', 'price_subtotal', 'purchase_price', 'margin', 'margin_signed', 'sale_line_ids'], MAX_LINES);
-  const productIds = rawLines.map((line) => relationId(line.product_id)).filter((id): id is number => id !== null);
-  const referencedSaleLines = [...new Set(rawLines.flatMap((line) => ids(line.sale_line_ids)))];
-  const [products, portalSaleLines] = await Promise.all([
-    readIds(session, 'product.product', productIds, ['id', 'default_code', 'categ_id']),
-    portal.orderIds.size && referencedSaleLines.length ? searchAll(session, 'sale.order.line', [
-      ['id', 'in', referencedSaleLines], ['order_id', 'in', [...portal.orderIds]],
-    ], ['id'], MAX_LINES) : Promise.resolve([]),
-  ]);
-  const productById = new Map(products.map((product) => [idOf(product), product]));
-  const portalLineIds = new Set(portalSaleLines.map(idOf));
-  const grouped = new Map<number, FinancialLine[]>();
-  const lines = rawLines.map((line) => {
-    const invoice = invoiceById.get(relationId(line.move_id) ?? -1);
-    if (!invoice) throw new FinancialDataError('Una línea no pertenece a las facturas consultadas.');
-    const candidates = portal.advisorCandidates.get(relationId(invoice.invoice_user_id) ?? -1);
-    const portalAdvisorId = candidates?.size === 1 ? [...candidates][0] : null;
-    const normalized = normalizeFinancialLine(invoice, line, productById.get(relationId(line.product_id) ?? -1), genericCategoryIds, portalLineIds, portalAdvisorId);
-    const rows = grouped.get(normalized.invoiceId) ?? [];
-    rows.push(normalized);
-    grouped.set(normalized.invoiceId, rows);
-    return normalized;
-  });
+  const productById = new Map<number, Row>();
+  const lines: FinancialLine[] = [];
   let invalidCostInvoices = 0;
   let emptyInvoices = 0;
-  for (const invoice of invoices) {
-    const rows = grouped.get(idOf(invoice)) ?? [];
-    const base = number(invoice.amount_untaxed_signed, 'base de factura');
-    const summedBase = roundCurrency(rows.reduce((total, line) => total + line.netSales, 0));
-    const tolerance = Math.max(0.05, rows.length * 0.01);
-    if (Math.abs(summedBase - base) > tolerance) throw new FinancialDataError(`La factura ${invoice.name} no concilia con sus líneas. No se muestran totales parciales.`, 422);
-    if (!rows.length) { emptyInvoices++; continue; }
-    if (rows.every((line) => line.cost !== null)) {
-      const totalCost = roundCurrency(rows.reduce((total, line) => total + line.cost!, 0));
-      const totalProfit = roundCurrency(rows.reduce((total, line) => total + line.profit!, 0));
-      if (typeof invoice.cost_total !== 'number' || !Number.isFinite(invoice.cost_total)
-        || typeof invoice.margin_signed !== 'number' || !Number.isFinite(invoice.margin_signed)
-        || Math.abs(totalCost - invoice.cost_total) > tolerance || Math.abs(totalProfit - invoice.margin_signed) > tolerance) {
-        invalidCostInvoices++;
-        for (const line of rows) {
-          line.cost = null;
-          line.profit = null;
-          line.marginPercent = null;
-          line.issues.push('Los costos de las líneas no concilian con la cabecera de factura.');
+  for (let offset = 0; offset < invoices.length; offset += INVOICE_BATCH_SIZE) {
+    const batch = invoices.slice(offset, offset + INVOICE_BATCH_SIZE);
+    const invoiceById = new Map<number, Row>(batch.map(invoice => [
+      idOf(invoice), { ...invoice, companyCurrencyId: companyCurrency.get(relationId(invoice.company_id)!) },
+    ]));
+    const rawLines = await searchAll(session, 'account.move.line', [
+      ['move_id', 'in', batch.map(idOf)], ['display_type', '=', 'product'], ['tax_line_id', '=', false],
+    ], ['id', 'move_id', 'name', 'product_id', 'product_uom_id', 'quantity', 'balance', 'price_subtotal', 'purchase_price', 'margin', 'margin_signed', 'sale_line_ids'],
+    MAX_LINES - lines.length, undefined,
+    'El período y su comparativo superan las 100.000 líneas de factura. Aplica filtros comerciales o reduce las fechas; no se muestran totales incompletos.');
+    const productIds = rawLines.map(line => relationId(line.product_id))
+      .filter((id): id is number => id !== null && !productById.has(id));
+    const referencedSaleLines = [...new Set(rawLines.flatMap(line => ids(line.sale_line_ids)))];
+    const [products, portalSaleLines] = await Promise.all([
+      readIds(session, 'product.product', productIds, ['id', 'default_code', 'categ_id']),
+      portal.orderIds.size && referencedSaleLines.length ? searchAll(session, 'sale.order.line', [
+        ['id', 'in', referencedSaleLines], ['order_id', 'in', [...portal.orderIds]],
+      ], ['id'], MAX_LINES) : Promise.resolve([]),
+    ]);
+    for (const product of products) productById.set(idOf(product), product);
+    const portalLineIds = new Set(portalSaleLines.map(idOf));
+    const grouped = new Map<number, FinancialLine[]>();
+    for (const line of rawLines) {
+      const invoice = invoiceById.get(relationId(line.move_id) ?? -1);
+      if (!invoice) throw new FinancialDataError('Una línea no pertenece a las facturas consultadas.');
+      const candidates = portal.advisorCandidates.get(relationId(invoice.invoice_user_id) ?? -1);
+      const portalAdvisorId = candidates?.size === 1 ? [...candidates][0] : null;
+      const normalized = normalizeFinancialLine(invoice, line, productById.get(relationId(line.product_id) ?? -1), genericCategoryIds, portalLineIds, portalAdvisorId);
+      const rows = grouped.get(normalized.invoiceId) ?? [];
+      rows.push(normalized);
+      grouped.set(normalized.invoiceId, rows);
+      lines.push(normalized);
+    }
+    for (const invoice of batch) {
+      const rows = grouped.get(idOf(invoice)) ?? [];
+      const base = number(invoice.amount_untaxed_signed, 'base de factura');
+      const summedBase = roundCurrency(rows.reduce((total, line) => total + line.netSales, 0));
+      const tolerance = Math.max(0.05, rows.length * 0.01);
+      if (Math.abs(summedBase - base) > tolerance) throw new FinancialDataError(`La factura ${invoice.name} no concilia con sus líneas. No se muestran totales parciales.`, 422);
+      if (!rows.length) { emptyInvoices++; continue; }
+      if (rows.every((line) => line.cost !== null)) {
+        const totalCost = roundCurrency(rows.reduce((total, line) => total + line.cost!, 0));
+        const totalProfit = roundCurrency(rows.reduce((total, line) => total + line.profit!, 0));
+        if (typeof invoice.cost_total !== 'number' || !Number.isFinite(invoice.cost_total)
+          || typeof invoice.margin_signed !== 'number' || !Number.isFinite(invoice.margin_signed)
+          || Math.abs(totalCost - invoice.cost_total) > tolerance || Math.abs(totalProfit - invoice.margin_signed) > tolerance) {
+          invalidCostInvoices++;
+          for (const line of rows) {
+            line.cost = null;
+            line.profit = null;
+            line.marginPercent = null;
+            line.issues.push('Los costos de las líneas no concilian con la cabecera de factura.');
+          }
         }
       }
     }
   }
   if (invalidCostInvoices) warnings.push(`${invalidCostInvoices} documentos tienen diferencias de costo entre cabecera y líneas.`);
   if (emptyInvoices) warnings.push(`${emptyInvoices} documentos de base cero sin líneas de producto no generan métricas de documentos/clientes.`);
-  return { lines, generatedAt: new Date().toISOString(), warnings, advisors };
+  return { lines: lines.sort((a, b) => a.id - b.id), generatedAt: new Date().toISOString(), warnings, advisors };
 }
 
-export async function loadFinancialDataset(admin: SupabaseClient, range: FinancialRange, useCache = true): Promise<FinancialDataset> {
+export async function loadFinancialDataset(admin: SupabaseClient, range: FinancialRange, useCache = true, filters: FinancialDatasetScope = {}): Promise<FinancialDataset> {
   validateFinancialRange(range.from, range.to);
+  const scope: FinancialDatasetScope = {
+    advisorId: filters.advisorId, clientId: filters.clientId, productId: filters.productId, invoiceId: filters.invoiceId,
+  };
+  for (const [key, value] of Object.entries(scope)) {
+    if (value === undefined || (key === 'advisorId' && value === null)) continue;
+    if (!Number.isSafeInteger(value) || Number(value) <= 0) throw new FinancialDataError('El filtro financiero no es válido.', 400);
+  }
   const config = await getServerOdooConfig();
   if (!config) throw new FinancialDataError('No está configurada la conexión Odoo.', 503);
   const session = await authenticate(config);
-  const key = createHash('sha256').update(JSON.stringify([session.config, session.uid, range.from, range.to])).digest('hex');
+  const key = createHash('sha256').update(JSON.stringify([session.config, session.uid, range.from, range.to, scope])).digest('hex');
   const cached = datasetCache.get(key);
   if (useCache && cached && cached.expires > Date.now()) return cached.promise;
-  const promise = fetchDataset(admin, session, range);
+  const promise = fetchDataset(admin, session, range, scope);
   if (!useCache) return promise;
   if (datasetCache.size >= 2) datasetCache.delete(datasetCache.keys().next().value!);
   const entry = { expires: Infinity, promise };
@@ -299,7 +343,7 @@ export async function loadFinancialDataset(admin: SupabaseClient, range: Financi
 }
 
 export async function getFinancialReport(admin: SupabaseClient, range: FinancialRange, filters: FinancialFilters, useCache = true) {
-  const dataset = await loadFinancialDataset(admin, range, useCache);
+  const dataset = await loadFinancialDataset(admin, range, useCache, filters);
   const report = buildFinancialReport(dataset.lines, range, filters, dataset.generatedAt, dataset.warnings);
   report.selectedAdvisor = filters.advisorId === undefined || filters.advisorId === null ? null : dataset.advisors.find((advisor) => advisor.id === filters.advisorId) ?? null;
   if (filters.advisorId === undefined && filters.clientId === undefined && filters.productId === undefined && filters.invoiceId === undefined) {
