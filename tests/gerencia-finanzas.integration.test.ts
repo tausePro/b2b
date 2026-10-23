@@ -24,6 +24,7 @@ import {
   getFinancialReport,
   loadFinancialDataset,
   normalizeFinancialLine,
+  searchAll,
   type FinancialDataset,
 } from '../src/lib/gerencia/finanzas.server';
 import { buildOpenBalanceReport, overdueDays } from '../src/lib/gerencia/cartera';
@@ -143,7 +144,7 @@ async function loadIndependentRows(session: OdooSession, dataset: FinancialDatas
     '&', ['invoice_date', '>=', range.from], ['invoice_date', '<=', range.to],
   ];
   const [invoices, categories, namedCategories] = await Promise.all([
-    boundedSearch(session, 'account.move', invoiceDomain, invoiceFields, 10_000),
+    boundedSearch(session, 'account.move', invoiceDomain, invoiceFields, 20_000),
     boundedSearch(session, 'product.category', [['id', 'child_of', 26]], ['id', 'name', 'parent_id'], 10_000),
     readChunks(session, 'product.category', [25, 26], ['id', 'name', 'parent_id']),
   ]);
@@ -477,6 +478,44 @@ test('Gerencia: Odoo y Supabase reales, lecturas acotadas y bono sin mutaciones'
       assert.ok(pending.lines.every(line => line.cost === null));
     });
 
+    await t.test('los filtros se aplican al leer Odoo y conservan las líneas completas para conciliar cada factura', async () => {
+      const selected = current.find(line => line.clientId !== null && line.productId !== null && line.advisorId !== null
+        && current.some(other => other.invoiceId === line.invoiceId && other.productId !== line.productId));
+      assert.ok(selected, 'Se necesita una factura real con varios productos para verificar el filtro.');
+      const scopes: FinancialFilters[] = [
+        { clientId: selected.clientId!, page: 1 },
+        { productId: selected.productId!, page: 1 },
+        { invoiceId: selected.invoiceId, page: 1 },
+        { advisorId: selected.advisorId, clientId: selected.clientId!, productId: selected.productId!, page: 1 },
+        { advisorId: null, page: 1 },
+      ];
+      for (const filters of scopes) {
+        const scoped = await loadFinancialDataset(admin, range, false, filters);
+        const expected = buildFinancialReport(dataset.lines, range, filters, scoped.generatedAt);
+        const actual = buildFinancialReport(scoped.lines, range, filters, scoped.generatedAt);
+        assert.deepEqual(actual, expected);
+        const expectedInvoices = [...new Set(filterFinancialLines(dataset.lines, filters).map(line => line.invoiceId))].sort((a, b) => a - b);
+        assert.deepEqual([...new Set(scoped.lines.map(line => line.invoiceId))].sort((a, b) => a - b), expectedInvoices);
+        if (filters.productId) {
+          assert.ok(scoped.lines.some(line => line.invoiceId === selected.invoiceId && line.productId !== filters.productId),
+            'Las otras líneas de la factura deben seguir disponibles para conciliar la cabecera.');
+        }
+      }
+    });
+
+    await t.test('la caché separa asesoras y reutiliza un alcance al cambiar solo página o pendientes', async () => {
+      const advisors = [...new Set(current.flatMap(line => line.advisorId === null ? [] : [line.advisorId]))];
+      assert.ok(advisors.length >= 2);
+      const first = await loadFinancialDataset(admin, range, true, { advisorId: advisors[0] });
+      const second = await loadFinancialDataset(admin, range, true, { advisorId: advisors[1] });
+      assert.ok(first.lines.length && second.lines.length);
+      assert.ok(first.lines.every(line => line.advisorId === advisors[0]));
+      assert.ok(second.lines.every(line => line.advisorId === advisors[1]));
+      const otherPage: FinancialFilters = { advisorId: advisors[0], page: 2, onlyMissingCost: true };
+      assert.equal(await loadFinancialDataset(admin, range, true, otherPage), first);
+      assert.notEqual(first, second);
+    });
+
     await t.test('getFinancialReport sin caché coincide con el dataset y su filtro real, sin recalcular liquidaciones', async () => {
       const selected = current.find((line) => line.advisorId !== null);
       assert.ok(selected, 'No hay una asesora Odoo real en el periodo para verificar el servicio.');
@@ -507,6 +546,46 @@ test('Gerencia: Odoo y Supabase reales, lecturas acotadas y bono sin mutaciones'
         ['invoice_user_id', '=', advisorId], ['invoice_date', '>=', '2026-08-01'], ['invoice_date', '<=', '2026-08-31'],
       ], ['id', 'amount_untaxed_signed'], 10000);
       assert.equal(monthly.previousTotals.netSales, roundCurrency(august.reduce((sum, invoice) => sum + numeric(invoice.amount_untaxed_signed), 0)));
+    });
+
+    await t.test('366 días y su comparativo superan 10.000 documentos combinados sin perder totales ni desbordar la respuesta', async (subtest) => {
+      const annualRange = validateFinancialRange(
+        new Date(Date.parse(`${yesterday}T00:00:00Z`) - 365 * DAY_MS).toISOString().slice(0, 10), yesterday,
+      );
+      const previousAnnual = previousFinancialRange(annualRange);
+      const started = Date.now();
+      const annual = await loadFinancialDataset(admin, annualRange, false);
+      const result = buildFinancialReport(annual.lines, annualRange, { page: 1 }, annual.generatedAt, annual.warnings);
+      let combinedInvoices = 0;
+      for (const [period, totals] of [[annualRange, result.totals], [previousAnnual, result.previousTotals]] as const) {
+        const documents = await boundedSearch(session, 'account.move', [
+          ['state', '=', 'posted'], ['move_type', 'in', ['out_invoice', 'out_refund']],
+          ['invoice_date', '>=', period.from], ['invoice_date', '<=', period.to],
+        ], ['id', 'amount_untaxed_signed'], 10000);
+        combinedInvoices += documents.length;
+        assert.equal(totals.netSales, roundCurrency(documents.reduce((sum, row) => sum + numeric(row.amount_untaxed_signed), 0)));
+      }
+      assert.ok(combinedInvoices > 10000, 'El período real debe reproducir el límite conjunto anterior.');
+      const count = await searchCount('account.move.line', [
+        ['parent_state', '=', 'posted'], ['move_id.move_type', 'in', ['out_invoice', 'out_refund']],
+        ['display_type', '=', 'product'], ['tax_line_id', '=', false],
+        '|', '&', ['move_id.invoice_date', '>=', annualRange.from], ['move_id.invoice_date', '<=', annualRange.to],
+        '&', ['move_id.invoice_date', '>=', previousAnnual.from], ['move_id.invoice_date', '<=', previousAnnual.to],
+      ], session);
+      assert.equal(annual.lines.length, count);
+      assert.equal(new Set(annual.lines.map(line => line.id)).size, count);
+      assertTotals(result.totals, annual.lines.filter(line => line.invoiceDate >= annualRange.from && line.invoiceDate <= annualRange.to));
+      assertTotals(result.previousTotals, annual.lines.filter(line => line.invoiceDate >= previousAnnual.from && line.invoiceDate <= previousAnnual.to));
+      const bytes = Buffer.byteLength(JSON.stringify(result));
+      assert.ok(bytes <= 3 * 1024 * 1024, 'El informe debe caber en el límite real del API.');
+      subtest.diagnostic(JSON.stringify({ annualRange, previousAnnual, documents: combinedInvoices, lines: count, responseBytes: bytes, durationMs: Date.now() - started }));
+    });
+
+    await t.test('el lector conserva su límite y devuelve una indicación útil en vez de truncar registros', async () => {
+      await assert.rejects(searchAll(session, 'account.move', [
+        ['id', 'in', independent.invoices.slice(0, 2).map(row => numeric(row.id))],
+      ], ['id'], 1, undefined, 'Reduce las fechas o filtra una asesora.'),
+      (error: unknown) => error instanceof Error && error.message === 'Reduce las fechas o filtra una asesora.');
     });
   } finally {
     await t.test('Supabase: snapshots, detalles, estados, versiones y bono 0,5% idénticos antes/después de consultar', async (subtest) => {
