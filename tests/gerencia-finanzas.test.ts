@@ -25,6 +25,7 @@ import {
 
 import { canAccessDashboardPath } from '../src/lib/auth/routeAccess';
 import { overdueDays, summarizeOpenBalances } from '../src/lib/gerencia/cartera';
+import { PACKAGING_CATEGORY_ID, nextCommissionMonth, regularCommissionKind, regularCommissionPeriod, summarizeRegularCommissions } from '../src/lib/comisiones/habitual';
 
 const DAY_MS = 86_400_000;
 
@@ -167,6 +168,36 @@ test('comisión habitual: categoría real 26 al 2%, categoría real 25 al 1% y c
   assert.equal(regularCommissionRate(null, genericCategories), null);
 });
 
+test('Soluciones de Empaques y sus subcategorías verificadas liquidan 2% sin cambiar otras categorías', () => {
+  assert.equal(PACKAGING_CATEGORY_ID, 132);
+  const toner = new Set([26]);
+  const packaging = new Set([132, 129, 142, 135, 140, 128, 137, 141, 139, 134]);
+  for (const id of packaging) {
+    assert.equal(regularCommissionRate(id, toner, packaging), 2);
+    assert.equal(regularCommissionKind(id, toner, packaging), 'packaging');
+  }
+  assert.equal(regularCommissionKind(26, toner, packaging), 'generic_toner');
+  for (const id of [1, 18, 25, 27, 77]) {
+    assert.equal(regularCommissionRate(id, toner, packaging), 1);
+    assert.equal(regularCommissionKind(id, toner, packaging), 'general');
+  }
+  assert.equal(regularCommissionKind(null, toner, packaging), 'unknown');
+  assert.equal(regularCommissionRate(null, toner, packaging), null);
+});
+
+test('Empaques paga el mes siguiente sin inventar día de pago y conserva cambio de año', () => {
+  assert.equal(nextCommissionMonth('2026-10-23'), '2026-11');
+  assert.equal(nextCommissionMonth('2026-12-31'), '2027-01');
+  assert.equal(nextCommissionMonth('2028-02-29'), '2028-03');
+  assert.deepEqual(regularCommissionPeriod('2026-09', '2026-10-23'), { from: '2026-09-01', to: '2026-09-30' });
+  assert.deepEqual(regularCommissionPeriod('2026-10', '2026-10-23'), { from: '2026-10-01', to: '2026-10-23' });
+  assert.throws(() => nextCommissionMonth('2026-02-29'));
+  assert.throws(() => regularCommissionPeriod('2026-11', '2026-10-23'));
+  assert.throws(() => regularCommissionPeriod('2026-13', '2026-10-23'));
+  const empty = summarizeRegularCommissions([]);
+  assert.equal(empty.length, 4);
+  assert.ok(empty.every(row => row.commission === 0 && row.netSales === 0 && row.lineCount === 0));
+});
 test('aritmética de comisión: base neta al 1% o 2% sin sumar el bono separado del 0,5%', () => {
   assert.equal(PLATFORM_BONUS_PERCENT, 0.5);
   assert.equal(calculateRegularCommission(100, 1), 1);

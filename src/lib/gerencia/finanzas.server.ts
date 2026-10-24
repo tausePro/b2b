@@ -5,6 +5,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { authenticate, read, searchRead, type OdooSession } from '@/lib/odoo/client';
 import { getServerOdooConfig } from '@/lib/odoo/serverConfig';
 import { roundCurrency } from '@/lib/comisiones/bonoPlataforma';
+import { PACKAGING_CATEGORY_ID, nextCommissionMonth, regularCommissionKind, summarizeRegularCommissions } from '@/lib/comisiones/habitual';
 import {
   buildFinancialReport, calculateRegularCommission, financialMargin, GENERIC_TONER_CATEGORY_ID,
   previousFinancialRange, regularCommissionRate, validateFinancialRange,
@@ -97,7 +98,7 @@ async function portalContext(admin: SupabaseClient) {
   return { orderIds, advisorCandidates };
 }
 
-export function normalizeFinancialLine(invoice: Row, line: Row, product: Row | undefined, genericCategoryIds: ReadonlySet<number>, portalSaleLineIds: ReadonlySet<number>, portalAdvisorId: string | null): FinancialLine {
+export function normalizeFinancialLine(invoice: Row, line: Row, product: Row | undefined, genericCategoryIds: ReadonlySet<number>, portalSaleLineIds: ReadonlySet<number>, portalAdvisorId: string | null, packagingCategoryIds: ReadonlySet<number> = new Set([PACKAGING_CATEGORY_ID])): FinancialLine {
   const issues: string[] = [];
   const sign = invoice.move_type === 'out_refund' ? -1 : 1;
   const netSales = roundCurrency(-number(line.balance, 'saldo contable'));
@@ -131,7 +132,8 @@ export function normalizeFinancialLine(invoice: Row, line: Row, product: Row | u
   const productId = relationId(line.product_id);
   const categoryId = product ? relationId(product.categ_id) : null;
   const advisorId = relationId(invoice.invoice_user_id);
-  const commissionRate = regularCommissionRate(categoryId, genericCategoryIds);
+  const commissionKind = regularCommissionKind(categoryId, genericCategoryIds, packagingCategoryIds);
+  const commissionRate = regularCommissionRate(categoryId, genericCategoryIds, packagingCategoryIds);
   if (commissionRate === null) issues.push('Producto o categoría no identificable: comisión pendiente de revisión.');
   if (advisorId === null) issues.push('Factura sin vendedor asignado: comisión pendiente de atribución.');
   if (advisorId !== null && portalAdvisorId === null) issues.push('El vendedor Odoo no tiene un vínculo único con una asesora del portal.');
@@ -154,7 +156,8 @@ export function normalizeFinancialLine(invoice: Row, line: Row, product: Row | u
     unitCost: purchasePrice !== null && conversion !== null && Number.isFinite(conversion) && conversion > 0
       ? roundCurrency(purchasePrice * conversion) : null,
     cost, profit, marginPercent: financialMargin(profit, netSales),
-    commissionRate, commission: advisorId === null ? null : calculateRegularCommission(netSales, commissionRate),
+    commissionRate, commissionKind, commissionPaymentMonth: commissionKind === 'packaging' ? nextCommissionMonth(String(invoice.invoice_date)) : null,
+    commission: advisorId === null ? null : calculateRegularCommission(netSales, commissionRate),
     channel: portalCount ? portalCount === saleLineIds.length ? 'portal' : 'mixed' : 'other', issues,
   };
 }
@@ -184,7 +187,8 @@ async function fetchInvoicePeriod(session: OdooSession, range: FinancialRange, s
 async function fetchDataset(admin: SupabaseClient, session: OdooSession, range: FinancialRange, scope: FinancialDatasetScope): Promise<FinancialDataset> {
   const previous = previousFinancialRange(range);
   const warnings = [
-    'Comisión habitual calculada, no liquidada: 1% general y 2% en la categoría Odoo 26 y sus descendientes. No registra pagos ni modifica liquidaciones.',
+    'Comisión habitual calculada: 1% general; 2% para tóner genéricos (categoría 26) y Soluciones de Empaques (categoría 132), incluidas sus subcategorías. No registra pagos ni modifica liquidaciones.',
+    'Empaques: el mes previsto de pago es el siguiente al mes de la factura o nota crédito. Las notas crédito conservan su signo y ajustan la comisión; el bono plataforma 0,5% se calcula por separado.',
     'La clasificación de producto y el vendedor son los registrados actualmente en Odoo. Las consultas históricas no sustituyen liquidaciones anteriores.',
     'Utilidad bruta comercial según costo de factura; no es utilidad neta después de gastos. Costos cero o inconsistentes se señalan para revisión.',
     'Otros/sin vínculo identifica líneas sin vínculo verificable a pedidos del portal; no presume su canal comercial.',
@@ -199,17 +203,22 @@ async function fetchDataset(admin: SupabaseClient, session: OdooSession, range: 
   if (new Set(invoices.map(idOf)).size !== invoices.length) {
     throw new FinancialDataError('Un documento cambió de período durante la lectura. Actualiza la consulta.');
   }
-  if (!categories.some((row) => row.id === GENERIC_TONER_CATEGORY_ID)) throw new FinancialDataError('No se encontró la categoría 26 de tóner genéricos. No se puede confirmar la regla del 2%.', 422);
-  const genericCategoryIds = new Set([GENERIC_TONER_CATEGORY_ID]);
-  for (let changed = true; changed;) {
-    changed = false;
-    for (const category of categories) {
-      if (genericCategoryIds.has(relationId(category.parent_id) ?? -1) && !genericCategoryIds.has(idOf(category))) {
-        genericCategoryIds.add(idOf(category));
-        changed = true;
+  const categoryBranch = (root: number) => {
+    if (!categories.some(row => row.id === root)) throw new FinancialDataError(`No se encontró la categoría de comisión ${root} en Odoo. No se puede confirmar la tasa.`, 422);
+    const branch = new Set([root]);
+    for (let changed = true; changed;) {
+      changed = false;
+      for (const category of categories) {
+        if (branch.has(relationId(category.parent_id) ?? -1) && !branch.has(idOf(category))) {
+          branch.add(idOf(category));
+          changed = true;
+        }
       }
     }
-  }
+    return branch;
+  };
+  const genericCategoryIds = categoryBranch(GENERIC_TONER_CATEGORY_ID);
+  const packagingCategoryIds = categoryBranch(PACKAGING_CATEGORY_ID);
   const advisorDirectory = new Map<number, FinancialAdvisor>();
   const advisorIds = new Set(portal.advisorCandidates.keys());
   if (scope.advisorId !== undefined && scope.advisorId !== null) advisorIds.add(scope.advisorId);
@@ -277,7 +286,7 @@ async function fetchDataset(admin: SupabaseClient, session: OdooSession, range: 
       if (!invoice) throw new FinancialDataError('Una línea no pertenece a las facturas consultadas.');
       const candidates = portal.advisorCandidates.get(relationId(invoice.invoice_user_id) ?? -1);
       const portalAdvisorId = candidates?.size === 1 ? [...candidates][0] : null;
-      const normalized = normalizeFinancialLine(invoice, line, productById.get(relationId(line.product_id) ?? -1), genericCategoryIds, portalLineIds, portalAdvisorId);
+      const normalized = normalizeFinancialLine(invoice, line, productById.get(relationId(line.product_id) ?? -1), genericCategoryIds, portalLineIds, portalAdvisorId, packagingCategoryIds);
       const rows = grouped.get(normalized.invoiceId) ?? [];
       rows.push(normalized);
       grouped.set(normalized.invoiceId, rows);
@@ -350,7 +359,7 @@ export async function getFinancialReport(admin: SupabaseClient, range: Financial
     const present = new Set(report.advisors.map((advisor) => advisor.id));
     const empty = buildFinancialReport([], range, { page: 1 }, dataset.generatedAt).totals;
     report.advisors.push(...dataset.advisors.filter((advisor) => advisor.portalAdvisorId && !present.has(advisor.id))
-      .map((advisor) => ({ ...empty, ...advisor, key: String(advisor.id) })));
+      .map((advisor) => ({ ...empty, ...advisor, key: String(advisor.id), commissionBreakdown: summarizeRegularCommissions([]) })));
     report.advisors.sort((a, b) => b.netSales - a.netSales || a.name.localeCompare(b.name, 'es'));
   }
   return report;
