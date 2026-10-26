@@ -104,6 +104,20 @@ npm run test:multiempresa:integration
 npm run build
 ```
 
+## Comisión habitual por categoría
+
+Desde v2.14.24, **Comisiones y bono plataforma** y el resumen financiero de Gerencia muestran la comisión habitual desglosada por asesora y categoría:
+
+- **Soluciones de Empaques**: 2% para la categoría Odoo 132 y todos sus descendientes.
+- **Tóner genéricos**: 2% para la categoría Odoo 26 y todos sus descendientes.
+- **General**: 1% para las demás categorías identificadas. Las líneas sin categoría confirmada se muestran pendientes.
+- La base es la venta neta sin IVA en COP; las notas crédito conservan su signo y reducen la comisión.
+- Empaques muestra el mes de facturación y el mes calendario siguiente como pago previsto, sin asignar un día ni registrar un pago.
+
+La tasa depende de la categoría de cada línea, también para las ventas de Vanesa. Su asignación al storefront no extiende el 2% de Empaques a productos de otras categorías.
+
+`GET /api/comisiones/habitual` permite a cada asesora consultar únicamente su vendedor Odoo vinculado. Dirección y Super Admin pueden consultar el equipo o una asesora. La comisión habitual es informativa y permanece separada del bono plataforma del 0,5% y sus liquidaciones. Este release no requiere migraciones nuevas.
+
 ## Bono Plataforma para asesoras
 
 La migración `supabase/migrations/048_bono_plataforma_asesoras.sql` habilita el bono adicional del 0,5% desde septiembre de 2026.

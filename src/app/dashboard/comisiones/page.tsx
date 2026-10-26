@@ -6,6 +6,7 @@ import { useSearchParams } from 'next/navigation';
 import { userHasAnyRole } from '@/lib/auth/roles';
 import { AlertCircle, BadgeDollarSign, Building2, CheckCircle2, FileText, Loader2, LockKeyhole, RefreshCw } from 'lucide-react';
 import KpiCard from '@/components/ui/KpiCard';
+import ComisionHabitual from '@/components/dashboards/ComisionHabitual';
 import { useAuth } from '@/contexts/AuthContext';
 import { getBogotaCalendarDate, getCommissionPeriodRange, PLATFORM_BONUS_START_DATE, roundCurrency } from '@/lib/comisiones/bonoPlataforma';
 import type { CommissionPeriodStatus, PlatformBonusClientSummary, PlatformBonusDetail, PlatformBonusTotals } from '@/lib/comisiones/bonoPlataforma';
@@ -139,6 +140,7 @@ function ComisionesReport({ initialPeriod, initialAdvisorId }: { initialPeriod: 
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [commissionRefresh, setCommissionRefresh] = useState(0);
   const loadRequest = useRef<AbortController | null>(null);
   const mutationRequest = useRef<AbortController | null>(null);
   const periodError = periodValidationError(period);
@@ -270,7 +272,7 @@ function ComisionesReport({ initialPeriod, initialAdvisorId }: { initialPeriod: 
     <div className="space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Bono Plataforma</h1>
+          <h1 className="text-2xl font-bold text-foreground">Comisiones y bono plataforma</h1>
           <p className="mt-1 text-sm text-muted">
             Bono adicional del 0,5% sobre facturación sin IVA originada por clientes activos mediante el portal.
             {' '}Marcar pagada solo registra un pago realizado por fuera del portal; no envía dinero ni ejecuta transferencias bancarias.
@@ -301,7 +303,7 @@ function ComisionesReport({ initialPeriod, initialAdvisorId }: { initialPeriod: 
             </label>
           )}
           <label className="text-sm font-medium text-foreground">
-            Periodo
+            Mes de facturación
             <input
               type="month"
               min={PLATFORM_BONUS_START_DATE.slice(0, 7)}
@@ -325,7 +327,7 @@ function ComisionesReport({ initialPeriod, initialAdvisorId }: { initialPeriod: 
           <button
             type="button"
             onClick={() => {
-              if (!mutationRequest.current) void loadData(period);
+              if (!mutationRequest.current) { void loadData(period); setCommissionRefresh(value => value + 1); }
             }}
             disabled={loading || processing || !!periodError}
             className="inline-flex items-center justify-center gap-2 rounded-lg border border-border bg-white px-3 py-2 text-sm font-medium text-foreground hover:bg-background-light disabled:opacity-50"
@@ -336,6 +338,8 @@ function ComisionesReport({ initialPeriod, initialAdvisorId }: { initialPeriod: 
         </div>
       </div>
 
+      <ComisionHabitual period={period} advisorId={selectedAdvisorId} refresh={commissionRefresh} />
+      <div><h2 className="text-lg font-semibold text-foreground">Liquidación del bono plataforma · 0,5%</h2><p className="mt-1 text-sm text-muted">Los estados y las acciones de cierre y pago de esta sección corresponden exclusivamente al bono adicional del portal.</p></div>
       {(periodError || error) && (
         <div id="bonus-error" className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700" role="alert">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />

@@ -7,7 +7,9 @@ import { ArrowLeft, BadgeDollarSign, Building2, DollarSign, FileText, Loader2, R
 import KpiCard from '@/components/ui/KpiCard';
 import { useAuth } from '@/contexts/AuthContext';
 import { userHasAnyRole } from '@/lib/auth/roles';
-import { getBogotaCalendarDate, getCommissionPeriodRange, PLATFORM_BONUS_START_DATE } from '@/lib/comisiones/bonoPlataforma';
+import { getBogotaCalendarDate, getCommissionPeriodRange, PLATFORM_BONUS_START_DATE, roundCurrency } from '@/lib/comisiones/bonoPlataforma';
+import { REGULAR_COMMISSION_LABELS } from '@/lib/comisiones/habitual';
+import { CommissionBreakdown, PackagingPayments, commissionMonthLabel } from './ComisionHabitual';
 import type { CommissionPeriodStatus, PlatformBonusTotals } from '@/lib/comisiones/bonoPlataforma';
 import { defaultFinancialRange, validateFinancialRange } from '@/lib/gerencia/finanzas';
 import type { FinancialFilters, FinancialGroup, FinancialRange, FinancialReport, FinancialTotals } from '@/lib/gerencia/finanzas';
@@ -165,9 +167,14 @@ function GroupTable({ title, groups, kind, navigation }: { title: string; groups
           <thead><tr className="border-b border-border bg-background-light/50">
             <th scope="col" className="px-4 py-3 text-left font-medium text-muted">{kind === 'advisor' ? 'Asesora' : kind === 'client' ? 'Cliente' : 'Producto / unidad'}</th>
             {kind === 'product' && <th scope="col" className={headingCellClass}>Cantidad</th>}
-            <th scope="col" className={headingCellClass}>Facturas / NC</th><th scope="col" className={headingCellClass}>Venta neta</th><th scope="col" className={headingCellClass}>Costo de factura</th><th scope="col" className={headingCellClass}>Utilidad bruta</th><th scope="col" className={headingCellClass}>Margen bruto</th><th scope="col" className={headingCellClass}>Cobertura de costo</th><th scope="col" className={headingCellClass}>Comisión habitual</th>
+            <th scope="col" className={headingCellClass}>Facturas / NC</th><th scope="col" className={headingCellClass}>Venta neta</th><th scope="col" className={headingCellClass}>Costo de factura</th><th scope="col" className={headingCellClass}>Utilidad bruta</th><th scope="col" className={headingCellClass}>Margen bruto</th><th scope="col" className={headingCellClass}>Cobertura de costo</th>
+            {kind === 'advisor' && <><th scope="col" className={headingCellClass}>Empaques 2%</th><th scope="col" className={headingCellClass}>Otras comisiones</th></>}
+            <th scope="col" className={headingCellClass}>Comisión habitual total</th>
           </tr></thead>
-          <tbody>{rows.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE).map((group) => (
+          <tbody>{rows.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE).map((group) => {
+            const packaging = group.commissionBreakdown?.find(row => row.kind === 'packaging');
+            const otherKnown = packaging ? roundCurrency(group.knownCommission - packaging.knownCommission) : undefined;
+            return (
             <tr key={group.key} className="border-b border-border/50">
               <th scope="row" className="min-w-52 px-4 py-3 text-left align-top font-medium text-foreground">
                 {navigation(group)}
@@ -178,9 +185,13 @@ function GroupTable({ title, groups, kind, navigation }: { title: string; groups
               <AmountCell value={group.netSales} /><AmountCell value={group.cost} verified={group.knownCost} /><AmountCell value={group.profit} verified={group.verifiedProfit} />
               <td className={cellClass}>{percent(group.marginPercent ?? group.verifiedMarginPercent)}{group.marginPercent === null && group.verifiedMarginPercent !== null && <span className="mt-1 block text-xs text-amber-800">Sobre venta con costo verificado</span>}</td>
               <td className={cellClass}>{percent(group.costCoveragePercent)}<span className="mt-1 block text-xs text-muted">{group.missingCostLines} líneas pendientes</span></td>
+              {kind === 'advisor' && <>
+                <td className={cellClass}>{packaging ? <><span className={packaging.commission === null ? 'text-amber-800' : undefined}>{money(packaging.commission ?? packaging.knownCommission)}</span><span className="mt-1 block text-xs text-muted">Base: {money(packaging.netSales)} · Pago mes siguiente{packaging.commission === null ? ' · Parcial' : ''}</span></> : 'No disponible'}</td>
+                <AmountCell value={packaging && group.missingCommissionLines === packaging.missingCommissionLines ? otherKnown! : null} verified={otherKnown} />
+              </>}
               <td className={cellClass}><span className={group.commission === null ? 'font-medium text-amber-800' : undefined}>{money(group.commission)}</span>{group.commission === null && <span className="mt-1 block text-xs text-muted">Subtotal verificado: {currencyFormatter.format(group.knownCommission)} · {group.missingCommissionLines} líneas pendientes</span>}</td>
             </tr>
-          ))}</tbody>
+          ); })}</tbody>
         </table>
       </div>
       {rows.length === 0 && <p className="px-5 py-8 text-center text-sm text-muted">No hay resultados{search ? ' para esta búsqueda local' : ' en el rango y filtros consultados'}.</p>}
@@ -400,6 +411,7 @@ function FinancialView({ advisorId, initialQuery, bonusPeriod, onBonusPeriodChan
   const validate = useCallback((payload: FinancialReport) => {
     const expected = JSON.parse(expectedFilters) as FinancialFilters;
     if (payload.range?.from !== range.from || payload.range?.to !== range.to || payload.currency !== 'COP'
+      || !Array.isArray(payload.commissionBreakdown) || !Array.isArray(payload.packagingPayments)
       || !payload.filters || payload.filters.advisorId !== expected.advisorId || payload.filters.clientId !== expected.clientId
       || payload.filters.productId !== expected.productId || payload.filters.invoiceId !== expected.invoiceId
       || Boolean(payload.filters.onlyMissingCost) !== Boolean(expected.onlyMissingCost)
@@ -491,7 +503,7 @@ function FinancialView({ advisorId, initialQuery, bonusPeriod, onBonusPeriodChan
       <aside className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
         <p><strong>Alcance financiero:</strong> ventas netas en COP sin impuestos, con notas crédito descontadas según su signo contable. El costo procede de la factura registrada en Odoo, no del costo actual del catálogo. Los costos faltantes o no verificables dejan la utilidad pendiente.</p>
         <p className="mt-2"><strong>Utilidad bruta de ventas:</strong> venta neta sin IVA menos costo de los productos facturados. Aún no descuenta nómina, arriendo, comisiones ni otros gastos de operación. Cuando faltan costos se muestra únicamente la parte verificada, no una utilidad total estimada.</p>
-        <p className="mt-2"><strong>Comisión habitual calculada, no liquidada:</strong> 1% sobre el neto, excepto tóner genéricos de la categoría Odoo 26 (2%), aplicada por línea. No incluye el bono plataforma del 0,5% y aquí no se cierran ni pagan comisiones.</p>
+        <p className="mt-2"><strong>Comisión habitual calculada:</strong> 1% general; 2% para tóner genéricos y Soluciones de Empaques, incluidas sus subcategorías. Se calcula por línea sobre el neto sin IVA, descontando notas crédito. Empaques se paga el mes siguiente a la facturación. El bono plataforma 0,5% se liquida por separado.</p>
       </aside>
       <div id="financial-error">{(validationError || error) && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{validationError || error}</p>}</div>
       {loading && <LoadingReport />}
@@ -509,7 +521,7 @@ function FinancialView({ advisorId, initialQuery, bonusPeriod, onBonusPeriodChan
           <KpiCard title="Venta neta sin impuestos" value={currencyFormatter.format(report.totals.netSales)} subtitle={`Facturación: ${currencyFormatter.format(report.totals.invoicedSales)} · Notas crédito (con signo): ${currencyFormatter.format(report.totals.creditNotes)}`} icon={<DollarSign aria-hidden="true" className="h-5 w-5" />} />
           <KpiCard title={report.totals.cost === null ? 'Costo verificado · parcial' : 'Costo de ventas verificado'} value={money(report.totals.cost ?? report.totals.knownCost)} subtitle={`Cobertura sobre ventas en valor absoluto: ${percent(report.totals.costCoveragePercent)} · ${report.totals.missingCostLines} líneas pendientes`} icon={<FileText aria-hidden="true" className="h-5 w-5" />} />
           <KpiCard title={report.totals.profit === null ? 'Utilidad bruta verificada · parcial' : 'Utilidad bruta de ventas'} value={money(report.totals.profit ?? report.totals.verifiedProfit)} subtitle={`Venta con costo verificado: ${money(report.totals.verifiedSales)} · Margen sobre esa venta: ${percent(report.totals.verifiedMarginPercent)}`} icon={<TrendingUp aria-hidden="true" className="h-5 w-5" />} />
-          <KpiCard title="Comisión habitual calculada" value={money(report.totals.commission)} subtitle={`No liquidada · 1% / 2% por línea · ${report.totals.missingCommissionLines} líneas pendientes`} icon={<BadgeDollarSign aria-hidden="true" className="h-5 w-5" />} />
+          <KpiCard title="Comisión habitual calculada" value={money(report.totals.commission)} subtitle={`General 1% · Tóner 2% · Empaques 2% · ${report.totals.missingCommissionLines} líneas pendientes`} icon={<BadgeDollarSign aria-hidden="true" className="h-5 w-5" />} />
           <KpiCard title="Clientes facturados" value={String(report.totals.clientCount)} subtitle={`${report.totals.invoiceCount} facturas · ${report.totals.creditNoteCount} notas crédito · ${report.totals.lineCount} líneas`} icon={<Building2 aria-hidden="true" className="h-5 w-5" />} />
           <KpiCard title="Factura promedio sin impuestos" value={report.totals.averageInvoice === null ? 'No disponible' : currencyFormatter.format(report.totals.averageInvoice)} subtitle="Promedio de facturas, sin mezclar notas crédito" icon={<FileText aria-hidden="true" className="h-5 w-5" />} />
         </div>
@@ -526,7 +538,9 @@ function FinancialView({ advisorId, initialQuery, bonusPeriod, onBonusPeriodChan
       {report && !validationError && <>
         {report.totals.lineCount === 0 && <p className="rounded-xl border border-border bg-white p-6 text-sm text-muted" role="status">Odoo no devolvió líneas facturadas para este rango y filtros. Amplía las fechas o limpia los filtros; no se ha estimado facturación.</p>}
         <Comparison report={report} />
+        <details className="overflow-hidden rounded-xl border border-border bg-white"><summary className="cursor-pointer px-5 py-4 font-semibold">Desglose de comisión habitual por categoría</summary><CommissionBreakdown breakdown={report.commissionBreakdown} /></details>
         <GroupTable title="Resumen por asesora" groups={report.advisors} kind="advisor" navigation={(group) => <Link href={advisorHref(group.id)} className={linkClass}>{group.name}</Link>} />
+        <PackagingPayments payments={report.packagingPayments} />
         <GroupTable title="Rentabilidad por cliente" groups={report.clients} kind="client" navigation={(group) => filterNavigation('cliente', group)} />
         <GroupTable title="Productos y unidades" groups={report.products} kind="product" navigation={(group) => filterNavigation('producto', group)} />
         <TrendTable report={report} />
@@ -539,7 +553,7 @@ function FinancialView({ advisorId, initialQuery, bonusPeriod, onBonusPeriodChan
                 <th scope="row" className="min-w-44 px-4 py-3 text-left align-top font-medium"><button type="button" className={`${linkClass} text-left`} onClick={() => updateFilter('factura', String(line.invoiceId))}>{line.invoiceName}</button><span className="mt-1 block text-xs font-normal text-muted">{dateLabel(line.invoiceDate)} · {line.documentType === 'out_refund' ? 'Nota crédito' : 'Factura'}</span><span className="mt-1 block text-xs font-normal text-muted">{line.companyName} · ID {line.invoiceId} · Línea {line.id}</span></th>
                 <td className="min-w-44 px-4 py-3 align-top">{line.clientId === null ? line.clientName : <button type="button" className={`${linkClass} text-left`} onClick={() => updateFilter('cliente', String(line.clientId))}>{line.clientName}</button>}<Link className={`${linkClass} mt-2 block text-xs`} href={advisorHref(line.advisorId)}>{line.advisorName}</Link></td>
                 <td className="min-w-52 px-4 py-3 align-top">{line.productId === null ? line.productName : <button type="button" className={`${linkClass} text-left`} onClick={() => updateFilter('producto', String(line.productId))}>{line.productName}</button>}<span className="mt-1 block text-xs text-muted">SKU: {line.sku ?? 'No disponible'} · {line.categoryName ?? 'Categoría pendiente'}{line.categoryId !== null ? ` (ID ${line.categoryId})` : ''}</span></td>
-                <td className={cellClass}>{quantityFormatter.format(line.quantity)} {line.unitName}</td><AmountCell value={line.netSales} /><AmountCell value={line.unitCost} /><AmountCell value={line.cost} /><AmountCell value={line.profit} /><td className={cellClass}>{percent(line.marginPercent)}</td><td className={cellClass}>{line.commissionRate === null ? 'Pendiente' : percent(line.commissionRate)}</td><AmountCell value={line.commission} />
+                <td className={cellClass}>{quantityFormatter.format(line.quantity)} {line.unitName}</td><AmountCell value={line.netSales} /><AmountCell value={line.unitCost} /><AmountCell value={line.cost} /><AmountCell value={line.profit} /><td className={cellClass}>{percent(line.marginPercent)}</td><td className={cellClass}>{line.commissionRate === null ? 'Pendiente' : percent(line.commissionRate)}<span className="mt-1 block text-xs text-muted">{REGULAR_COMMISSION_LABELS[line.commissionKind]}</span>{line.commissionPaymentMonth && <span className="mt-1 block text-xs text-muted">Pago previsto: {commissionMonthLabel(line.commissionPaymentMonth)}</span>}</td><AmountCell value={line.commission} />
                 <td className="min-w-52 px-4 py-3 align-top text-xs"><span>{{ portal: 'Portal', mixed: 'Mixto', other: 'Otros / sin vínculo al portal' }[line.channel]}</span>{line.issues.length > 0 && <ul className="mt-2 list-disc space-y-1 pl-4 text-amber-800">{line.issues.map((issue, index) => <li key={`${index}-${issue}`}>{issue}</li>)}</ul>}</td>
               </tr>)}</tbody>
             </table>
