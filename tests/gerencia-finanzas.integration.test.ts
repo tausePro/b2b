@@ -29,6 +29,9 @@ import {
 } from '../src/lib/gerencia/finanzas.server';
 import { buildOpenBalanceReport, overdueDays } from '../src/lib/gerencia/cartera';
 import { loadOpenBalanceDataset } from '../src/lib/gerencia/cartera.server';
+import { nextCommissionMonth, type RegularCommissionBreakdown } from '../src/lib/comisiones/habitual';
+import { getRegularCommissionReport, resolveRegularCommissionScope } from '../src/lib/comisiones/habitual.server';
+import type { AuthorizedApiContext, ApiActorRole } from '../src/lib/auth/apiRouteGuards';
 
 config({ path: '.env.local', quiet: true });
 
@@ -143,10 +146,11 @@ async function loadIndependentRows(session: OdooSession, dataset: FinancialDatas
     '|', '&', ['invoice_date', '>=', previous.from], ['invoice_date', '<=', previous.to],
     '&', ['invoice_date', '>=', range.from], ['invoice_date', '<=', range.to],
   ];
-  const [invoices, categories, namedCategories] = await Promise.all([
+  const [invoices, categories, packaging, namedCategories] = await Promise.all([
     boundedSearch(session, 'account.move', invoiceDomain, invoiceFields, 20_000),
     boundedSearch(session, 'product.category', [['id', 'child_of', 26]], ['id', 'name', 'parent_id'], 10_000),
-    readChunks(session, 'product.category', [25, 26], ['id', 'name', 'parent_id']),
+    boundedSearch(session, 'product.category', [['id', 'child_of', 132]], ['id', 'name', 'parent_id'], 10_000),
+    readChunks(session, 'product.category', [25, 26, 132], ['id', 'name', 'parent_id']),
   ]);
   const lineDomain = [['move_id', 'in', invoices.map((row) => numeric(row.id))], ['display_type', '=', 'product']];
   const [invoiceCount, lineCount, rawLines, products] = await Promise.all([
@@ -166,6 +170,7 @@ async function loadIndependentRows(session: OdooSession, dataset: FinancialDatas
     lineById: new Map(rawLines.map((row) => [numeric(row.id), row])),
     productById: new Map(products.map((row) => [numeric(row.id), row])),
     genericIds: new Set(categories.map((row) => numeric(row.id))),
+    packagingIds: new Set(packaging.map((row) => numeric(row.id))),
   };
 }
 
@@ -200,6 +205,41 @@ function assertTotals(totals: FinancialTotals, lines: FinancialLine[]) {
   const absoluteSales = lines.reduce((total, line) => total + Math.abs(line.netSales), 0);
   const coveredSales = costKnown.reduce((total, line) => total + Math.abs(line.netSales), 0);
   assert.equal(totals.costCoveragePercent, lines.length ? (absoluteSales ? roundCurrency(coveredSales / absoluteSales * 100) : missingCosts ? 0 : 100) : null);
+}
+
+function assertCommissionBreakdown(breakdown: RegularCommissionBreakdown[], lines: FinancialLine[]) {
+  assert.equal(breakdown.length, 4);
+  for (const row of breakdown) {
+    const selected = lines.filter(line => line.commissionKind === row.kind);
+    const sum = (values: number[]) => roundCurrency(values.reduce((total, value) => total + value, 0));
+    const missing = selected.filter(line => line.commission === null).length;
+    assert.equal(row.netSales, sum(selected.map(line => line.netSales)));
+    assert.equal(row.invoicedSales, sum(selected.filter(line => line.documentType === 'out_invoice').map(line => line.netSales)));
+    assert.equal(row.creditNotes, sum(selected.filter(line => line.documentType === 'out_refund').map(line => line.netSales)));
+    assert.equal(row.knownCommission, sum(selected.flatMap(line => line.commission === null ? [] : [line.commission])));
+    assert.equal(row.commission, missing ? null : row.knownCommission);
+    assert.equal(row.missingCommissionLines, missing);
+    assert.equal(row.lineCount, selected.length);
+    assert.equal(row.invoiceCount, new Set(selected.filter(line => line.documentType === 'out_invoice').map(line => line.invoiceId)).size);
+    assert.equal(row.creditNoteCount, new Set(selected.filter(line => line.documentType === 'out_refund').map(line => line.invoiceId)).size);
+  }
+  assert.equal(roundCurrency(breakdown.reduce((sum, row) => sum + row.netSales, 0)), summarizeFinancialLines(lines).netSales);
+  assert.equal(roundCurrency(breakdown.reduce((sum, row) => sum + row.knownCommission, 0)), summarizeFinancialLines(lines).knownCommission);
+}
+
+async function realCommissionContext(admin: SupabaseClient, id: string): Promise<AuthorizedApiContext> {
+  const profile = await admin.from('usuarios').select('id, auth_id, rol, activo, empresa_id').eq('id', id).single();
+  assert.ifError(profile.error);
+  assert.ok(profile.data?.activo && profile.data.auth_id);
+  const extras = await admin.from('usuario_roles_extra').select('rol').eq('usuario_id', id).eq('activo', true);
+  assert.ifError(extras.error);
+  return {
+    admin,
+    actor: {
+      id: profile.data.id, authUserId: profile.data.auth_id, rol: profile.data.rol as ApiActorRole,
+      empresa_id: profile.data.empresa_id, rolesExtra: (extras.data ?? []).map(row => row.rol as ApiActorRole),
+    },
+  };
 }
 
 test('Gerencia: Odoo y Supabase reales, lecturas acotadas y bono sin mutaciones', { timeout: 600_000 }, async (t) => {
@@ -327,21 +367,25 @@ test('Gerencia: Odoo y Supabase reales, lecturas acotadas y bono sin mutaciones'
       t.diagnostic(JSON.stringify({ range, previous, invoices: independent.invoices.length, lines: dataset.lines.length, currentLines: current.length, netSales: report.totals.netSales, creditNotes: report.totals.creditNotes }));
     });
 
-    await t.test('categorías reales: 26 y descendientes al 2%; 25 y todas las otras al 1%, por línea mixta', () => {
-      assert.deepEqual(independent.namedCategories.map((row) => numeric(row.id)).sort((a, b) => a - b), [25, 26]);
+    await t.test('categorías reales: tóner y Empaques al 2%; resto al 1%, incluso en facturas mixtas', () => {
+      assert.deepEqual(independent.namedCategories.map((row) => numeric(row.id)).sort((a, b) => a - b), [25, 26, 132]);
       assert.equal(independent.genericIds.has(26), true);
       assert.equal(independent.genericIds.has(25), false);
-      for (const id of independent.genericIds) assert.equal(regularCommissionRate(id, independent.genericIds), 2);
-      assert.equal(regularCommissionRate(25, independent.genericIds), 1);
-      const counts = { generic: 0, other: 0, unidentified: 0, refunds: 0 };
+      assert.equal(independent.packagingIds.has(132), true);
+      for (const id of [...independent.genericIds, ...independent.packagingIds]) assert.equal(regularCommissionRate(id, independent.genericIds, independent.packagingIds), 2);
+      assert.equal(regularCommissionRate(25, independent.genericIds, independent.packagingIds), 1);
+      const counts = { generic_toner: 0, packaging: 0, general: 0, unknown: 0, refunds: 0 };
       for (const line of dataset.lines) {
         const product = line.productId === null ? undefined : independent.productById.get(line.productId);
         const categoryId = product ? relationId(product.categ_id) : null;
-        const rate = categoryId === null ? null : independent.genericIds.has(categoryId) ? 2 : 1;
+        const kind = categoryId === null ? 'unknown' : independent.packagingIds.has(categoryId) ? 'packaging' : independent.genericIds.has(categoryId) ? 'generic_toner' : 'general';
+        const rate = kind === 'unknown' ? null : kind === 'general' ? 1 : 2;
         assert.equal(line.categoryId, categoryId);
+        assert.equal(line.commissionKind, kind);
         assert.equal(line.commissionRate, rate);
         assert.equal(line.commission, rate === null || line.advisorId === null ? null : roundCurrency(-numeric(independent.lineById.get(line.id)!.balance) * rate / 100));
-        counts[rate === 2 ? 'generic' : rate === 1 ? 'other' : 'unidentified']++;
+        assert.equal(line.commissionPaymentMonth, kind === 'packaging' ? nextCommissionMonth(line.invoiceDate) : null);
+        counts[kind]++;
         if (line.documentType === 'out_refund') counts.refunds++;
       }
       const ratesByInvoice = new Map<number, Set<number | null>>();
@@ -377,6 +421,63 @@ test('Gerencia: Odoo y Supabase reales, lecturas acotadas y bono sin mutaciones'
         assert.equal(point.profit, totals.profit);
         assert.equal(point.commission, totals.commission);
       }
+    });
+
+    await t.test('el desglose de Empaques cuadra por asesora y asigna el pago al mes siguiente sin sumar el bono', () => {
+      assertCommissionBreakdown(report.commissionBreakdown, current);
+      for (const advisor of report.advisors) {
+        assert.ok(advisor.commissionBreakdown);
+        assertCommissionBreakdown(advisor.commissionBreakdown, current.filter(line => line.advisorId === advisor.id));
+      }
+      const packageLines = current.filter(line => independent.packagingIds.has(line.categoryId ?? -1));
+      assert.equal(report.packagingPayments.reduce((sum, payment) => sum + payment.lineCount, 0), packageLines.length);
+      for (const payment of report.packagingPayments) {
+        const rows = packageLines.filter(line => line.advisorId === payment.advisorId && line.invoiceDate.slice(0, 7) === payment.invoiceMonth);
+        assert.ok(rows.length);
+        const date = new Date(`${payment.invoiceMonth}-01T00:00:00Z`);
+        date.setUTCMonth(date.getUTCMonth() + 1);
+        assert.equal(payment.paymentMonth, date.toISOString().slice(0, 7));
+        assert.equal(payment.netSales, roundCurrency(rows.reduce((sum, row) => sum + row.netSales, 0)));
+        assert.equal(payment.knownCommission, roundCurrency(rows.reduce((sum, row) => sum + (row.commission ?? 0), 0)));
+        assert.equal(payment.rate, 2);
+        assert.equal(payment.kind, 'packaging');
+      }
+      assert.equal(PLATFORM_BONUS_PERCENT, 0.5);
+    });
+
+    await t.test('Vanesa consulta su comisión real y no puede solicitar la de otra asesora', async () => {
+      const vanesa = await admin.from('usuarios').select('id, odoo_user_id').eq('odoo_user_id', 44).eq('rol', 'asesor').eq('activo', true).single();
+      assert.ifError(vanesa.error);
+      assert.ok(vanesa.data);
+      const context = await realCommissionContext(admin, vanesa.data.id);
+      assert.deepEqual(await resolveRegularCommissionScope(context, 'all'), {
+        canViewTeam: false, advisorId: vanesa.data.id, odooUserId: 44,
+      });
+      const other = await admin.from('usuarios').select('id').eq('rol', 'asesor').eq('activo', true).neq('id', vanesa.data.id).limit(1).single();
+      assert.ifError(other.error);
+      await assert.rejects(resolveRegularCommissionScope(context, other.data!.id),
+        (error: unknown) => error instanceof Error && 'status' in error && error.status === 403);
+      const result = await getRegularCommissionReport(context, '2026-09', null);
+      assert.equal(result.advisorId, vanesa.data.id);
+      assert.equal(result.canViewTeam, false);
+      assert.equal(result.paymentPeriod, '2026-10');
+      assert.equal(result.completeMonth, true);
+      assert.ok(result.advisors.length > 0 && result.advisors.every(advisor => advisor.id === 44));
+      assert.ok(result.payments.every(payment => payment.advisorId === 44 && payment.paymentMonth === '2026-10'));
+      assert.deepEqual(Object.keys(result).sort(), [
+        'advisorId', 'advisors', 'breakdown', 'canViewTeam', 'completeMonth', 'currency', 'generatedAt', 'paymentPeriod', 'payments', 'period', 'range',
+      ]);
+      const real = await loadFinancialDataset(admin, result.range, false, { advisorId: 44 });
+      const rows = real.lines.filter(line => line.invoiceDate >= result.range.from && line.invoiceDate <= result.range.to);
+      assertCommissionBreakdown(result.breakdown, rows);
+      assert.ok(rows.some(line => line.commissionKind === 'packaging'));
+      const manager = await admin.from('usuarios').select('id').eq('activo', true).in('rol', ['direccion', 'super_admin']).not('auth_id', 'is', null).limit(1).single();
+      assert.ifError(manager.error);
+      const managerContext = await realCommissionContext(admin, manager.data!.id);
+      assert.deepEqual(await resolveRegularCommissionScope(managerContext, vanesa.data.id), {
+        canViewTeam: true, advisorId: vanesa.data.id, odooUserId: 44,
+      });
+      assert.deepEqual(await resolveRegularCommissionScope(managerContext, null), { canViewTeam: true, advisorId: null, odooUserId: undefined });
     });
 
     await t.test('costos cero o ausentes impiden margen validado; costos actuales se comparan solo en una muestra', async (subtest) => {

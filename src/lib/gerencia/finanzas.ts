@@ -1,4 +1,8 @@
 import { getBogotaCalendarDate, roundCurrency } from '@/lib/comisiones/bonoPlataforma';
+import {
+  PACKAGING_CATEGORY_ID, packagingPaymentSchedule, regularCommissionKind, summarizeRegularCommissions,
+  type PackagingCommissionPayment, type RegularCommissionBreakdown, type RegularCommissionKind,
+} from '@/lib/comisiones/habitual';
 
 export const GENERIC_TONER_CATEGORY_ID = 26;
 export const FINANCIAL_MAX_DAYS = 366;
@@ -41,6 +45,8 @@ export interface FinancialLine {
   profit: number | null;
   marginPercent: number | null;
   commissionRate: number | null;
+  commissionKind: RegularCommissionKind;
+  commissionPaymentMonth: string | null;
   commission: number | null;
   channel: FinancialChannel;
   issues: string[];
@@ -77,6 +83,7 @@ export interface FinancialGroup extends FinancialTotals {
   sku?: string | null;
   unitName?: string;
   quantity?: number;
+  commissionBreakdown?: RegularCommissionBreakdown[];
 }
 export interface FinancialTrend { date: string; netSales: number; profit: number | null; commission: number | null }
 export interface FinancialAdvisor { id: number; name: string; portalAdvisorId: string | null }
@@ -90,6 +97,8 @@ export interface FinancialReport {
   generatedAt: string;
   totals: FinancialTotals;
   previousTotals: FinancialTotals;
+  commissionBreakdown: RegularCommissionBreakdown[];
+  packagingPayments: PackagingCommissionPayment[];
   advisors: FinancialGroup[];
   clients: FinancialGroup[];
   products: FinancialGroup[];
@@ -156,8 +165,9 @@ export function previousFinancialRange(range: FinancialRange): FinancialRange {
   return financialComparison(range).range;
 }
 
-export function regularCommissionRate(categoryId: number | null, genericCategoryIds: ReadonlySet<number>): number | null {
-  return categoryId === null ? null : genericCategoryIds.has(categoryId) ? 2 : 1;
+export function regularCommissionRate(categoryId: number | null, genericCategoryIds: ReadonlySet<number>, packagingCategoryIds: ReadonlySet<number> = new Set([PACKAGING_CATEGORY_ID])): number | null {
+  const kind = regularCommissionKind(categoryId, genericCategoryIds, packagingCategoryIds);
+  return kind === 'unknown' ? null : kind === 'general' ? 1 : 2;
 }
 
 export function calculateRegularCommission(base: number, rate: number | null): number | null {
@@ -250,7 +260,7 @@ function groupFinancialLines(lines: readonly FinancialLine[], kind: 'advisor' | 
     key,
     id: kind === 'advisor' ? first.advisorId : kind === 'client' ? first.clientId : first.productId,
     name: kind === 'advisor' ? first.advisorName : kind === 'client' ? first.clientName : first.productId === null ? 'Líneas sin producto identificado' : first.productName,
-    ...(kind === 'advisor' ? { portalAdvisorId: first.portalAdvisorId } : {}),
+    ...(kind === 'advisor' ? { portalAdvisorId: first.portalAdvisorId, commissionBreakdown: summarizeRegularCommissions(grouped) } : {}),
     ...(kind === 'product' ? { sku: first.sku, unitName: first.unitName, quantity: Number(grouped.reduce((total, line) => total + line.quantity, 0).toPrecision(15)) } : {}),
     ...summarizeFinancialLines(grouped),
   })).sort((a, b) => b.netSales - a.netSales || a.name.localeCompare(b.name, 'es'));
@@ -281,6 +291,7 @@ export function buildFinancialReport(allLines: readonly FinancialLine[], range: 
   return {
     range, previousRange, comparisonMode: comparison.mode, filters: { ...filters, page }, currency: 'COP', generatedAt,
     totals: summarizeFinancialLines(current), previousTotals: summarizeFinancialLines(previous),
+    commissionBreakdown: summarizeRegularCommissions(current), packagingPayments: packagingPaymentSchedule(current, range),
     advisors: groupFinancialLines(current, 'advisor'), clients: groupFinancialLines(current, 'client'), products: groupFinancialLines(current, 'product'),
     trend: [...byDate].sort(([a], [b]) => a.localeCompare(b)).map(([date, rows]) => {
       const totals = summarizeFinancialLines(rows);
