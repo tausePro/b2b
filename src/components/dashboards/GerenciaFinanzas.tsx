@@ -6,6 +6,7 @@ import { useSearchParams } from 'next/navigation';
 import { ArrowLeft, BadgeDollarSign, Building2, DollarSign, FileText, Loader2, RefreshCw, TrendingUp } from 'lucide-react';
 import KpiCard from '@/components/ui/KpiCard';
 import { useAuth } from '@/contexts/AuthContext';
+import { createClient } from '@/lib/supabase/client';
 import { userHasAnyRole } from '@/lib/auth/roles';
 import { getBogotaCalendarDate, getCommissionPeriodRange, PLATFORM_BONUS_START_DATE, roundCurrency } from '@/lib/comisiones/bonoPlataforma';
 import { REGULAR_COMMISSION_LABELS } from '@/lib/comisiones/habitual';
@@ -397,6 +398,30 @@ function FinancialView({ advisorId, initialQuery, bonusPeriod, onBonusPeriodChan
   const [page, setPage] = useState(1);
   const [refresh, setRefresh] = useState(0);
   const [onlyMissingCost, setOnlyMissingCost] = useState(() => new URLSearchParams(initialQuery).get('pendientes_costo') === '1');
+  const [portalCompanyByPartnerId, setPortalCompanyByPartnerId] = useState<Map<number, string>>(() => new Map());
+
+  useEffect(() => {
+    if (!canAccess || !user?.id) return;
+    let cancelled = false;
+    const supabase = createClient();
+    void supabase
+      .from('empresas')
+      .select('id, odoo_partner_id')
+      .then(({ data }) => {
+        if (cancelled || !Array.isArray(data)) return;
+        const nextMap = new Map<number, string>();
+        for (const row of data) {
+          const partnerId = Number(row.odoo_partner_id);
+          if (Number.isSafeInteger(partnerId) && partnerId > 0 && row.id) {
+            nextMap.set(partnerId, String(row.id));
+          }
+        }
+        setPortalCompanyByPartnerId(nextMap);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [canAccess, user?.id]);
   let validationError = rangeError(rangePending ? draftRange : range, today);
   let requestedFilters: FinancialFilters = { page };
   try {
@@ -470,6 +495,8 @@ function FinancialView({ advisorId, initialQuery, bonusPeriod, onBonusPeriodChan
         <div><h1 className="text-2xl font-bold text-foreground">{isAdvisor ? `Rentabilidad por asesora${selectedAdvisor ? ` · ${selectedAdvisor.name}` : ''}` : 'Rentabilidad general'}</h1><p className="mt-1 text-sm text-muted">Facturación publicada en Odoo de todos los canales · Consulta gerencial de solo lectura</p></div>
         <nav aria-label="Navegación financiera" className="flex flex-wrap gap-4 text-sm font-medium">
           {isAdvisor && <Link href={generalHref} className={`${linkClass} inline-flex items-center gap-1`}><ArrowLeft aria-hidden="true" className="h-4 w-4" />Volver a rentabilidad general</Link>}
+          <Link href="/dashboard/clientes" className={linkClass}>Fichas e informes por cliente</Link>
+          <Link href="/dashboard/reportes" className={linkClass}>Informes de pedidos B2B</Link>
           <Link href={`/dashboard/comisiones?periodo=${encodeURIComponent(bonusPeriod)}`} className={linkClass}>Liquidaciones del bono plataforma</Link>
         </nav>
       </header>
@@ -541,7 +568,27 @@ function FinancialView({ advisorId, initialQuery, bonusPeriod, onBonusPeriodChan
         <details className="overflow-hidden rounded-xl border border-border bg-white"><summary className="cursor-pointer px-5 py-4 font-semibold">Desglose de comisión habitual por categoría</summary><CommissionBreakdown breakdown={report.commissionBreakdown} /></details>
         <GroupTable title="Resumen por asesora" groups={report.advisors} kind="advisor" navigation={(group) => <Link href={advisorHref(group.id)} className={linkClass}>{group.name}</Link>} />
         <PackagingPayments payments={report.packagingPayments} />
-        <GroupTable title="Rentabilidad por cliente" groups={report.clients} kind="client" navigation={(group) => filterNavigation('cliente', group)} />
+        <GroupTable
+          title="Rentabilidad por cliente"
+          groups={report.clients}
+          kind="client"
+          navigation={(group) => {
+            const portalCompanyId = group.id !== null ? portalCompanyByPartnerId.get(group.id) : undefined;
+            return (
+              <div>
+                {filterNavigation('cliente', group)}
+                {portalCompanyId && (
+                  <Link
+                    href={`/dashboard/clientes/${portalCompanyId}?vista=informes`}
+                    className={`${linkClass} mt-1 block text-xs font-normal`}
+                  >
+                    Ver ficha e informes de pedidos
+                  </Link>
+                )}
+              </div>
+            );
+          }}
+        />
         <GroupTable title="Productos y unidades" groups={report.products} kind="product" navigation={(group) => filterNavigation('producto', group)} />
         <TrendTable report={report} />
         <section id="detalle-financiero" className="overflow-hidden rounded-xl border border-border bg-white" aria-label="Líneas de facturas y notas crédito">
