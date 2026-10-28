@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { createClient } from '@/lib/supabase/client';
 import BrandMark from '@/components/ui/BrandMark';
@@ -121,7 +121,7 @@ function costAgeBadgeClass(status: ProductoOdooCliente['antiguedad_costo_estado'
   return 'bg-slate-100 text-slate-500';
 }
 
-export default function ClienteDetallePage() {
+function ClienteDetalleContent({ initialTab }: { initialTab: 'resumen' | 'informes' }) {
   const { user, showPrices } = useAuth();
   const params = useParams();
   const router = useRouter();
@@ -142,7 +142,7 @@ export default function ClienteDetallePage() {
   const [productosOdoo, setProductosOdoo] = useState<ProductoOdooCliente[]>([]);
   const [loadingProductos, setLoadingProductos] = useState(false);
   const [busquedaProducto, setBusquedaProducto] = useState('');
-  const [activeTab, setActiveTab] = useState<'resumen' | 'informes'>('resumen');
+  const [activeTab, setActiveTab] = useState<'resumen' | 'informes'>(initialTab);
   const [variantsModal, setVariantsModal] = useState<{ empresaId: string; product: ProductoOdooCliente } | null>(null);
   const canViewVariants = userHasAnyRole(user, ['super_admin', 'direccion', 'asesor']);
 
@@ -150,9 +150,8 @@ export default function ClienteDetallePage() {
   // las empresas que les corresponden. El cambio de modo de pricing
   // (costo+margen vs pricelist) sigue siendo decisión de dirección/super_admin
   // porque afecta a toda la lógica de precios del cliente.
-  const canManagePricing =
-    user?.rol === 'direccion' || user?.rol === 'super_admin' || user?.rol === 'asesor';
-  const canChangeModoPricing = user?.rol === 'direccion' || user?.rol === 'super_admin';
+  const canManagePricing = userHasAnyRole(user, ['direccion', 'super_admin', 'asesor']);
+  const canChangeModoPricing = userHasAnyRole(user, ['direccion', 'super_admin']);
   const [modoPricing, setModoPricing] = useState<string>('costo_margen');
   const [savingModo, setSavingModo] = useState(false);
   const [margenes, setMargenes] = useState<{ id: string; odoo_categ_id: number | null; margen_porcentaje: number }[]>([]);
@@ -174,7 +173,7 @@ export default function ClienteDetallePage() {
       setForbidden(false);
 
       // super_admin y direccion tienen acceso global, no necesitan asignación
-      const isGlobalRole = user.rol === 'super_admin' || user.rol === 'direccion';
+      const isGlobalRole = userHasAnyRole(user, ['super_admin', 'direccion']);
 
       if (!isGlobalRole) {
         const { data: asignacion, error: asignacionError } = await supabase
@@ -1083,6 +1082,15 @@ export default function ClienteDetallePage() {
           </div>
         </div>
       </div>
+
+      {/* Bloque completo de Informes y Métricas de Pedidos directamente dentro de la ficha del cliente */}
+      <div id="informes-pedidos" className="pt-4 border-t border-border">
+        <InformePedidosCliente
+          fixedEmpresaId={cliente.id}
+          empresaNombre={cliente.nombre}
+          embedded
+        />
+      </div>
         </>
       )}
       {canViewVariants && variantsModal?.empresaId === clienteId && (
@@ -1097,5 +1105,25 @@ export default function ClienteDetallePage() {
         />
       )}
     </div>
+  );
+}
+
+function ClienteDetalleWithQuery() {
+  const searchParams = useSearchParams();
+  const initialTab = searchParams.get('vista') === 'informes' ? 'informes' : 'resumen';
+  return <ClienteDetalleContent key={initialTab} initialTab={initialTab} />;
+}
+
+export default function ClienteDetallePage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex items-center justify-center py-20">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        </div>
+      }
+    >
+      <ClienteDetalleWithQuery />
+    </Suspense>
   );
 }
