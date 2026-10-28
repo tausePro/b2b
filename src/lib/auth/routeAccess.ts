@@ -9,6 +9,7 @@ const ROLE_PATH_PREFIXES: Record<UserRole, string[]> = {
     '/dashboard/carrito',
     '/dashboard/pedidos',
     '/dashboard/facturas',
+    '/dashboard/reportes',
     '/dashboard/alertas',
     '/dashboard/soporte',
     '/dashboard/perfil',

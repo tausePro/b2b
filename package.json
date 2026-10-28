@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "tsx --test tests/company-context.test.ts tests/bono-plataforma.test.ts tests/leads-query.test.ts tests/google-ads.test.ts tests/lead-recipients.test.ts tests/lead-validation.test.ts && npm run test:empaques && npm run test:gerencia && npm run test:pedidos",
-    "test:pedidos": "node --conditions=react-server --import tsx --test tests/pedidos-aprobacion.test.ts",
+    "test:pedidos": "node --conditions=react-server --import tsx --test tests/pedidos-aprobacion.test.ts tests/informes-pedidos.test.ts",
     "test:catalogo:integration": "node --conditions=react-server --import tsx --test tests/pricelist-catalog.integration.test.ts",
     "test:multiempresa:integration": "tsx --test tests/multiempresa.integration.test.ts",
     "test:multiempresa": "npm test && npm run test:multiempresa:integration",

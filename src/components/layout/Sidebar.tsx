@@ -47,6 +47,7 @@ const MENU_BY_ROLE: Record<UserRole, SidebarItem[]> = {
   comprador: [
     { label: 'Catálogo', href: '/dashboard/catalogo', icon: <ShoppingBag className="w-5 h-5" />, activePattern: '/dashboard/catalogo' },
     { label: 'Mis Pedidos', href: '/dashboard/pedidos', icon: <ClipboardList className="w-5 h-5" />, activePattern: '/dashboard/pedidos' },
+    { label: 'Informes', href: '/dashboard/reportes', icon: <BarChart3 className="w-5 h-5" />, activePattern: '/dashboard/reportes' },
     { label: 'Facturas', href: '/dashboard/facturas', icon: <FileText className="w-5 h-5" />, activePattern: '/dashboard/facturas' },
     { label: 'Soporte', href: '/dashboard/soporte', icon: <Headphones className="w-5 h-5" />, activePattern: '/dashboard/soporte' },
   ],
@@ -55,7 +56,7 @@ const MENU_BY_ROLE: Record<UserRole, SidebarItem[]> = {
     { label: 'Aprobaciones', href: '/dashboard/aprobaciones', icon: <CheckSquare className="w-5 h-5" />, activePattern: '/dashboard/aprobaciones' },
     { label: 'Pedidos', href: '/dashboard/pedidos', icon: <ClipboardList className="w-5 h-5" />, activePattern: '/dashboard/pedidos' },
     { label: 'Presupuestos', href: '/dashboard/presupuestos', icon: <DollarSign className="w-5 h-5" />, activePattern: '/dashboard/presupuestos' },
-    { label: 'Reportes', href: '/dashboard/reportes', icon: <BarChart3 className="w-5 h-5" />, activePattern: '/dashboard/reportes' },
+    { label: 'Informes', href: '/dashboard/reportes', icon: <BarChart3 className="w-5 h-5" />, activePattern: '/dashboard/reportes' },
   ],
   asesor: [
     { label: 'Dashboard', href: '/dashboard', icon: <LayoutDashboard className="w-5 h-5" />, activePattern: '/dashboard$' },
