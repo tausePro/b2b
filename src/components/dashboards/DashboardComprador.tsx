@@ -5,7 +5,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { createClient } from '@/lib/supabase/client';
 import { cn } from '@/lib/utils';
 import Link from 'next/link';
-import { ShoppingBag, ClipboardList, Clock, ArrowRight, Loader2 } from 'lucide-react';
+import { ShoppingBag, ClipboardList, Clock, ArrowRight, Loader2, BarChart3 } from 'lucide-react';
 import KpiCard from '@/components/ui/KpiCard';
 
 interface PedidoReciente {
@@ -120,7 +120,7 @@ export default function DashboardComprador() {
       </div>
 
       {/* Acciones rápidas */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Link
           href="/dashboard/catalogo"
           className="bg-white rounded-xl border border-border p-6 hover:border-primary/30 hover:shadow-sm transition-all group"
@@ -144,6 +144,23 @@ export default function DashboardComprador() {
               <h3 className="font-semibold text-foreground">Mis Pedidos</h3>
               <p className="text-sm text-muted mt-1">
                 Revisa el estado de tus pedidos
+              </p>
+            </div>
+            <ArrowRight className="w-5 h-5 text-muted group-hover:text-primary transition-colors" />
+          </div>
+        </Link>
+        <Link
+          href="/dashboard/reportes"
+          className="bg-white rounded-xl border border-border p-6 hover:border-primary/30 hover:shadow-sm transition-all group"
+        >
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="font-semibold text-foreground flex items-center gap-2">
+                <BarChart3 className="w-4 h-4 text-primary" />
+                Informes de Pedidos
+              </h3>
+              <p className="text-sm text-muted mt-1">
+                Consulta todas las métricas, sedes y productos solicitados
               </p>
             </div>
             <ArrowRight className="w-5 h-5 text-muted group-hover:text-primary transition-colors" />

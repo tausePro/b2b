@@ -9,11 +9,13 @@ import BrandMark from '@/components/ui/BrandMark';
 import { formatCOP, formatDate } from '@/lib/utils';
 import KpiCard from '@/components/ui/KpiCard';
 import StatusBadge from '@/components/ui/StatusBadge';
+import InformePedidosCliente from '@/components/dashboards/InformePedidosCliente';
 import { VariantsModal } from '@/components/admin/VariantsModal';
 import { userHasAnyRole } from '@/lib/auth/roles';
 import { matchesCatalogProductSearch } from '@/lib/pricing/catalog-visibility';
 import {
   ArrowLeft,
+  BarChart3,
   Building2,
   ClipboardList,
   Clock,
@@ -140,6 +142,7 @@ export default function ClienteDetallePage() {
   const [productosOdoo, setProductosOdoo] = useState<ProductoOdooCliente[]>([]);
   const [loadingProductos, setLoadingProductos] = useState(false);
   const [busquedaProducto, setBusquedaProducto] = useState('');
+  const [activeTab, setActiveTab] = useState<'resumen' | 'informes'>('resumen');
   const [variantsModal, setVariantsModal] = useState<{ empresaId: string; product: ProductoOdooCliente } | null>(null);
   const canViewVariants = userHasAnyRole(user, ['super_admin', 'direccion', 'asesor']);
 
@@ -486,6 +489,18 @@ export default function ClienteDetallePage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setActiveTab(activeTab === 'informes' ? 'resumen' : 'informes')}
+              className={`inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
+                activeTab === 'informes'
+                  ? 'border-primary bg-primary/10 text-primary'
+                  : 'border-border hover:bg-background-light'
+              }`}
+            >
+              <BarChart3 className="w-4 h-4" />
+              {activeTab === 'informes' ? 'Ver ficha comercial' : 'Informes de pedidos'}
+            </button>
             <Link
               href="/dashboard/clientes"
               className="inline-flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-background-light"
@@ -503,9 +518,48 @@ export default function ClienteDetallePage() {
             </Link>
           </div>
         </div>
+
+        <div className="mt-4 pt-4 border-t border-border flex flex-wrap gap-2" role="tablist" aria-label="Vistas del cliente">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'resumen'}
+            onClick={() => setActiveTab('resumen')}
+            className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+              activeTab === 'resumen'
+                ? 'bg-primary text-white'
+                : 'bg-background-light text-muted hover:text-foreground'
+            }`}
+          >
+            <Building2 className="w-4 h-4" />
+            Resumen y Gestión Comercial
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'informes'}
+            onClick={() => setActiveTab('informes')}
+            className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+              activeTab === 'informes'
+                ? 'bg-primary text-white'
+                : 'bg-background-light text-muted hover:text-foreground'
+            }`}
+          >
+            <BarChart3 className="w-4 h-4" />
+            Informes y Métricas de Pedidos
+          </button>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+      {activeTab === 'informes' ? (
+        <InformePedidosCliente
+          fixedEmpresaId={cliente.id}
+          empresaNombre={cliente.nombre}
+          embedded
+        />
+      ) : (
+        <>
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         <KpiCard
           title="Pedidos pendientes"
           value={String(pedidosPendientes)}
@@ -1029,6 +1083,8 @@ export default function ClienteDetallePage() {
           </div>
         </div>
       </div>
+        </>
+      )}
       {canViewVariants && variantsModal?.empresaId === clienteId && (
         <VariantsModal
           key={`${variantsModal.empresaId}:${variantsModal.product.id}`}
