@@ -4,8 +4,10 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { createClient } from '@/lib/supabase/client';
 import BrandMark from '@/components/ui/BrandMark';
+import { userHasAnyRole } from '@/lib/auth/roles';
 import Link from 'next/link';
 import {
+  BarChart3,
   Building2,
   Users,
   ClipboardList,
@@ -62,7 +64,7 @@ export default function ClientesPage() {
       setLoading(true);
 
       // super_admin y direccion ven todas las empresas; asesor solo las asignadas
-      const isGlobalRole = user.rol === 'super_admin' || user.rol === 'direccion';
+      const isGlobalRole = userHasAnyRole(user, ['super_admin', 'direccion']);
 
       let empresaIds: string[] | null = null;
 
@@ -221,11 +223,22 @@ export default function ClientesPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">Mis Clientes</h1>
-        <p className="text-muted text-sm mt-1">
-          {totalClientes} empresa{totalClientes !== 1 ? 's' : ''} asignada{totalClientes !== 1 ? 's' : ''} — {user?.nombre} {user?.apellido}
-        </p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-foreground">
+            {userHasAnyRole(user, ['super_admin', 'direccion']) ? 'Clientes Corporativos' : 'Mis Clientes'}
+          </h1>
+          <p className="text-muted text-sm mt-1">
+            {totalClientes} empresa{totalClientes !== 1 ? 's' : ''} registrada{totalClientes !== 1 ? 's' : ''} — {user?.nombre} {user?.apellido}
+          </p>
+        </div>
+        <Link
+          href="/dashboard/reportes"
+          className="inline-flex items-center gap-2 rounded-lg border border-border bg-white px-4 py-2 text-sm font-medium text-foreground hover:bg-background-light transition-colors"
+        >
+          <BarChart3 className="w-4 h-4 text-primary" />
+          Informes consolidados de pedidos
+        </Link>
       </div>
 
       {/* KPIs */}
@@ -389,9 +402,9 @@ export default function ClientesPage() {
                 </div>
               </div>
 
-              {/* Footer con alertas */}
-              {(cliente.pedidos_pendientes > 0 || cliente.presupuesto_global_mensual) && (
-                <div className="px-5 py-3 border-t border-border bg-slate-50/50 flex items-center gap-4 text-xs">
+              {/* Footer con alertas y acceso directo a informes */}
+              <div className="px-5 py-3 border-t border-border bg-slate-50/50 flex flex-wrap items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-3">
                   {cliente.pedidos_pendientes > 0 && (
                     <span className="flex items-center gap-1 text-amber-600 font-medium">
                       <Clock className="w-3 h-3" />
@@ -405,12 +418,16 @@ export default function ClientesPage() {
                     </span>
                   )}
                   {cliente.presupuesto_global_mensual && (
-                    <span className="text-muted ml-auto">
+                    <span className="text-muted">
                       Presupuesto: {formatCOP(cliente.presupuesto_global_mensual)}/mes
                     </span>
                   )}
                 </div>
-              )}
+                <span className="inline-flex items-center gap-1 font-medium text-primary group-hover:underline">
+                  <BarChart3 className="w-3.5 h-3.5" />
+                  Ver ficha e informes ({cliente.pedidos_total} ped.)
+                </span>
+              </div>
             </Link>
           ))}
         </div>
