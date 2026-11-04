@@ -134,7 +134,10 @@ Conciliación de octubre de 2026: venta 607.606.414,28, costo 400.610.438,47 y u
 
 ## Cuentas por cobrar y por pagar en Gerencia
 
-- Saldos abiertos actuales (`amount_residual`) de las cuentas Odoo tipo por cobrar y por pagar, publicados hasta hoy, de la compañía activa del usuario de la integración. Es el mismo criterio del informe de antigüedad de Odoo.
+- Desde v2.14.29, la cifra principal de cada lado es la de "facturas pendientes" del tablero de Contabilidad de Odoo (decisión de Gerencia): suma el valor total (`amount_total_signed`) de las facturas publicadas no pagadas o con pago parcial de los diarios de facturas, incluidas sus propias notas crédito. Las facturas con abonos cuentan por su valor completo. Los diarios que nunca han tenido facturas (solo notas crédito, p. ej. "Nota Crédito Electronica") se muestran aparte. El 2026-11-04 cuadró al peso con Odoo en por cobrar (897.365.461,25).
+- La sección "Composición y antigüedad" concilia esa cifra con el saldo contable: abonos parciales, notas crédito de diarios dedicados y pagos/anticipos/otros asientos sin conciliar.
+- Por decisión de Gerencia se excluye la cartera castigada que sigue abierta en Odoo: asiento `I/2025/12/0487` (id 235543; FAST COLOMBIA, ULTRA AIR y sin tercero, 169.057.255). La regla está en `EXCLUDED_WRITTEN_OFF_MOVES` y solo aplica si el id y el nombre del asiento coinciden.
+- Saldo contable: saldos abiertos actuales (`amount_residual`) de las cuentas Odoo tipo por cobrar y por pagar, publicados hasta hoy, de la compañía activa del usuario de la integración. Es el mismo criterio del informe de antigüedad de Odoo, sin la cartera castigada excluida.
 - Los anticipos configurados en esas cuentas se compensan en el saldo neto; la sección "Composición y antigüedad" muestra el saldo por cuenta contable.
 - Antes del 2026-11-04 se sumaban también los saldos de VALU OLIVEROS SAS (+43.342.535 por cobrar y +254.242.053 por pagar). Al 2026-11-04, INVERSIONES IMPRIMA SAS: por cobrar 1.016.602.317,13 (clientes 1.045.569.929,00 menos anticipos de clientes 28.967.611,87) y por pagar 430.241.005,11 (proveedores 417.999.224,21 más otras cuentas por pagar 32.810.724,54 menos anticipos a proveedores 20.568.943,64).
 - Las retenciones, impuestos y obligaciones laborales del PUC (clases 13, 23 y 24) no son cuentas tipo por cobrar o por pagar en Odoo y no se incluyen.
