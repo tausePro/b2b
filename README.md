@@ -111,6 +111,7 @@ Desde v2.14.24, **Comisiones y bono plataforma** y el resumen financiero de Gere
 - **Soluciones de Empaques**: 2% para la categoría Odoo 132 y todos sus descendientes.
 - **Tóner genéricos**: 2% para la categoría Odoo 26 y todos sus descendientes.
 - **General**: 1% para las demás categorías identificadas. Las líneas sin categoría confirmada se muestran pendientes.
+- **Margen menor al 15%** (desde v2.14.30, para todas las fechas): las líneas de categoría general con margen bruto por línea (utilidad ÷ venta sin IVA, redondeado a dos decimales) menor al 15% comisionan 0,5%. Tóner genéricos y Empaques conservan el 2% sin importar el margen. Si la línea no tiene costo verificado, su comisión queda pendiente. En octubre de 2026 la regla bajó la comisión del equipo de 6.609.628 a 6.493.058 (79 líneas).
 - La base es la venta neta sin IVA en COP; las notas crédito conservan su signo y reducen la comisión.
 - Empaques muestra el mes de facturación y el mes calendario siguiente como pago previsto, sin asignar un día ni registrar un pago.
 

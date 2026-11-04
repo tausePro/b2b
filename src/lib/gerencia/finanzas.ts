@@ -1,6 +1,6 @@
 import { getBogotaCalendarDate, roundCurrency } from '@/lib/comisiones/bonoPlataforma';
 import {
-  PACKAGING_CATEGORY_ID, packagingPaymentSchedule, regularCommissionKind, summarizeRegularCommissions,
+  LOW_MARGIN_COMMISSION_RATE, LOW_MARGIN_COMMISSION_THRESHOLD, PACKAGING_CATEGORY_ID, packagingPaymentSchedule, regularCommissionKind, summarizeRegularCommissions,
   type PackagingCommissionPayment, type RegularCommissionBreakdown, type RegularCommissionKind,
 } from '@/lib/comisiones/habitual';
 
@@ -9,6 +9,7 @@ export const FINANCIAL_MAX_DAYS = 366;
 export const FINANCIAL_PAGE_SIZE = 100;
 export const FINANCIAL_DAILY_TREND_MAX_DAYS = 62;
 export const ZERO_RECORDED_COST_ISSUE = 'Mercancía con costo cero en Odoo: la venta completa cuenta como utilidad, igual que en Odoo. Revisa si el producto requiere costo.';
+export const PENDING_MARGIN_COMMISSION_ISSUE = 'Comisión pendiente: sin costo verificado no se puede confirmar si el margen es menor al 15% (0,5%) o no (1%).';
 
 export type FinancialChannel = 'portal' | 'mixed' | 'other';
 export interface FinancialRange { from: string; to: string }
@@ -196,8 +197,18 @@ export function regularCommissionRate(categoryId: number | null, genericCategory
 export function calculateRegularCommission(base: number, rate: number | null): number | null {
   if (!Number.isFinite(base)) throw new Error('La base de comisión no es válida.');
   if (rate === null) return null;
-  if (rate !== 1 && rate !== 2) throw new Error('La tasa habitual debe ser 1% o 2%.');
+  if (rate !== LOW_MARGIN_COMMISSION_RATE && rate !== 1 && rate !== 2) throw new Error('La tasa habitual debe ser 0,5%, 1% o 2%.');
   return roundCurrency(base * rate / 100);
+}
+
+export function lineCommissionRule(categoryKind: RegularCommissionKind, netSales: number, profit: number | null): { kind: RegularCommissionKind; rate: number | null } {
+  if (categoryKind === 'unknown') return { kind: 'unknown', rate: null };
+  if (categoryKind !== 'general') return { kind: categoryKind, rate: 2 };
+  if (netSales === 0) return { kind: 'general', rate: 1 };
+  if (profit === null) return { kind: 'general', rate: null };
+  return roundCurrency(profit / netSales * 100) < LOW_MARGIN_COMMISSION_THRESHOLD
+    ? { kind: 'low_margin', rate: LOW_MARGIN_COMMISSION_RATE }
+    : { kind: 'general', rate: 1 };
 }
 
 export function financialMargin(profit: number | null, sales: number): number | null {

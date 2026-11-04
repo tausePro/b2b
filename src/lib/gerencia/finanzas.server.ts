@@ -7,8 +7,8 @@ import { getServerOdooConfig } from '@/lib/odoo/serverConfig';
 import { roundCurrency } from '@/lib/comisiones/bonoPlataforma';
 import { PACKAGING_CATEGORY_ID, nextCommissionMonth, regularCommissionKind, summarizeRegularCommissions } from '@/lib/comisiones/habitual';
 import {
-  buildFinancialReport, calculateRegularCommission, financialMargin, GENERIC_TONER_CATEGORY_ID, hasZeroRecordedCost,
-  previousFinancialRange, regularCommissionRate, validateFinancialRange, ZERO_RECORDED_COST_ISSUE,
+  buildFinancialReport, calculateRegularCommission, financialMargin, GENERIC_TONER_CATEGORY_ID, hasZeroRecordedCost, lineCommissionRule,
+  PENDING_MARGIN_COMMISSION_ISSUE, previousFinancialRange, validateFinancialRange, ZERO_RECORDED_COST_ISSUE,
   type FinancialAdvisor, type FinancialCompany, type FinancialFilters, type FinancialLine, type FinancialRange,
 } from './finanzas';
 
@@ -141,9 +141,10 @@ export function normalizeFinancialLine(invoice: Row, line: Row, product: Row | u
   const productId = relationId(line.product_id);
   const categoryId = product ? relationId(product.categ_id) : null;
   const advisorId = relationId(invoice.invoice_user_id);
-  const commissionKind = regularCommissionKind(categoryId, genericCategoryIds, packagingCategoryIds);
-  const commissionRate = regularCommissionRate(categoryId, genericCategoryIds, packagingCategoryIds);
-  if (commissionRate === null) issues.push('Producto o categoría no identificable: comisión pendiente de revisión.');
+  const categoryKind = regularCommissionKind(categoryId, genericCategoryIds, packagingCategoryIds);
+  const { kind: commissionKind, rate: commissionRate } = lineCommissionRule(categoryKind, netSales, profit);
+  if (categoryKind === 'unknown') issues.push('Producto o categoría no identificable: comisión pendiente de revisión.');
+  else if (commissionRate === null) issues.push(PENDING_MARGIN_COMMISSION_ISSUE);
   if (advisorId === null) issues.push('Factura sin vendedor asignado: comisión pendiente de atribución.');
   if (advisorId !== null && portalAdvisorId === null) issues.push('El vendedor Odoo no tiene un vínculo único con una asesora del portal.');
   const saleLineIds = ids(line.sale_line_ids);
@@ -197,7 +198,7 @@ async function fetchInvoicePeriod(session: OdooSession, range: FinancialRange, s
 async function fetchDataset(admin: SupabaseClient, session: OdooSession, range: FinancialRange, scope: FinancialDatasetScope): Promise<FinancialDataset> {
   const previous = previousFinancialRange(range);
   const warnings = [
-    'Comisión habitual calculada: 1% general; 2% para tóner genéricos (categoría 26) y Soluciones de Empaques (categoría 132), incluidas sus subcategorías. No registra pagos ni modifica liquidaciones.',
+    'Comisión habitual calculada: 1% general y 0,5% para líneas generales con margen bruto menor al 15% (sin costo verificado queda pendiente); 2% para tóner genéricos (categoría 26) y Soluciones de Empaques (categoría 132), incluidas sus subcategorías, sin importar el margen. No registra pagos ni modifica liquidaciones.',
     'Empaques: el mes previsto de pago es el siguiente al mes de la factura o nota crédito. Las notas crédito conservan su signo y ajustan la comisión; el bono plataforma 0,5% se calcula por separado.',
     'La clasificación de producto y el vendedor son los registrados actualmente en Odoo. Las consultas históricas no sustituyen liquidaciones anteriores.',
     'Utilidad bruta comercial según costo de factura, igual que el margen de Odoo; no es utilidad neta después de gastos. Los servicios sin costo registrado (rentas, mantenimientos, envíos y demás productos tipo servicio) se toman con costo cero por definición de Gerencia. La mercancía con costo cero suma su venta completa como utilidad y se señala para revisión; los costos no disponibles o inconsistentes quedan pendientes.',
@@ -324,6 +325,13 @@ async function fetchDataset(admin: SupabaseClient, session: OdooSession, range: 
             line.marginPercent = null;
             line.issues = line.issues.filter(issue => issue !== ZERO_RECORDED_COST_ISSUE);
             line.issues.push('Los costos de las líneas no concilian con la cabecera de factura.');
+            if (line.commissionKind === 'general' || line.commissionKind === 'low_margin') {
+              const rule = lineCommissionRule('general', line.netSales, null);
+              line.commissionKind = rule.kind;
+              line.commissionRate = rule.rate;
+              line.commission = line.advisorId === null ? null : calculateRegularCommission(line.netSales, rule.rate);
+              if (rule.rate === null) line.issues.push(PENDING_MARGIN_COMMISSION_ISSUE);
+            }
           }
         }
       }

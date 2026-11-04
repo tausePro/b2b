@@ -12,6 +12,7 @@ import {
 
 const moneyFormatter = new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const monthFormatter = new Intl.DateTimeFormat('es-CO', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+const rateFormatter = new Intl.NumberFormat('es-CO', { maximumFractionDigits: 2 });
 const timestampFormatter = new Intl.DateTimeFormat('es-CO', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Bogota' });
 const cell = 'px-4 py-3 text-right tabular-nums align-top';
 const heading = 'px-4 py-3 text-right font-medium text-muted';
@@ -32,7 +33,7 @@ export function CommissionBreakdown({ breakdown }: { breakdown: RegularCommissio
         <caption className="sr-only">Comisión por categoría sobre ventas netas sin IVA, con notas crédito y ajustes conservando su signo.</caption>
         <thead><tr className="border-b border-border bg-background-light/50"><th scope="col" className="px-4 py-3 text-left font-medium text-muted">Categoría de comisión</th><th scope="col" className={heading}>Facturación sin IVA</th><th scope="col" className={heading}>Notas crédito</th><th scope="col" className={heading}>Base neta</th><th scope="col" className={heading}>Comisión calculada</th><th scope="col" className="px-4 py-3 text-left font-medium text-muted">Pago</th></tr></thead>
         <tbody>{breakdown.map(row => <tr key={row.kind} className="border-b border-border/50">
-          <th scope="row" className="px-4 py-3 text-left align-top font-medium">{REGULAR_COMMISSION_LABELS[row.kind]}{row.rate !== null && <span className="ml-1 text-primary">{row.rate}%</span>}</th>
+          <th scope="row" className="px-4 py-3 text-left align-top font-medium">{REGULAR_COMMISSION_LABELS[row.kind]}{row.rate !== null && <span className="ml-1 text-primary">{rateFormatter.format(row.rate)}%</span>}</th>
           <td className={cell}><Amount value={row.invoicedSales} /></td><td className={cell}><Amount value={row.creditNotes} /></td><td className={cell}><Amount value={row.netSales} /></td>
           <td className={cell}><Amount value={row.commission} known={row.knownCommission} />{row.missingCommissionLines > 0 && <span className="mt-1 block text-xs text-muted">{row.missingCommissionLines} líneas pendientes</span>}</td>
           <td className="px-4 py-3 align-top text-muted">{row.kind === 'packaging' ? 'Mes siguiente a la facturación' : '—'}</td>
@@ -117,14 +118,15 @@ export default function ComisionHabitual({ period, advisorId, refresh }: { perio
         </div>
         <div className="overflow-hidden rounded-xl border border-border bg-white"><CommissionBreakdown breakdown={data.breakdown} /></div>
         {data.canViewTeam && <div className="overflow-x-auto rounded-xl border border-border bg-white" role="region" aria-label="Comisión mensual por asesora" tabIndex={0}>
-          <table className="w-full text-sm"><caption className="sr-only">Desglose de la comisión habitual por asesora; no incluye bono plataforma.</caption><thead><tr className="border-b border-border bg-background-light/50"><th scope="col" className="px-4 py-3 text-left font-medium text-muted">Asesora</th><th scope="col" className={heading}>Base Empaques</th><th scope="col" className={heading}>Comisión Empaques 2%</th><th scope="col" className={heading}>Otras comisiones</th><th scope="col" className={heading}>Total habitual</th></tr></thead>
+          <table className="w-full text-sm"><caption className="sr-only">Desglose de la comisión habitual por asesora; no incluye bono plataforma.</caption><thead><tr className="border-b border-border bg-background-light/50"><th scope="col" className="px-4 py-3 text-left font-medium text-muted">Asesora</th><th scope="col" className={heading}>Base Empaques</th><th scope="col" className={heading}>Comisión Empaques 2%</th><th scope="col" className={heading}>Margen &lt; 15% · 0,5%</th><th scope="col" className={heading}>Otras comisiones</th><th scope="col" className={heading}>Total habitual</th></tr></thead>
             <tbody>{data.advisors.map(advisor => {
               const pack = advisor.breakdown.find(row => row.kind === 'packaging')!;
-              const others = advisor.breakdown.filter(row => row.kind !== 'packaging');
+              const low = advisor.breakdown.find(row => row.kind === 'low_margin');
+              const others = advisor.breakdown.filter(row => row.kind !== 'packaging' && row.kind !== 'low_margin');
               const otherKnown = roundCurrency(others.reduce((sum, row) => sum + row.knownCommission, 0));
               const otherMissing = others.some(row => row.commission === null);
-              const totalKnown = roundCurrency(otherKnown + pack.knownCommission);
-              return <tr key={advisor.id ?? 'none'} className="border-b border-border/50"><th scope="row" className="px-4 py-3 text-left align-top font-medium">{advisor.name}</th><td className={cell}><Amount value={pack.netSales} /></td><td className={cell}><Amount value={pack.commission} known={pack.knownCommission} /></td><td className={cell}><Amount value={otherMissing ? null : otherKnown} known={otherKnown} /></td><td className={cell}><Amount value={otherMissing || pack.commission === null ? null : totalKnown} known={totalKnown} /></td></tr>;
+              const totalKnown = roundCurrency(otherKnown + pack.knownCommission + (low?.knownCommission ?? 0));
+              return <tr key={advisor.id ?? 'none'} className="border-b border-border/50"><th scope="row" className="px-4 py-3 text-left align-top font-medium">{advisor.name}</th><td className={cell}><Amount value={pack.netSales} /></td><td className={cell}><Amount value={pack.commission} known={pack.knownCommission} /></td><td className={cell}>{low ? <><Amount value={low.commission} known={low.knownCommission} /><span className="mt-1 block text-xs text-muted">Base: {moneyFormatter.format(low.netSales)}</span></> : 'No disponible'}</td><td className={cell}><Amount value={otherMissing ? null : otherKnown} known={otherKnown} /></td><td className={cell}><Amount value={otherMissing || pack.commission === null || low?.commission === null ? null : totalKnown} known={totalKnown} /></td></tr>;
             })}</tbody></table>
         </div>}
         <PackagingPayments payments={data.payments} />
