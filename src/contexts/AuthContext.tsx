@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { readViewAsUiCookie, VIEW_AS_EXIT_PATH } from '@/lib/auth/viewAs';
 import type { User as SupabaseUser } from '@supabase/supabase-js';
 import { type User, type UserRole, ROLE_CONFIG } from '@/types';
 import {
@@ -409,6 +410,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const signOut = async () => {
+    if (readViewAsUiCookie(document.cookie)) {
+      const response = await fetch(VIEW_AS_EXIT_PATH, { method: 'POST' });
+      const payload = await response.json().catch(() => null) as { redirect?: string } | null;
+      window.location.href = payload?.redirect ?? '/login';
+      return;
+    }
     await supabase.auth.signOut();
     setUser(null);
     setSupabaseUser(null);
