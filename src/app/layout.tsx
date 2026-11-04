@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Manrope } from "next/font/google";
 import Providers from "@/components/Providers";
+import ViewAsBanner from "@/components/ViewAsBanner";
 import EmpaquesAds from "@/components/public/EmpaquesAds";
 import { buildWebMCPInlineScript } from "@/lib/webmcp/inlineScript";
 import { getSiteUrl } from "@/lib/siteUrl";
@@ -39,7 +40,7 @@ export default function RootLayout({
         />
       </head>
       <body className={`${manrope.variable} font-display antialiased`} suppressHydrationWarning>
-        <Providers>{children}</Providers>
+        <Providers><ViewAsBanner />{children}</Providers>
         <EmpaquesAds />
       </body>
     </html>
