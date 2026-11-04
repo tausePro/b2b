@@ -9,13 +9,20 @@ import {
   FINANCIAL_MAX_DAYS,
   FINANCIAL_PAGE_SIZE,
   GENERIC_TONER_CATEGORY_ID,
+  decodeFinancialReport,
+  encodeFinancialReport,
+  hasZeroRecordedCost,
+  isZeroCostService,
+  needsCostReview,
   previousFinancialRange,
   financialComparison,
   regularCommissionRate,
   summarizeFinancialLines,
   validateFinancialRange,
+  ZERO_RECORDED_COST_ISSUE,
   type FinancialRange,
 } from '../src/lib/gerencia/finanzas';
+import { normalizeFinancialLine } from '../src/lib/gerencia/finanzas.server';
 import {
   calculatePlatformBonus,
   getBogotaCalendarDate,
@@ -28,6 +35,54 @@ import { overdueDays, summarizeOpenBalances } from '../src/lib/gerencia/cartera'
 import { PACKAGING_CATEGORY_ID, nextCommissionMonth, regularCommissionKind, regularCommissionPeriod, summarizeRegularCommissions } from '../src/lib/comisiones/habitual';
 
 const DAY_MS = 86_400_000;
+
+// Lecturas reales de Odoo (octubre de 2026) congeladas para probar la normalización sin red.
+const company = [1, 'INVERSIONES IMPRIMA SAS'];
+const cop = [8, 'COP'];
+const superpack = [89, 'EMPAQUES Y SERVICIOS SUPERIORES SAS - SUPERPACK'];
+const adriana = [11, 'ADRIANA LUCIA ARROYO FUENTES'];
+const ZERO_COST_INVOICE = {
+  id: 273628, name: 'INIM23327', move_type: 'out_invoice', invoice_date: '2026-10-01', invoice_user_id: adriana,
+  commercial_partner_id: superpack, partner_id: superpack, company_id: company, currency_id: cop, company_currency_id: cop,
+  amount_untaxed: 235000, amount_untaxed_signed: 235000, margin_signed: 175000, cost_total: 60000, companyCurrencyId: 8,
+};
+const ZERO_COST_INVOICE_LINE = {
+  id: 937143, move_id: [273628, 'INIM23327 (No. OCP-00009873)'], name: '[1900100002] MANTENIMIENTO IMPRESORA TIPO DOS\nIMPRESORA CANON MF 249',
+  product_id: [664, '[1900100002] MANTENIMIENTO IMPRESORA TIPO DOS'], product_uom_id: [1, 'Units'], quantity: 1, balance: -160000,
+  price_subtotal: 160000, purchase_price: 0, margin: 160000, margin_signed: 160000, sale_line_ids: [257383],
+};
+const MAINTENANCE_PRODUCT = { id: 664, default_code: '1900100002', categ_id: [67, 'Suministros de Oficina / Mantenimientos,Recargas y  Remanufacturas / Mantenimientos Impresoras'], type: 'service' };
+const ZERO_COST_REFUND = {
+  id: 273835, name: 'RINV/2026/124', move_type: 'out_refund', invoice_date: '2026-10-02', invoice_user_id: adriana,
+  commercial_partner_id: superpack, partner_id: superpack, company_id: company, currency_id: cop, company_currency_id: cop,
+  amount_untaxed: 150000, amount_untaxed_signed: -150000, margin_signed: -150000, cost_total: 0, companyCurrencyId: 8,
+};
+const ZERO_COST_REFUND_LINE = {
+  id: 937911, move_id: [273835, 'RINV/2026/124 (Reversión de: INIM23258, NOTA CREDITO [...])'], name: '[2000100002] RENTA IMPRESORA KYOCERA MONOCROMATICA MULTIFUNCIONAL 3145',
+  product_id: [1257, '[2000100002] RENTA IMPRESORA KYOCERA MONOCROMATICA MULTIFUNCIONAL'], product_uom_id: [1, 'Units'], quantity: 1, balance: 150000,
+  price_subtotal: 150000, purchase_price: 0, margin: 150000, margin_signed: -150000, sale_line_ids: [261035],
+};
+const RENTAL_PRODUCT = { id: 1257, default_code: '2000100002', categ_id: [93, 'Suministros de Oficina / Renta de equipos / renta de impresoras'], type: 'service' };
+const enfragen = [670, 'ENFRAGEN TERMOFLORES S.A.S. E.S.P.'];
+const ZERO_COST_GOODS_INVOICE = {
+  id: 277477, name: 'INIM23936', move_type: 'out_invoice', invoice_date: '2026-10-28', invoice_user_id: [10, 'GLORIA PATRICIA GOMEZ MONCADA'],
+  commercial_partner_id: enfragen, partner_id: enfragen, company_id: company, currency_id: cop, company_currency_id: cop,
+  amount_untaxed: 1440000, amount_untaxed_signed: 1440000, margin_signed: 1440000, cost_total: 0, companyCurrencyId: 8,
+};
+const ZERO_COST_GOODS_LINE = {
+  id: 951660, move_id: [277477, 'INIM23936 (OC 75337)'], name: '[1600300183] LOCKER METÁLICO NEO 1 PUESTO GRIS NUBE ALTO 180 CM X 32 CM ANCHO X 30 CM FONDO',
+  product_id: [13504, '[1600300183] LOCKER METÁLICO NEO 1 PUESTO GRIS NUBE ALTO 180 CM X 32 CM ANCHO X 30 CM FONDO'], product_uom_id: [1, 'Units'], quantity: 3, balance: -1440000,
+  price_subtotal: 1440000, purchase_price: 0, margin: 1440000, margin_signed: 1440000, sale_line_ids: [263452],
+};
+const LOCKER_PRODUCT = { id: 13504, default_code: '1600300183', categ_id: [51, 'Suministros de Oficina / Mobiliario y Almacenaje / Organizadores'], type: 'consu' };
+
+function zeroCostLines() {
+  return [
+    normalizeFinancialLine(ZERO_COST_INVOICE, ZERO_COST_INVOICE_LINE, MAINTENANCE_PRODUCT, new Set([26]), new Set(), null),
+    normalizeFinancialLine(ZERO_COST_REFUND, ZERO_COST_REFUND_LINE, RENTAL_PRODUCT, new Set([26]), new Set(), null),
+    normalizeFinancialLine(ZERO_COST_GOODS_INVOICE, ZERO_COST_GOODS_LINE, LOCKER_PRODUCT, new Set([26]), new Set(), null),
+  ];
+}
 
 function timestamp(date: string): number {
   return Date.parse(`${date}T00:00:00Z`);
@@ -263,6 +318,98 @@ test('sin filas: no inventa documentos, clientes ni rentabilidad porcentual', ()
   assert.deepEqual(filterFinancialLines([], { advisorId: null, page: 1 }), []);
 });
 
+test('costo cero real de Odoo: servicios aceptados con costo cero y mercancía señalada, ambos con la utilidad de Odoo', () => {
+  const [invoiceLine, refundLine, goodsLine] = zeroCostLines();
+  assert.equal(invoiceLine.netSales, 160000);
+  assert.equal(invoiceLine.cost, 0);
+  assert.equal(invoiceLine.unitCost, 0);
+  assert.equal(invoiceLine.profit, ZERO_COST_INVOICE_LINE.margin_signed);
+  assert.equal(invoiceLine.marginPercent, 100);
+  assert.equal(refundLine.netSales, -150000);
+  assert.equal(refundLine.quantity, -1);
+  assert.equal(refundLine.cost, 0);
+  assert.equal(refundLine.profit, ZERO_COST_REFUND_LINE.margin_signed);
+  assert.equal(refundLine.marginPercent, null);
+  for (const line of [invoiceLine, refundLine]) {
+    assert.equal(line.isService, true);
+    assert.equal(line.issues.includes(ZERO_RECORDED_COST_ISSUE), false);
+    assert.equal(hasZeroRecordedCost(line), true);
+    assert.equal(isZeroCostService(line), true);
+    assert.equal(needsCostReview(line), false);
+  }
+  assert.equal(goodsLine.isService, false);
+  assert.equal(goodsLine.cost, 0);
+  assert.equal(goodsLine.profit, ZERO_COST_GOODS_LINE.margin_signed);
+  assert.ok(goodsLine.issues.includes(ZERO_RECORDED_COST_ISSUE));
+  assert.equal(isZeroCostService(goodsLine), false);
+  assert.equal(needsCostReview(goodsLine), true);
+  const totals = summarizeFinancialLines([invoiceLine, refundLine, goodsLine]);
+  assert.equal(totals.netSales, 1450000);
+  assert.equal(totals.cost, 0);
+  assert.equal(totals.profit, 1450000);
+  assert.equal(totals.verifiedProfit, 1450000);
+  assert.equal(totals.missingCostLines, 0);
+  assert.equal(totals.unverifiedSales, 0);
+  assert.equal(totals.costCoveragePercent, 100);
+  const report = buildFinancialReport([invoiceLine, refundLine, goodsLine], { from: '2026-10-01', to: '2026-10-28' }, { page: 1 }, '2026-11-04T12:00:00Z');
+  assert.deepEqual(report.totals, totals);
+  assert.equal(report.costReview.zeroCostGoodsLines, 1);
+  assert.equal(report.costReview.zeroCostGoodsInvoices, 1);
+  assert.equal(report.costReview.zeroCostGoodsSales, 1440000);
+  assert.equal(report.costReview.zeroCostServiceLines, 2);
+  assert.equal(report.costReview.zeroCostServiceSales, 10000);
+});
+
+test('costo ausente, negativo o con cantidad cero sigue pendiente y no se toma como costo cero', () => {
+  for (const changes of [{ purchase_price: false }, { purchase_price: -1 }, { quantity: 0 }]) {
+    const line = normalizeFinancialLine(ZERO_COST_INVOICE, { ...ZERO_COST_INVOICE_LINE, ...changes }, MAINTENANCE_PRODUCT, new Set([26]), new Set(), null);
+    assert.equal(line.cost, null, JSON.stringify(changes));
+    assert.equal(line.profit, null);
+    assert.equal(line.issues.includes(ZERO_RECORDED_COST_ISSUE), false);
+    assert.equal(hasZeroRecordedCost(line), false);
+    assert.equal(needsCostReview(line), true);
+    const totals = summarizeFinancialLines([line]);
+    assert.equal(totals.profit, null);
+    assert.equal(totals.missingCostLines, 1);
+    const report = buildFinancialReport([line], { from: '2026-10-01', to: '2026-10-01' }, { page: 1, onlyMissingCost: true }, '2026-11-04T12:00:00Z');
+    assert.equal(report.costReview.zeroCostGoodsLines, 0);
+    assert.equal(report.costReview.zeroCostServiceLines, 0);
+    assert.deepEqual(report.costReview.products.map(group => [group.lineCount, group.missingCostLines]), [[1, 1]]);
+    assert.equal(report.pagination.total, 1);
+  }
+});
+
+test('el filtro de revisión lista solo mercancía con costo cero y pendientes, sin servicios ni cambios en los KPI', () => {
+  const lines = zeroCostLines();
+  const range = { from: '2026-10-01', to: '2026-10-28' };
+  const all = buildFinancialReport(lines, range, { page: 1 }, '2026-11-04T12:00:00Z');
+  const review = buildFinancialReport(lines, range, { page: 1, onlyMissingCost: true }, '2026-11-04T12:00:00Z');
+  assert.deepEqual(review.totals, all.totals);
+  assert.deepEqual(review.costReview, all.costReview);
+  assert.deepEqual(review.lines.map(line => line.id), [951660]);
+  assert.equal(review.pagination.total, 1);
+  assert.deepEqual(review.costReview.products.map(group => [group.id, group.categoryName, group.lineCount - group.missingCostLines, group.missingCostLines, group.netSales]), [
+    [13504, LOCKER_PRODUCT.categ_id[1], 1, 0, 1440000],
+  ]);
+  assert.ok(all.products.every(group => !('categoryName' in group)), 'El resumen general de productos no agrega categorías para no crecer la respuesta.');
+});
+
+test('rangos largos agrupan la evolución por mes y la respuesta compacta se reconstruye sin perder datos', () => {
+  const lines = zeroCostLines();
+  const daily = buildFinancialReport(lines, { from: '2026-10-01', to: '2026-10-28' }, { page: 1 }, '2026-11-04T12:00:00Z');
+  assert.equal(daily.trendGranularity, 'day');
+  assert.deepEqual(daily.trend.map(point => point.date), ['2026-10-01', '2026-10-02', '2026-10-28']);
+  const annual = buildFinancialReport(lines, { from: '2025-11-03', to: '2026-11-03' }, { page: 1 }, '2026-11-04T12:00:00Z', ['Fuente real']);
+  assert.equal(annual.trendGranularity, 'month');
+  assert.deepEqual(annual.trend, [{ date: '2026-10', netSales: 1450000, profit: 1450000, commission: annual.totals.commission }]);
+  for (const report of [daily, annual]) {
+    const wire = JSON.parse(JSON.stringify(encodeFinancialReport(report)));
+    assert.deepEqual(decodeFinancialReport(wire), JSON.parse(JSON.stringify(report)));
+    assert.ok(JSON.stringify(wire.products).length < JSON.stringify(report.products).length);
+  }
+  assert.throws(() => decodeFinancialReport({ ...encodeFinancialReport(annual), products: { fields: ['key'], rows: [['a', 'b']] } }), /reporte válido/);
+});
+
 test('cartera: el vencimiento empieza al día siguiente y una fecha ausente no se inventa', () => {
   assert.equal(overdueDays('2026-12-04', '2026-10-21'), 0);
   assert.equal(overdueDays('2026-12-04', '2026-12-04'), 0);
@@ -271,6 +418,7 @@ test('cartera: el vencimiento empieza al día siguiente y una fecha ausente no s
   assert.equal(overdueDays('2028-02-29', '2028-03-01'), 1);
   assert.throws(() => overdueDays('2026-02-29', '2026-10-21'));
   const totals = summarizeOpenBalances([]);
+  assert.deepEqual(totals.accounts, []);
   assert.equal(totals.balance, 0);
   assert.equal(totals.documentCount, 0);
   assert.equal(totals.partnerCount, 0);
@@ -287,6 +435,8 @@ test('reporte vacío: conserva rangos, pagina una sola vez y deduplica advertenc
   assert.deepEqual(report.totals, summarizeFinancialLines([]));
   assert.deepEqual(report.previousTotals, summarizeFinancialLines([]));
   for (const rows of [report.lines, report.clients, report.advisors, report.products, report.trend]) assert.deepEqual(rows, []);
+  assert.deepEqual(report.costReview, { zeroCostGoodsLines: 0, zeroCostGoodsInvoices: 0, zeroCostGoodsSales: 0, zeroCostServiceLines: 0, zeroCostServiceSales: 0, products: [] });
+  assert.equal(report.trendGranularity, 'day');
   assert.equal(report.currency, 'COP');
   assert.equal(report.generatedAt, generatedAt);
   assert.equal(FINANCIAL_PAGE_SIZE, 100);

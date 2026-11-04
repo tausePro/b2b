@@ -7,13 +7,13 @@ import { getServerOdooConfig } from '@/lib/odoo/serverConfig';
 import { roundCurrency } from '@/lib/comisiones/bonoPlataforma';
 import { PACKAGING_CATEGORY_ID, nextCommissionMonth, regularCommissionKind, summarizeRegularCommissions } from '@/lib/comisiones/habitual';
 import {
-  buildFinancialReport, calculateRegularCommission, financialMargin, GENERIC_TONER_CATEGORY_ID,
-  previousFinancialRange, regularCommissionRate, validateFinancialRange,
-  type FinancialAdvisor, type FinancialFilters, type FinancialLine, type FinancialRange,
+  buildFinancialReport, calculateRegularCommission, financialMargin, GENERIC_TONER_CATEGORY_ID, hasZeroRecordedCost,
+  previousFinancialRange, regularCommissionRate, validateFinancialRange, ZERO_RECORDED_COST_ISSUE,
+  type FinancialAdvisor, type FinancialCompany, type FinancialFilters, type FinancialLine, type FinancialRange,
 } from './finanzas';
 
 type Row = Record<string, unknown>;
-export interface FinancialDataset { lines: FinancialLine[]; generatedAt: string; warnings: string[]; advisors: FinancialAdvisor[] }
+export interface FinancialDataset { lines: FinancialLine[]; generatedAt: string; warnings: string[]; advisors: FinancialAdvisor[]; company: FinancialCompany }
 export type FinancialDatasetScope = Pick<FinancialFilters, 'advisorId' | 'clientId' | 'productId' | 'invoiceId'>;
 const MAX_INVOICES_PER_PERIOD = 10000;
 const INVOICE_BATCH_SIZE = 500;
@@ -72,6 +72,14 @@ export async function readIds(session: OdooSession, model: string, values: numbe
   return result;
 }
 
+export async function getOdooReportCompany(session: OdooSession): Promise<FinancialCompany> {
+  const [user] = await readIds(session, 'res.users', [session.uid], ['id', 'company_id']);
+  const id = relationId(user.company_id);
+  const name = relationName(user.company_id);
+  if (id === null || !name) throw new FinancialDataError('No se pudo identificar la compañía activa del usuario Odoo.');
+  return { id, name };
+}
+
 async function portalContext(admin: SupabaseClient) {
   const orderIds = new Set<number>();
   const advisorCandidates = new Map<number, Set<string>>();
@@ -113,8 +121,8 @@ export function normalizeFinancialLine(invoice: Row, line: Row, product: Row | u
   const signedMargin = typeof line.margin_signed === 'number' && Number.isFinite(line.margin_signed) ? line.margin_signed : null;
   let cost: number | null = null;
   let profit: number | null = null;
-  if (purchasePrice === null || purchasePrice <= 0 || (quantity === 0 && netSales !== 0)) {
-    issues.push('Costo de factura cero, negativo o no disponible: requiere revisión.');
+  if (purchasePrice === null || purchasePrice < 0 || (quantity === 0 && netSales !== 0)) {
+    issues.push('Costo de factura negativo, no disponible o con cantidad cero: requiere revisión.');
   } else if (conversion === null || !Number.isFinite(conversion) || conversion <= 0 || recordedMargin === null || signedMargin === null) {
     issues.push('No se puede conciliar el costo y el margen en moneda de compañía.');
   } else {
@@ -127,6 +135,7 @@ export function normalizeFinancialLine(invoice: Row, line: Row, product: Row | u
     } else {
       cost = expectedCost;
       profit = expectedProfit;
+      if (hasZeroRecordedCost({ cost, netSales }) && product?.type !== 'service') issues.push(ZERO_RECORDED_COST_ISSUE);
     }
   }
   const productId = relationId(line.product_id);
@@ -150,6 +159,7 @@ export function normalizeFinancialLine(invoice: Row, line: Row, product: Row | u
     clientId, clientName: relationName(invoice.commercial_partner_id) ?? relationName(invoice.partner_id) ?? 'Cliente no identificado',
     productId, productName: relationName(line.product_id) ?? (typeof line.name === 'string' && line.name ? line.name : 'Línea sin producto'),
     sku: typeof product?.default_code === 'string' && product.default_code ? product.default_code : null,
+    isService: product?.type === 'service',
     categoryId, categoryName: product ? relationName(product.categ_id) : null,
     unitId: relationId(line.product_uom_id), unitName: relationName(line.product_uom_id) ?? 'Sin unidad',
     quantity: sign * quantity, netSales,
@@ -162,9 +172,9 @@ export function normalizeFinancialLine(invoice: Row, line: Row, product: Row | u
   };
 }
 
-function invoiceDomain(range: FinancialRange, scope: FinancialDatasetScope): unknown[] {
+function invoiceDomain(range: FinancialRange, scope: FinancialDatasetScope, companyId: number): unknown[] {
   const domain: unknown[] = [
-    ['state', '=', 'posted'], ['move_type', 'in', ['out_invoice', 'out_refund']],
+    ['state', '=', 'posted'], ['move_type', 'in', ['out_invoice', 'out_refund']], ['company_id', '=', companyId],
     ['invoice_date', '>=', range.from], ['invoice_date', '<=', range.to],
   ];
   if (scope.advisorId !== undefined) domain.push(['invoice_user_id', '=', scope.advisorId ?? false]);
@@ -177,8 +187,8 @@ function invoiceDomain(range: FinancialRange, scope: FinancialDatasetScope): unk
   return domain;
 }
 
-async function fetchInvoicePeriod(session: OdooSession, range: FinancialRange, scope: FinancialDatasetScope, label: string): Promise<Row[]> {
-  return searchAll(session, 'account.move', invoiceDomain(range, scope),
+async function fetchInvoicePeriod(session: OdooSession, range: FinancialRange, scope: FinancialDatasetScope, companyId: number, label: string): Promise<Row[]> {
+  return searchAll(session, 'account.move', invoiceDomain(range, scope, companyId),
     ['id', 'name', 'move_type', 'invoice_date', 'invoice_user_id', 'commercial_partner_id', 'partner_id', 'company_id', 'currency_id', 'amount_untaxed', 'amount_untaxed_signed', 'margin_signed', 'cost_total'],
     MAX_INVOICES_PER_PERIOD, undefined,
     `El período ${label} (${range.from} a ${range.to}) supera los 10.000 documentos. Filtra una asesora, cliente, producto o factura, o reduce las fechas. No se muestran totales incompletos.`);
@@ -190,12 +200,14 @@ async function fetchDataset(admin: SupabaseClient, session: OdooSession, range: 
     'Comisión habitual calculada: 1% general; 2% para tóner genéricos (categoría 26) y Soluciones de Empaques (categoría 132), incluidas sus subcategorías. No registra pagos ni modifica liquidaciones.',
     'Empaques: el mes previsto de pago es el siguiente al mes de la factura o nota crédito. Las notas crédito conservan su signo y ajustan la comisión; el bono plataforma 0,5% se calcula por separado.',
     'La clasificación de producto y el vendedor son los registrados actualmente en Odoo. Las consultas históricas no sustituyen liquidaciones anteriores.',
-    'Utilidad bruta comercial según costo de factura; no es utilidad neta después de gastos. Costos cero o inconsistentes se señalan para revisión.',
+    'Utilidad bruta comercial según costo de factura, igual que el margen de Odoo; no es utilidad neta después de gastos. Los servicios sin costo registrado (rentas, mantenimientos, envíos y demás productos tipo servicio) se toman con costo cero por definición de Gerencia. La mercancía con costo cero suma su venta completa como utilidad y se señala para revisión; los costos no disponibles o inconsistentes quedan pendientes.',
     'Otros/sin vínculo identifica líneas sin vínculo verificable a pedidos del portal; no presume su canal comercial.',
   ];
+  const company = await getOdooReportCompany(session);
+  warnings.push(`Compañía Odoo consultada: ${company.name}. No incluye documentos de otras compañías del mismo Odoo.`);
   const [currentInvoices, previousInvoices, categories, portal] = await Promise.all([
-    fetchInvoicePeriod(session, range, scope, 'actual'),
-    fetchInvoicePeriod(session, previous, scope, 'comparativo'),
+    fetchInvoicePeriod(session, range, scope, company.id, 'actual'),
+    fetchInvoicePeriod(session, previous, scope, company.id, 'comparativo'),
     searchAll(session, 'product.category', [], ['id', 'name', 'parent_id'], 10000),
     portalContext(admin),
   ]);
@@ -244,7 +256,7 @@ async function fetchDataset(admin: SupabaseClient, session: OdooSession, range: 
     }
   }
   const advisors = [...advisorDirectory.values()];
-  if (!invoices.length) return { lines: [], generatedAt: new Date().toISOString(), warnings, advisors };
+  if (!invoices.length) return { lines: [], generatedAt: new Date().toISOString(), warnings, advisors, company };
   const companyIds = invoices.map((invoice) => {
     const id = relationId(invoice.company_id);
     if (id === null) throw new FinancialDataError('Una factura no identifica su compañía Odoo.');
@@ -273,7 +285,7 @@ async function fetchDataset(admin: SupabaseClient, session: OdooSession, range: 
       .filter((id): id is number => id !== null && !productById.has(id));
     const referencedSaleLines = [...new Set(rawLines.flatMap(line => ids(line.sale_line_ids)))];
     const [products, portalSaleLines] = await Promise.all([
-      readIds(session, 'product.product', productIds, ['id', 'default_code', 'categ_id']),
+      readIds(session, 'product.product', productIds, ['id', 'default_code', 'categ_id', 'type']),
       portal.orderIds.size && referencedSaleLines.length ? searchAll(session, 'sale.order.line', [
         ['id', 'in', referencedSaleLines], ['order_id', 'in', [...portal.orderIds]],
       ], ['id'], MAX_LINES) : Promise.resolve([]),
@@ -310,6 +322,7 @@ async function fetchDataset(admin: SupabaseClient, session: OdooSession, range: 
             line.cost = null;
             line.profit = null;
             line.marginPercent = null;
+            line.issues = line.issues.filter(issue => issue !== ZERO_RECORDED_COST_ISSUE);
             line.issues.push('Los costos de las líneas no concilian con la cabecera de factura.');
           }
         }
@@ -318,7 +331,7 @@ async function fetchDataset(admin: SupabaseClient, session: OdooSession, range: 
   }
   if (invalidCostInvoices) warnings.push(`${invalidCostInvoices} documentos tienen diferencias de costo entre cabecera y líneas.`);
   if (emptyInvoices) warnings.push(`${emptyInvoices} documentos de base cero sin líneas de producto no generan métricas de documentos/clientes.`);
-  return { lines: lines.sort((a, b) => a.id - b.id), generatedAt: new Date().toISOString(), warnings, advisors };
+  return { lines: lines.sort((a, b) => a.id - b.id), generatedAt: new Date().toISOString(), warnings, advisors, company };
 }
 
 export async function loadFinancialDataset(admin: SupabaseClient, range: FinancialRange, useCache = true, filters: FinancialDatasetScope = {}): Promise<FinancialDataset> {
@@ -354,6 +367,7 @@ export async function loadFinancialDataset(admin: SupabaseClient, range: Financi
 export async function getFinancialReport(admin: SupabaseClient, range: FinancialRange, filters: FinancialFilters, useCache = true) {
   const dataset = await loadFinancialDataset(admin, range, useCache, filters);
   const report = buildFinancialReport(dataset.lines, range, filters, dataset.generatedAt, dataset.warnings);
+  report.company = dataset.company;
   report.selectedAdvisor = filters.advisorId === undefined || filters.advisorId === null ? null : dataset.advisors.find((advisor) => advisor.id === filters.advisorId) ?? null;
   if (filters.advisorId === undefined && filters.clientId === undefined && filters.productId === undefined && filters.invoiceId === undefined) {
     const present = new Set(report.advisors.map((advisor) => advisor.id));

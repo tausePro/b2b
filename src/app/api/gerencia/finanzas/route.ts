@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authorizeApiRoles } from '@/lib/auth/apiRouteGuards';
-import { defaultFinancialRange, validateFinancialRange, type FinancialFilters } from '@/lib/gerencia/finanzas';
+import { defaultFinancialRange, encodeFinancialReport, validateFinancialRange, type FinancialFilters } from '@/lib/gerencia/finanzas';
 import { FinancialDataError, getFinancialReport } from '@/lib/gerencia/finanzas.server';
 
 export const dynamic = 'force-dynamic';
@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
     if (params.has('pendientes_costo') && params.get('pendientes_costo') !== '1') {
       throw new FinancialDataError('El filtro de costos pendientes no es válido.', 400);
     }
-    const report = await getFinancialReport(auth.admin, range, filters);
+    const report = encodeFinancialReport(await getFinancialReport(auth.admin, range, filters));
     if (Buffer.byteLength(JSON.stringify(report)) > 3 * 1024 * 1024) {
       throw new FinancialDataError('El reporte es demasiado grande. Reduce el rango o selecciona una asesora o cliente.', 422);
     }
