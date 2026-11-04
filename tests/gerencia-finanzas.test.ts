@@ -102,6 +102,16 @@ test('gerencia y detalle financiero requieren Dirección o Super Admin, también
   assert.equal(canAccessDashboardPath('asesor', '/dashboard/comisiones'), true);
 });
 
+test('leads en el portal de gerencia: Dirección y Super Admin, también como rol extra; asesoras y clientes no', () => {
+  for (const path of ['/dashboard/leads', '/dashboard/leads/']) {
+    assert.equal(canAccessDashboardPath('direccion', path), true);
+    assert.equal(canAccessDashboardPath('super_admin', path), true);
+    assert.equal(canAccessDashboardPath({ rol: 'asesor', rolesExtra: ['direccion'] }, path), true);
+    for (const role of ['asesor', 'comprador', 'aprobador', 'editor_contenido'] as const) assert.equal(canAccessDashboardPath(role, path), false);
+  }
+  assert.equal(canAccessDashboardPath('editor_contenido', '/admin/leads'), true);
+});
+
 test('fecha Bogotá: el mes financiero cambia a las 05:00 UTC, no a medianoche UTC', () => {
   for (const [instant, expected] of [
     ['2026-10-01T04:59:59.999Z', '2026-09-30'],
