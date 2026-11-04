@@ -337,9 +337,9 @@ function OpenBalances({ userId, refresh }: { userId: string; refresh: number }) 
       {data && <>
         <p className="text-xs text-muted">Consultado: {timestampFormatter.format(new Date(data.generatedAt))} (Bogotá). Saldos contables en COP, incluidos impuestos, retenciones y pagos aplicados. La lectura puede reutilizarse durante un minuto.</p>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <KpiCard title="Por cobrar · saldo neto" value={money(data.receivable.balance)} subtitle={`${data.receivable.documentCount} documentos · ${data.receivable.partnerCount} terceros`} icon={<DollarSign className="h-5 w-5" aria-hidden="true" />} />
+          <KpiCard title={data.invoices ? 'Por cobrar · facturas pendientes' : 'Por cobrar · saldo neto'} value={money(data.invoices ? data.invoices.receivable.total : data.receivable.balance)} subtitle={data.invoices ? `${data.invoices.receivable.documentCount} facturas, como el tablero de Odoo · Saldo contable: ${money(data.receivable.balance)}` : `${data.receivable.documentCount} documentos · ${data.receivable.partnerCount} terceros`} icon={<DollarSign className="h-5 w-5" aria-hidden="true" />} />
           <KpiCard title="Cargos por cobrar vencidos" value={money(data.receivable.overdue)} subtitle={`Con fecha informada, sin compensar abonos. Cargos sin vencimiento: ${money(data.receivable.withoutDueDate)}`} icon={<FileText className="h-5 w-5" aria-hidden="true" />} />
-          <KpiCard title="Por pagar · saldo neto" value={money(data.payable.balance)} subtitle={`${data.payable.documentCount} documentos · ${data.payable.partnerCount} terceros`} icon={<DollarSign className="h-5 w-5" aria-hidden="true" />} />
+          <KpiCard title={data.invoices ? 'Por pagar · facturas pendientes' : 'Por pagar · saldo neto'} value={money(data.invoices ? data.invoices.payable.total : data.payable.balance)} subtitle={data.invoices ? `${data.invoices.payable.documentCount} facturas, como el tablero de Odoo · Saldo contable: ${money(data.payable.balance)}` : `${data.payable.documentCount} documentos · ${data.payable.partnerCount} terceros`} icon={<DollarSign className="h-5 w-5" aria-hidden="true" />} />
           <KpiCard title="Cargos por pagar vencidos" value={money(data.payable.overdue)} subtitle={`Con fecha informada, sin compensar abonos. Cargos sin vencimiento: ${money(data.payable.withoutDueDate)}`} icon={<FileText className="h-5 w-5" aria-hidden="true" />} />
         </div>
         <details className="rounded-xl border border-border bg-white p-4">
@@ -364,6 +364,24 @@ function OpenBalances({ userId, refresh }: { userId: string; refresh: number }) 
               <tbody>{([['Por cobrar', data.receivable.accounts], ['Por pagar', data.payable.accounts]] as const).flatMap(([label, accounts]) => accounts.map(account => <tr key={`${label}-${account.name}`} className="border-t border-border"><th scope="row" className="px-4 py-3 text-left font-medium">{account.name}</th><td className={cellClass}>{label}</td><td className={cellClass}>{account.lineCount}</td><AmountCell value={account.balance} /></tr>))}</tbody>
             </table>
           </div>
+          {data.invoices && (
+            <div className="mt-4 overflow-x-auto" role="region" aria-label="Conciliación entre facturas pendientes y saldo contable" tabIndex={0}>
+              <table className="w-full text-sm">
+                <caption className="sr-only">Puente entre las facturas pendientes del tablero de Odoo y el saldo contable de cada lado.</caption>
+                <thead><tr><th scope="col" className="px-4 py-3 text-left">Conciliación con el saldo contable</th><th scope="col" className={headingCellClass}>Por cobrar</th><th scope="col" className={headingCellClass}>Por pagar</th></tr></thead>
+                <tbody>
+                  {([
+                    ['Facturas pendientes · valor total (tablero de Odoo)', 'total'],
+                    ['Abonos parciales ya aplicados a esas facturas', 'partialPayments'],
+                    ['Notas crédito en diarios de notas crédito', 'creditNoteResidual'],
+                    ['Pagos, anticipos y otros asientos sin conciliar', 'otherOpen'],
+                    ['Saldo contable (informe de antigüedad)', 'accountingBalance'],
+                  ] as const).map(([label, field]) => <tr key={field} className="border-t border-border"><th scope="row" className="px-4 py-3 text-left font-medium">{label}</th><AmountCell value={data.invoices!.receivable[field]} /><AmountCell value={data.invoices!.payable[field]} /></tr>)}
+                </tbody>
+              </table>
+              <p className="mt-2 text-xs text-muted">Diarios de facturas por cobrar: {data.invoices.receivable.journals.join(', ') || 'ninguno'} · por pagar: {data.invoices.payable.journals.join(', ') || 'ninguno'}.{data.writtenOff?.lineCount ? ` Cartera castigada excluida por Gerencia: ${money(data.writtenOff.balance)} (${data.writtenOff.documents.join(', ')}).` : ''}</p>
+            </div>
+          )}
           <ul className="mt-3 list-disc space-y-2 pl-5 text-xs text-muted">{data.warnings.map(warning => <li key={warning}>{warning}</li>)}</ul>
         </details>
         <details className="overflow-hidden rounded-xl border border-border bg-white" open={detailsOpen} onToggle={event => setDetailsOpen(event.currentTarget.open)}>

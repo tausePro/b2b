@@ -31,7 +31,7 @@ import {
 } from '../src/lib/comisiones/bonoPlataforma';
 
 import { canAccessDashboardPath } from '../src/lib/auth/routeAccess';
-import { overdueDays, summarizeOpenBalances } from '../src/lib/gerencia/cartera';
+import { buildOpenBalanceReport, overdueDays, summarizeOpenBalances, summarizeOpenInvoices, type OpenInvoiceDocument } from '../src/lib/gerencia/cartera';
 import { PACKAGING_CATEGORY_ID, nextCommissionMonth, regularCommissionKind, regularCommissionPeriod, summarizeRegularCommissions } from '../src/lib/comisiones/habitual';
 
 const DAY_MS = 86_400_000;
@@ -418,6 +418,41 @@ test('rangos largos agrupan la evolución por mes y la respuesta compacta se rec
     assert.ok(JSON.stringify(wire.products).length < JSON.stringify(report.products).length);
   }
   assert.throws(() => decodeFinancialReport({ ...encodeFinancialReport(annual), products: { fields: ['key'], rows: [['a', 'b']] } }), /reporte válido/);
+});
+
+test('cartera como el tablero de Odoo: totales reales del 2026-11-04 por diario y puente exacto al saldo contable', () => {
+  const journal = (side: OpenInvoiceDocument['side'], id: number, name: string, total: number, residual: number, creditNoteJournal = false): OpenInvoiceDocument => ({
+    id, side, journalId: id, journalName: name, creditNoteJournal, total, residual,
+  });
+  const documents = [
+    journal('receivable', 1, 'Facturas de cliente Electronica', 897365461.25, 889163957.25),
+    journal('receivable', 56, 'Nota Crédito Electronica', -174692, -174692, true),
+    journal('payable', 2, 'Facturas Compra', 418997687.88, 417299967.6),
+    journal('payable', 22, 'Gasto', 35232409.29, 35232409.29),
+    journal('payable', 58, 'DOC SOPORTE', 4620411.3, 4620411.3),
+    journal('payable', 21, 'DOC SOPORTE (ARCHIVADO)', 1778390.16, 1778390.16),
+    journal('payable', 59, 'Nota Crédito Proveedores', -2774413.88, -2774413.88, true),
+  ];
+  const receivable = summarizeOpenInvoices(documents, 'receivable', roundCurrency(1016602317.13 - 169057255));
+  assert.equal(Math.round(receivable.total), 897365461);
+  assert.equal(receivable.partialPayments, -8201504);
+  assert.equal(receivable.creditNoteResidual, -174692);
+  assert.equal(receivable.otherOpen, -41444203.12);
+  assert.deepEqual([receivable.journals, receivable.creditNoteJournals], [['Facturas de cliente Electronica'], ['Nota Crédito Electronica']]);
+  const payable = summarizeOpenInvoices(documents, 'payable', 450590905.04);
+  assert.equal(payable.total, 460628898.63);
+  assert.equal(payable.residual, 458931178.35);
+  assert.equal(payable.otherOpen, -5565859.43);
+  for (const summary of [receivable, payable]) {
+    assert.equal(roundCurrency(summary.total + summary.partialPayments + summary.creditNoteResidual + summary.otherOpen), summary.accountingBalance);
+  }
+  const report = buildOpenBalanceReport([], '2026-11-04', '2026-11-04T17:00:00Z', { side: 'receivable', status: 'all', search: '', page: 1 }, { id: 1, name: 'INVERSIONES IMPRIMA SAS' }, {
+    invoices: documents, writtenOff: { documents: ['I/2025/12/0487'], lineCount: 3, balance: 169057255 },
+  });
+  assert.equal(report.invoices?.receivable.accountingBalance, report.receivable.balance);
+  assert.deepEqual(report.writtenOff, { documents: ['I/2025/12/0487'], lineCount: 3, balance: 169057255 });
+  assert.ok(report.warnings.some(warning => warning.includes('I/2025/12/0487')));
+  assert.equal(buildOpenBalanceReport([], '2026-11-04', '2026-11-04T17:00:00Z', { side: 'receivable', status: 'all', search: '', page: 1 }).invoices, null);
 });
 
 test('cartera: el vencimiento empieza al día siguiente y una fecha ausente no se inventa', () => {
