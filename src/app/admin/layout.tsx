@@ -22,6 +22,7 @@ import {
   FileText,
   UserPlus,
   Package,
+  Eye,
 } from 'lucide-react';
 
 interface MenuItem {
@@ -76,6 +77,7 @@ const allMenuSections: (MenuSection & { roles?: string[] })[] = [
     roles: ['super_admin'],
     items: [
       { href: '/admin/administradores', label: 'Administradores', icon: Users },
+      { href: '/admin/ver-como', label: 'Ver como usuario', icon: Eye },
       { href: '/admin/configuracion', label: 'Configuración', icon: Settings },
     ],
   },

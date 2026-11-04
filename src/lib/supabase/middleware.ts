@@ -1,6 +1,9 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 import { RUTAS_MARKDOWN } from '@/lib/landing/getMarkdown';
+import {
+  isViewAsRequestAllowed, VIEW_AS_COOKIE, VIEW_AS_EXIT_PATH, VIEW_AS_EXPIRES_COOKIE, VIEW_AS_READ_ONLY_MESSAGE,
+} from '@/lib/auth/viewAs';
 
 /** True si el header Accept indica preferencia por Markdown. */
 function prefiereMarkdown(accept: string | null): boolean {
@@ -13,6 +16,20 @@ export async function updateSession(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
   const hostname = request.headers.get('host') || '';
   const isEmpaquesHost = hostname.startsWith('empaques.');
+
+  // Modo "ver como" del Super Admin: solo lectura y con vencimiento.
+  if (request.cookies.get(VIEW_AS_COOKIE)?.value) {
+    if (!isViewAsRequestAllowed(request.method, pathname)) {
+      return NextResponse.json({ error: VIEW_AS_READ_ONLY_MESSAGE }, { status: 403 });
+    }
+    const expiresAt = Number(request.cookies.get(VIEW_AS_EXPIRES_COOKIE)?.value);
+    if (request.method === 'GET' && !pathname.startsWith('/api/') && !(Number.isFinite(expiresAt) && Date.now() <= expiresAt)) {
+      const url = request.nextUrl.clone();
+      url.pathname = VIEW_AS_EXIT_PATH;
+      url.search = '?motivo=expirado';
+      return NextResponse.redirect(url);
+    }
+  }
 
   // ── Content negotiation: Markdown for Agents ──
   // Si el request pide Markdown y la ruta es pública + soportada,
