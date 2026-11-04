@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useCallback, useEffect, useId, useMemo, useState, type ReactNode } from 'react';
+import { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { ArrowLeft, BadgeDollarSign, Building2, DollarSign, FileText, Loader2, RefreshCw, TrendingUp } from 'lucide-react';
@@ -12,8 +12,8 @@ import { getBogotaCalendarDate, getCommissionPeriodRange, PLATFORM_BONUS_START_D
 import { REGULAR_COMMISSION_LABELS } from '@/lib/comisiones/habitual';
 import { CommissionBreakdown, PackagingPayments, commissionMonthLabel } from './ComisionHabitual';
 import type { CommissionPeriodStatus, PlatformBonusTotals } from '@/lib/comisiones/bonoPlataforma';
-import { defaultFinancialRange, validateFinancialRange } from '@/lib/gerencia/finanzas';
-import type { FinancialFilters, FinancialGroup, FinancialRange, FinancialReport, FinancialTotals } from '@/lib/gerencia/finanzas';
+import { decodeFinancialReport, defaultFinancialRange, validateFinancialRange } from '@/lib/gerencia/finanzas';
+import type { FinancialFilters, FinancialGroup, FinancialRange, FinancialReport, FinancialReportWire, FinancialTotals } from '@/lib/gerencia/finanzas';
 import type { BalanceSide, BalanceStatus, OpenBalanceReport } from '@/lib/gerencia/cartera';
 
 const PAGE_SIZE = 50;
@@ -90,7 +90,7 @@ function useBogotaToday(): string {
   return today;
 }
 
-function useReadonlyJson<T>(url: string | null, userId: string | undefined, refresh: number, validate: (data: T) => void) {
+function useReadonlyJson<T, W = T>(url: string | null, userId: string | undefined, refresh: number, validate: (data: T) => void, decode?: (payload: W) => T) {
   const key = JSON.stringify([url, userId, refresh]);
   const [result, setResult] = useState<ReadonlyResult<T> | null>(null);
   useEffect(() => {
@@ -108,15 +108,16 @@ function useReadonlyJson<T>(url: string | null, userId: string | undefined, refr
           const message = typeof payload.error === 'string' ? payload.error : 'No se pudo consultar la información. Intenta actualizar.';
           throw new Error(message);
         }
-        validate(payload as T);
-        setResult({ key, data: payload as T, error: null });
+        const data = decode ? decode(payload as W) : payload as T;
+        validate(data);
+        setResult({ key, data, error: null });
       } catch (error) {
         if (!controller.signal.aborted) setResult({ key, data: null, error: error instanceof Error ? error.message : 'No se pudo consultar la información.' });
       }
     };
     void load();
     return () => controller.abort();
-  }, [key, url, userId, validate]);
+  }, [key, url, userId, validate, decode]);
   const current = url && userId && result?.key === key ? result : null;
   return { data: current?.data ?? null, error: current?.error ?? null, loading: !!url && !!userId && !current };
 }
@@ -233,15 +234,17 @@ function TrendTable({ report }: { report: FinancialReport }) {
   const [page, setPage] = useState(1);
   const totalPages = Math.max(1, Math.ceil(report.trend.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
+  const monthly = report.trendGranularity === 'month';
+  const label = monthly ? 'evolución mensual' : 'evolución diaria';
   return (
     <details className="overflow-hidden rounded-xl border border-border bg-white">
-      <summary className="cursor-pointer px-5 py-4 font-semibold text-foreground">Evolución diaria de la facturación</summary>
-      <p className="px-5 pb-4 text-xs text-muted">Solo fechas con líneas registradas. Agregados completos del rango consultado, no de la página de detalle.</p>
-      <div className="overflow-x-auto" role="region" aria-label="Tabla de evolución diaria" tabIndex={0}>
-        <table className="w-full text-sm"><caption className="sr-only">Venta neta, utilidad bruta y comisión habitual por fecha de factura</caption><thead><tr className="border-y border-border bg-background-light/50"><th scope="col" className="px-4 py-3 text-left font-medium text-muted">Fecha</th><th scope="col" className={headingCellClass}>Venta neta</th><th scope="col" className={headingCellClass}>Utilidad bruta</th><th scope="col" className={headingCellClass}>Comisión habitual</th></tr></thead><tbody>{report.trend.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE).map((row) => <tr key={row.date} className="border-b border-border/50"><th scope="row" className="px-4 py-3 text-left font-medium">{dateLabel(row.date)}</th><AmountCell value={row.netSales} /><AmountCell value={row.profit} /><AmountCell value={row.commission} /></tr>)}</tbody></table>
+      <summary className="cursor-pointer px-5 py-4 font-semibold text-foreground">{monthly ? 'Evolución mensual de la facturación' : 'Evolución diaria de la facturación'}</summary>
+      <p className="px-5 pb-4 text-xs text-muted">{monthly ? 'Totales por mes de factura en rangos de más de 62 días. Solo meses con líneas registradas.' : 'Solo fechas con líneas registradas.'} Agregados completos del rango consultado, no de la página de detalle.</p>
+      <div className="overflow-x-auto" role="region" aria-label={`Tabla de ${label}`} tabIndex={0}>
+        <table className="w-full text-sm"><caption className="sr-only">Venta neta, utilidad bruta y comisión habitual por {monthly ? 'mes' : 'fecha'} de factura</caption><thead><tr className="border-y border-border bg-background-light/50"><th scope="col" className="px-4 py-3 text-left font-medium text-muted">{monthly ? 'Mes' : 'Fecha'}</th><th scope="col" className={headingCellClass}>Venta neta</th><th scope="col" className={headingCellClass}>Utilidad bruta</th><th scope="col" className={headingCellClass}>Comisión habitual</th></tr></thead><tbody>{report.trend.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE).map((row) => <tr key={row.date} className="border-b border-border/50"><th scope="row" className="px-4 py-3 text-left font-medium">{monthly ? commissionMonthLabel(row.date) : dateLabel(row.date)}</th><AmountCell value={row.netSales} /><AmountCell value={row.profit} /><AmountCell value={row.commission} /></tr>)}</tbody></table>
       </div>
-      {report.trend.length === 0 && <p className="px-5 py-6 text-sm text-muted">No hay fechas con facturación en esta consulta.</p>}
-      <Pagination label="evolución diaria" page={currentPage} totalPages={totalPages} total={report.trend.length} onChange={setPage} />
+      {report.trend.length === 0 && <p className="px-5 py-6 text-sm text-muted">No hay {monthly ? 'meses' : 'fechas'} con facturación en esta consulta.</p>}
+      <Pagination label={label} page={currentPage} totalPages={totalPages} total={report.trend.length} onChange={setPage} />
     </details>
   );
 }
@@ -317,7 +320,7 @@ function OpenBalances({ userId, refresh }: { userId: string; refresh: number }) 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 id={`${id}-title`} className="text-lg font-semibold text-foreground">Cuentas por cobrar y por pagar</h2>
-          <p className="mt-1 text-sm text-muted">Saldos actuales de Imprima en Odoo, de todos los períodos. Son independientes de los filtros de ventas.</p>
+          <p className="mt-1 text-sm text-muted">Saldos actuales de {data?.company?.name ?? 'Imprima'} en Odoo, de todos los períodos. Son independientes de los filtros de ventas.</p>
         </div>
         <button type="button" className={buttonClass} onClick={() => setLocalRefresh(value => value + 1)}><RefreshCw className="h-4 w-4" aria-hidden="true" />Actualizar saldos</button>
       </div>
@@ -352,6 +355,13 @@ function OpenBalances({ userId, refresh }: { userId: string; refresh: number }) 
                 ] as const).map(([label, field]) => <tr key={field} className="border-t border-border"><th scope="row" className="px-4 py-3 text-left font-medium">{label}</th><AmountCell value={data.receivable[field]} /><AmountCell value={data.payable[field]} /></tr>)}
                 {data.receivable.aging.map((bucket, index) => <tr key={bucket.label} className="border-t border-border"><th scope="row" className="px-4 py-3 text-left font-medium">Vencido: {bucket.label}</th><AmountCell value={bucket.amount} /><AmountCell value={data.payable.aging[index].amount} /></tr>)}
               </tbody>
+            </table>
+          </div>
+          <div className="mt-4 overflow-x-auto" role="region" aria-label="Saldo neto por cuenta contable" tabIndex={0}>
+            <table className="w-full text-sm">
+              <caption className="sr-only">Saldo neto por cuenta contable de Odoo. Por pagar con signo invertido: positivo es deuda con terceros y negativo, anticipos o abonos a favor.</caption>
+              <thead><tr><th scope="col" className="px-4 py-3 text-left">Cuenta contable</th><th scope="col" className={headingCellClass}>Saldo</th><th scope="col" className={headingCellClass}>Partidas</th><th scope="col" className={headingCellClass}>Saldo neto</th></tr></thead>
+              <tbody>{([['Por cobrar', data.receivable.accounts], ['Por pagar', data.payable.accounts]] as const).flatMap(([label, accounts]) => accounts.map(account => <tr key={`${label}-${account.name}`} className="border-t border-border"><th scope="row" className="px-4 py-3 text-left font-medium">{account.name}</th><td className={cellClass}>{label}</td><td className={cellClass}>{account.lineCount}</td><AmountCell value={account.balance} /></tr>))}</tbody>
             </table>
           </div>
           <ul className="mt-3 list-disc space-y-2 pl-5 text-xs text-muted">{data.warnings.map(warning => <li key={warning}>{warning}</li>)}</ul>
@@ -398,6 +408,9 @@ function FinancialView({ advisorId, initialQuery, bonusPeriod, onBonusPeriodChan
   const [page, setPage] = useState(1);
   const [refresh, setRefresh] = useState(0);
   const [onlyMissingCost, setOnlyMissingCost] = useState(() => new URLSearchParams(initialQuery).get('pendientes_costo') === '1');
+  const detailHeadingRef = useRef<HTMLHeadingElement>(null);
+  const scrollToDetailRef = useRef(false);
+  const scrollTokenRef = useRef(0);
   const [portalCompanyByPartnerId, setPortalCompanyByPartnerId] = useState<Map<number, string>>(() => new Map());
 
   useEffect(() => {
@@ -446,7 +459,29 @@ function FinancialView({ advisorId, initialQuery, bonusPeriod, onBonusPeriodChan
       throw new Error('La respuesta no corresponde al rango, filtros y página solicitados. Actualiza la consulta.');
     }
   }, [expectedFilters, range.from, range.to]);
-  const { data: report, error, loading } = useReadonlyJson<FinancialReport>(!authLoading && canAccess && !rangePending && !validationError ? `/api/gerencia/finanzas?${query}` : null, user?.id, refresh, validate);
+  const { data: report, error, loading } = useReadonlyJson<FinancialReport, FinancialReportWire>(!authLoading && canAccess && !rangePending && !validationError ? `/api/gerencia/finanzas?${query}` : null, user?.id, refresh, validate, decodeFinancialReport);
+  const focusDetail = useCallback(async () => {
+    const heading = detailHeadingRef.current;
+    if (!heading) return;
+    const token = ++scrollTokenRef.current;
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    await heading.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
+    if (token === scrollTokenRef.current) heading.focus({ preventScroll: true });
+  }, []);
+  useEffect(() => {
+    if (!scrollToDetailRef.current || !report?.filters.onlyMissingCost) return;
+    scrollToDetailRef.current = false;
+    void focusDetail();
+  }, [report, focusDetail]);
+  const showReviewLines = () => {
+    if (onlyMissingCost && page === 1 && report) {
+      void focusDetail();
+      return;
+    }
+    scrollToDetailRef.current = true;
+    setOnlyMissingCost(true);
+    setPage(1);
+  };
   const isAdvisor = filters.asesora !== '';
   const selectedAdvisor = report?.selectedAdvisor ?? report?.advisors.find((group) => group.id === requestedFilters.advisorId);
   const dateQuery = new URLSearchParams({ desde: range.from, hasta: range.to });
@@ -492,7 +527,7 @@ function FinancialView({ advisorId, initialQuery, bonusPeriod, onBonusPeriodChan
   return (
     <div className="space-y-6">
       <header className="flex flex-wrap items-start justify-between gap-4">
-        <div><h1 className="text-2xl font-bold text-foreground">{isAdvisor ? `Rentabilidad por asesora${selectedAdvisor ? ` · ${selectedAdvisor.name}` : ''}` : 'Rentabilidad general'}</h1><p className="mt-1 text-sm text-muted">Facturación publicada en Odoo de todos los canales · Consulta gerencial de solo lectura</p></div>
+        <div><h1 className="text-2xl font-bold text-foreground">{isAdvisor ? `Rentabilidad por asesora${selectedAdvisor ? ` · ${selectedAdvisor.name}` : ''}` : 'Rentabilidad general'}</h1><p className="mt-1 text-sm text-muted">Facturación publicada en Odoo de todos los canales{report?.company ? ` · ${report.company.name}` : ''} · Consulta gerencial de solo lectura</p></div>
         <nav aria-label="Navegación financiera" className="flex flex-wrap gap-4 text-sm font-medium">
           {isAdvisor && <Link href={generalHref} className={`${linkClass} inline-flex items-center gap-1`}><ArrowLeft aria-hidden="true" className="h-4 w-4" />Volver a rentabilidad general</Link>}
           <Link href="/dashboard/clientes" className={linkClass}>Fichas e informes por cliente</Link>
@@ -528,8 +563,8 @@ function FinancialView({ advisorId, initialQuery, bonusPeriod, onBonusPeriodChan
       </section>
 
       <aside className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
-        <p><strong>Alcance financiero:</strong> ventas netas en COP sin impuestos, con notas crédito descontadas según su signo contable. El costo procede de la factura registrada en Odoo, no del costo actual del catálogo. Los costos faltantes o no verificables dejan la utilidad pendiente.</p>
-        <p className="mt-2"><strong>Utilidad bruta de ventas:</strong> venta neta sin IVA menos costo de los productos facturados. Aún no descuenta nómina, arriendo, comisiones ni otros gastos de operación. Cuando faltan costos se muestra únicamente la parte verificada, no una utilidad total estimada.</p>
+        <p><strong>Alcance financiero:</strong> ventas netas en COP sin impuestos, con notas crédito descontadas según su signo contable. El costo procede de la factura registrada en Odoo, no del costo actual del catálogo. Los costos no disponibles o que no concilian dejan la utilidad pendiente.</p>
+        <p className="mt-2"><strong>Utilidad bruta de ventas:</strong> venta neta sin IVA menos costo de los productos facturados, igual que el margen de Odoo. Los servicios sin costo en Odoo (rentas, mantenimientos, envíos y demás productos tipo servicio) se toman con costo cero por definición de Gerencia. La mercancía con costo cero suma su venta completa como utilidad y se señala para revisión. Aún no descuenta nómina, arriendo, comisiones ni otros gastos de operación. Cuando faltan costos se muestra únicamente la parte verificada, no una utilidad total estimada.</p>
         <p className="mt-2"><strong>Comisión habitual calculada:</strong> 1% general; 2% para tóner genéricos y Soluciones de Empaques, incluidas sus subcategorías. Se calcula por línea sobre el neto sin IVA, descontando notas crédito. Empaques se paga el mes siguiente a la facturación. El bono plataforma 0,5% se liquida por separado.</p>
       </aside>
       <div id="financial-error">{(validationError || error) && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{validationError || error}</p>}</div>
@@ -546,18 +581,39 @@ function FinancialView({ advisorId, initialQuery, bonusPeriod, onBonusPeriodChan
         )}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
           <KpiCard title="Venta neta sin impuestos" value={currencyFormatter.format(report.totals.netSales)} subtitle={`Facturación: ${currencyFormatter.format(report.totals.invoicedSales)} · Notas crédito (con signo): ${currencyFormatter.format(report.totals.creditNotes)}`} icon={<DollarSign aria-hidden="true" className="h-5 w-5" />} />
-          <KpiCard title={report.totals.cost === null ? 'Costo verificado · parcial' : 'Costo de ventas verificado'} value={money(report.totals.cost ?? report.totals.knownCost)} subtitle={`Cobertura sobre ventas en valor absoluto: ${percent(report.totals.costCoveragePercent)} · ${report.totals.missingCostLines} líneas pendientes`} icon={<FileText aria-hidden="true" className="h-5 w-5" />} />
-          <KpiCard title={report.totals.profit === null ? 'Utilidad bruta verificada · parcial' : 'Utilidad bruta de ventas'} value={money(report.totals.profit ?? report.totals.verifiedProfit)} subtitle={`Venta con costo verificado: ${money(report.totals.verifiedSales)} · Margen sobre esa venta: ${percent(report.totals.verifiedMarginPercent)}`} icon={<TrendingUp aria-hidden="true" className="h-5 w-5" />} />
+          <KpiCard title={report.totals.cost === null ? 'Costo verificado · parcial' : 'Costo de ventas verificado'} value={money(report.totals.cost ?? report.totals.knownCost)} subtitle={`Cobertura sobre ventas en valor absoluto: ${percent(report.totals.costCoveragePercent)} · ${report.totals.missingCostLines} pendientes · ${report.costReview.zeroCostGoodsLines} de mercancía con costo cero`} icon={<FileText aria-hidden="true" className="h-5 w-5" />} />
+          <KpiCard title={report.totals.profit === null ? 'Utilidad bruta verificada · parcial' : 'Utilidad bruta de ventas'} value={money(report.totals.profit ?? report.totals.verifiedProfit)} subtitle={`${report.totals.profit === null ? `Venta con costo verificado: ${money(report.totals.verifiedSales)} · Margen sobre esa venta: ${percent(report.totals.verifiedMarginPercent)}` : `Margen bruto: ${percent(report.totals.marginPercent)}`}${report.costReview.zeroCostServiceLines ? ` · Servicios sin costo: ${money(report.costReview.zeroCostServiceSales)}` : ''}${report.costReview.zeroCostGoodsLines ? ` · Mercancía con costo cero por revisar: ${money(report.costReview.zeroCostGoodsSales)}` : ''}`} icon={<TrendingUp aria-hidden="true" className="h-5 w-5" />} />
           <KpiCard title="Comisión habitual calculada" value={money(report.totals.commission)} subtitle={`General 1% · Tóner 2% · Empaques 2% · ${report.totals.missingCommissionLines} líneas pendientes`} icon={<BadgeDollarSign aria-hidden="true" className="h-5 w-5" />} />
           <KpiCard title="Clientes facturados" value={String(report.totals.clientCount)} subtitle={`${report.totals.invoiceCount} facturas · ${report.totals.creditNoteCount} notas crédito · ${report.totals.lineCount} líneas`} icon={<Building2 aria-hidden="true" className="h-5 w-5" />} />
           <KpiCard title="Factura promedio sin impuestos" value={report.totals.averageInvoice === null ? 'No disponible' : currencyFormatter.format(report.totals.averageInvoice)} subtitle="Promedio de facturas, sin mezclar notas crédito" icon={<FileText aria-hidden="true" className="h-5 w-5" />} />
         </div>
-        {(report.totals.cost === null || report.totals.profit === null || report.totals.commission === null) && (
+        {(report.costReview.zeroCostGoodsLines > 0 || report.totals.cost === null || report.totals.profit === null || report.totals.commission === null) && (
           <section className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900" aria-label="Importes parciales y costos por revisar">
-            <h2 className="font-semibold">Los importes parciales incluyen solo las líneas con costo verificado</h2>
-            <p className="mt-2">Venta con costo verificado: {money(report.totals.verifiedSales)} · Venta cuyo costo requiere revisión: {money(report.totals.unverifiedSales)}.</p>
-            <p className="mt-1">{report.totals.missingCostLines} líneas en {report.totals.missingCostInvoices} documentos requieren revisar su costo en Odoo. Pendientes de comisión: {report.totals.missingCommissionLines}. Un costo cero registrado no se toma como rentabilidad confirmada.</p>
-            {report.totals.missingCostLines > 0 && <button type="button" className={`${buttonClass} mt-3`} onClick={() => { setOnlyMissingCost(true); setPage(1); }}>Mostrar líneas con costo pendiente en el detalle</button>}
+            {report.costReview.zeroCostGoodsLines > 0 && <>
+              <h2 className="font-semibold">{report.costReview.zeroCostGoodsLines} líneas de mercancía en {report.costReview.zeroCostGoodsInvoices} documentos tienen costo cero en Odoo</h2>
+              <p className="mt-2">Se incluyen en la utilidad igual que en Odoo: su venta de {money(report.costReview.zeroCostGoodsSales)} cuenta completa como utilidad. Sin esas líneas, la utilidad sería {money(roundCurrency((report.totals.profit ?? report.totals.verifiedProfit) - report.costReview.zeroCostGoodsSales))}. Revisa en Odoo si corresponde registrarles costo. Los servicios sin costo no se incluyen aquí: se toman con costo cero.</p>
+            </>}
+            {(report.totals.cost === null || report.totals.profit === null || report.totals.commission === null) && <>
+              <h2 className={`font-semibold ${report.costReview.zeroCostGoodsLines > 0 ? 'mt-4' : ''}`}>Los importes parciales incluyen solo las líneas con costo verificado</h2>
+              <p className="mt-2">Venta con costo verificado: {money(report.totals.verifiedSales)} · Venta cuyo costo requiere revisión: {money(report.totals.unverifiedSales)}.</p>
+              <p className="mt-1">{report.totals.missingCostLines} líneas en {report.totals.missingCostInvoices} documentos requieren revisar su costo en Odoo. Pendientes de comisión: {report.totals.missingCommissionLines}.</p>
+            </>}
+            {report.costReview.products.length > 0 && <>
+              <button type="button" className={`${buttonClass} mt-3`} onClick={showReviewLines}>Ver las {report.costReview.zeroCostGoodsLines + report.totals.missingCostLines} líneas por revisar en el detalle</button>
+              <details className="mt-3">
+                <summary className="cursor-pointer font-medium">Productos por revisar: mercancía con costo cero o costo pendiente ({report.costReview.products.length})</summary>
+                <div className="mt-2 overflow-x-auto rounded-lg border border-amber-200 bg-white text-foreground" role="region" aria-label="Productos con costo por revisar" tabIndex={0}>
+                  <table className="w-full text-sm">
+                    <caption className="sr-only">Productos con líneas de mercancía con costo cero o costo pendiente en el rango y filtros consultados. Valores COP sin impuestos.</caption>
+                    <thead><tr className="border-b border-border bg-background-light/50"><th scope="col" className="px-4 py-3 text-left font-medium text-muted">Producto / categoría</th><th scope="col" className={headingCellClass}>Líneas con costo cero</th><th scope="col" className={headingCellClass}>Líneas pendientes</th><th scope="col" className={headingCellClass}>Facturas / NC</th><th scope="col" className={headingCellClass}>Venta neta</th></tr></thead>
+                    <tbody>{report.costReview.products.map((group) => <tr key={group.key} className="border-b border-border/50">
+                      <th scope="row" className="min-w-52 px-4 py-3 text-left align-top font-medium">{group.name}<span className="mt-1 block text-xs font-normal text-muted">SKU: {group.sku ?? 'No disponible'} · {group.categoryName ?? 'Categoría pendiente'}</span></th>
+                      <td className={cellClass}>{group.lineCount - group.missingCostLines}</td><td className={cellClass}>{group.missingCostLines}</td><td className={cellClass}>{group.invoiceCount} / {group.creditNoteCount}</td><AmountCell value={group.netSales} />
+                    </tr>)}</tbody>
+                  </table>
+                </div>
+              </details>
+            </>}
           </section>
         )}
       </>}
@@ -592,7 +648,7 @@ function FinancialView({ advisorId, initialQuery, bonusPeriod, onBonusPeriodChan
         <GroupTable title="Productos y unidades" groups={report.products} kind="product" navigation={(group) => filterNavigation('producto', group)} />
         <TrendTable report={report} />
         <section id="detalle-financiero" className="overflow-hidden rounded-xl border border-border bg-white" aria-label="Líneas de facturas y notas crédito">
-          <div className="border-b border-border px-5 py-4"><h2 className="font-semibold text-foreground">Detalle de facturas y notas crédito</h2><p className="mt-1 text-xs text-muted">{report.pagination.pageSize} líneas por página desde Odoo. Los KPI y resúmenes incluyen todas las líneas del rango, no solo esta página. Coste unitario y costo total expresados en COP; corresponden a la factura, sin sustituirlos por costos actuales del producto.</p><label className="mt-3 inline-flex items-center gap-2 text-sm"><input type="checkbox" checked={onlyMissingCost} onChange={event => { setOnlyMissingCost(event.target.checked); setPage(1); }} />Solo líneas con costo pendiente (no altera los KPI)</label></div>
+          <div className="border-b border-border px-5 py-4"><h2 ref={detailHeadingRef} tabIndex={-1} className="scroll-mt-20 font-semibold text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">Detalle de facturas y notas crédito</h2><p className="mt-1 text-xs text-muted">{report.pagination.pageSize} líneas por página desde Odoo. Los KPI y resúmenes incluyen todas las líneas del rango, no solo esta página. Coste unitario y costo total expresados en COP; corresponden a la factura, sin sustituirlos por costos actuales del producto.</p><label className="mt-3 inline-flex items-center gap-2 text-sm"><input type="checkbox" checked={onlyMissingCost} onChange={event => { scrollToDetailRef.current = false; setOnlyMissingCost(event.target.checked); setPage(1); }} />Solo líneas por revisar: mercancía con costo cero o costo pendiente (no altera los KPI)</label></div>
           <div className="overflow-x-auto" role="region" aria-label="Tabla de líneas facturadas" tabIndex={0}>
             <table className="w-full text-sm"><caption className="sr-only">Detalle paginado de líneas Odoo con costo histórico, utilidad y comisión habitual calculada</caption>
               <thead><tr className="border-b border-border bg-background-light/50"><th scope="col" className="px-4 py-3 text-left font-medium text-muted">Documento / fecha</th><th scope="col" className="px-4 py-3 text-left font-medium text-muted">Cliente / asesora</th><th scope="col" className="px-4 py-3 text-left font-medium text-muted">Producto / categoría</th><th scope="col" className={headingCellClass}>Cantidad / unidad</th><th scope="col" className={headingCellClass}>Venta neta</th><th scope="col" className={headingCellClass}>Coste unitario Odoo (COP)</th><th scope="col" className={headingCellClass}>Costo total</th><th scope="col" className={headingCellClass}>Utilidad bruta</th><th scope="col" className={headingCellClass}>Margen bruto</th><th scope="col" className={headingCellClass}>Tasa habitual</th><th scope="col" className={headingCellClass}>Comisión habitual</th><th scope="col" className="px-4 py-3 text-left font-medium text-muted">Canal / incidencias</th></tr></thead>

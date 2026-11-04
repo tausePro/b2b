@@ -15,6 +15,8 @@ import {
   regularCommissionRate,
   summarizeFinancialLines,
   validateFinancialRange,
+  ZERO_RECORDED_COST_ISSUE,
+  encodeFinancialReport,
   type FinancialFilters,
   type FinancialLine,
   type FinancialRange,
@@ -22,6 +24,7 @@ import {
 } from '../src/lib/gerencia/finanzas';
 import {
   getFinancialReport,
+  getOdooReportCompany,
   loadFinancialDataset,
   normalizeFinancialLine,
   searchAll,
@@ -141,8 +144,10 @@ async function readBonusSnapshot(admin: SupabaseClient) {
 
 async function loadIndependentRows(session: OdooSession, dataset: FinancialDataset, range: FinancialRange) {
   const previous = previousFinancialRange(range);
+  const company = await getOdooReportCompany(session);
+  assert.deepEqual(dataset.company, company);
   const invoiceDomain = [
-    ['state', '=', 'posted'], ['move_type', 'in', ['out_invoice', 'out_refund']],
+    ['state', '=', 'posted'], ['move_type', 'in', ['out_invoice', 'out_refund']], ['company_id', '=', company.id],
     '|', '&', ['invoice_date', '>=', previous.from], ['invoice_date', '<=', previous.to],
     '&', ['invoice_date', '>=', range.from], ['invoice_date', '<=', range.to],
   ];
@@ -157,7 +162,7 @@ async function loadIndependentRows(session: OdooSession, dataset: FinancialDatas
     searchCount('account.move', invoiceDomain, session),
     searchCount('account.move.line', lineDomain, session),
     readChunks(session, 'account.move.line', dataset.lines.map((line) => line.id), lineFields),
-    readChunks(session, 'product.product', dataset.lines.flatMap((line) => line.productId === null ? [] : [line.productId]), ['id', 'default_code', 'categ_id']),
+    readChunks(session, 'product.product', dataset.lines.flatMap((line) => line.productId === null ? [] : [line.productId]), ['id', 'default_code', 'categ_id', 'type']),
   ]);
   assert.equal(invoices.length, invoiceCount, 'La consulta independiente no debe omitir cabeceras.');
   assert.ok(lineCount <= 100_000, 'El rango real supera el máximo de líneas admitido.');
@@ -480,12 +485,28 @@ test('Gerencia: Odoo y Supabase reales, lecturas acotadas y bono sin mutaciones'
       assert.deepEqual(await resolveRegularCommissionScope(managerContext, null), { canViewTeam: true, advisorId: null, odooUserId: undefined });
     });
 
-    await t.test('costos cero o ausentes impiden margen validado; costos actuales se comparan solo en una muestra', async (subtest) => {
+    await t.test('costos ausentes o negativos impiden margen validado; costo cero cuenta como en Odoo y se señala; costos actuales solo en muestra', async (subtest) => {
       const unavailable = dataset.lines.filter((line) => {
         const price = independent.lineById.get(line.id)!.purchase_price;
-        return typeof price !== 'number' || !Number.isFinite(price) || price <= 0;
+        return typeof price !== 'number' || !Number.isFinite(price) || price < 0;
       });
-      if (!unavailable.length) subtest.diagnostic('El rango real no contiene costos cero o ausentes; no se fabricaron filas para esa condición.');
+      const zeroCost = dataset.lines.filter((line) => independent.lineById.get(line.id)!.purchase_price === 0 && line.netSales !== 0);
+      if (!unavailable.length) subtest.diagnostic('El rango real no contiene costos ausentes o negativos; no se fabricaron filas para esa condición.');
+      if (!zeroCost.length) subtest.diagnostic('El rango real no contiene costos cero; no se fabricaron filas para esa condición.');
+      for (const line of dataset.lines) {
+        const product = line.productId === null ? undefined : independent.productById.get(line.productId);
+        assert.equal(line.isService, product?.type === 'service');
+      }
+      for (const line of zeroCost) {
+        if (line.cost === null) {
+          assert.ok(line.issues.length > 0 && !line.issues.includes(ZERO_RECORDED_COST_ISSUE));
+          continue;
+        }
+        assert.equal(line.cost, 0);
+        assert.equal(line.profit, line.netSales);
+        assert.equal(line.profit, roundCurrency(numeric(independent.lineById.get(line.id)!.margin_signed)));
+        assert.equal(line.issues.includes(ZERO_RECORDED_COST_ISSUE), !line.isService);
+      }
       for (const line of unavailable) {
         assert.equal(line.cost, null);
         assert.equal(line.profit, null);
@@ -523,7 +544,21 @@ test('Gerencia: Odoo y Supabase reales, lecturas acotadas y bono sin mutaciones'
         const raw = independent.lineById.get(line.id)!;
         if (typeof raw.purchase_price === 'number' && typeof product.standard_price === 'number' && roundCurrency(raw.purchase_price) !== roundCurrency(product.standard_price)) historicalDifferences++;
       }
-      subtest.diagnostic(JSON.stringify({ missingOrZeroCostLines: unavailable.length, validatedCostLines: dataset.lines.filter((line) => line.cost !== null).length, currentCostSampleOnly: currentProducts.length, historicalDifferences }));
+      subtest.diagnostic(JSON.stringify({ missingCostLines: unavailable.length, zeroCostLines: zeroCost.length, zeroCostServiceLines: zeroCost.filter(line => line.isService).length, validatedCostLines: dataset.lines.filter((line) => line.cost !== null).length, currentCostSampleOnly: currentProducts.length, historicalDifferences }));
+    });
+
+    await t.test('la utilidad y el costo completos coinciden con el margen firmado y el costo de las cabeceras Odoo', (subtest) => {
+      const headers = independent.invoices.filter(invoice => String(invoice.invoice_date) >= range.from && String(invoice.invoice_date) <= range.to);
+      const odooMargin = roundCurrency(headers.reduce((total, invoice) => total + numeric(invoice.margin_signed), 0));
+      const odooCost = roundCurrency(headers.reduce((total, invoice) => total + numeric(invoice.cost_total), 0));
+      subtest.diagnostic(JSON.stringify({ odooMargin, odooCost, profit: report.totals.profit, cost: report.totals.cost, zeroCostGoodsLines: report.costReview.zeroCostGoodsLines, zeroCostGoodsSales: report.costReview.zeroCostGoodsSales, zeroCostServiceLines: report.costReview.zeroCostServiceLines, zeroCostServiceSales: report.costReview.zeroCostServiceSales, missingCostLines: report.totals.missingCostLines }));
+      if (report.totals.profit === null || report.totals.cost === null) {
+        subtest.diagnostic('Hay costos pendientes en el rango real; la utilidad total no se presenta y no se compara con Odoo.');
+        return;
+      }
+      const tolerance = Math.max(0.05, current.length * 0.01);
+      assert.ok(Math.abs(report.totals.profit - odooMargin) <= tolerance, `Utilidad ${report.totals.profit} frente a margen Odoo ${odooMargin}.`);
+      assert.ok(Math.abs(report.totals.cost - odooCost) <= tolerance, `Costo ${report.totals.cost} frente a costo Odoo ${odooCost}.`);
     });
 
     await t.test('filtros por vendedor, cliente, producto y factura conservan intersección y comparación anterior', () => {
@@ -575,8 +610,21 @@ test('Gerencia: Odoo y Supabase reales, lecturas acotadas y bono sin mutaciones'
       const pending = buildFinancialReport(dataset.lines, range, { page: 1, onlyMissingCost: true }, dataset.generatedAt);
       assert.deepEqual(pending.totals, report.totals);
       assert.deepEqual(pending.advisors, report.advisors);
-      assert.equal(pending.pagination.total, current.filter(line => line.cost === null).length);
-      assert.ok(pending.lines.every(line => line.cost === null));
+      const review = current.filter(line => line.cost === null || line.profit === null || (line.cost === 0 && line.netSales !== 0 && !line.isService));
+      const zeroCost = review.filter(line => line.cost === 0);
+      const services = current.filter(line => line.cost === 0 && line.netSales !== 0 && line.isService);
+      assert.equal(pending.pagination.total, review.length);
+      assert.equal(report.costReview.zeroCostGoodsLines, zeroCost.length);
+      assert.equal(report.costReview.zeroCostGoodsInvoices, new Set(zeroCost.map(line => line.invoiceId)).size);
+      assert.equal(report.costReview.zeroCostGoodsSales, roundCurrency(zeroCost.reduce((total, line) => total + line.netSales, 0)));
+      assert.equal(report.costReview.zeroCostServiceLines, services.length);
+      assert.equal(report.costReview.zeroCostServiceSales, roundCurrency(services.reduce((total, line) => total + line.netSales, 0)));
+      assert.equal(review.length, report.totals.missingCostLines + report.costReview.zeroCostGoodsLines);
+      assert.ok(pending.lines.every(line => review.includes(line)));
+      assert.deepEqual(pending.costReview, report.costReview);
+      assert.equal(report.costReview.products.reduce((total, group) => total + group.lineCount, 0), review.length);
+      assert.equal(report.costReview.products.reduce((total, group) => total + group.lineCount - group.missingCostLines, 0), zeroCost.length);
+      assert.equal(roundCurrency(report.costReview.products.reduce((total, group) => total + group.netSales, 0)), roundCurrency(review.reduce((total, line) => total + line.netSales, 0)));
     });
 
     await t.test('los filtros se aplican al leer Odoo y conservan las líneas completas para conciliar cada factura', async () => {
@@ -623,6 +671,7 @@ test('Gerencia: Odoo y Supabase reales, lecturas acotadas y bono sin mutaciones'
       const filters = { advisorId: selected.advisorId, page: 1 };
       const actual = await getFinancialReport(admin, range, filters, false);
       const expected = buildFinancialReport(dataset.lines, range, filters, actual.generatedAt, dataset.warnings);
+      expected.company = dataset.company;
       expected.selectedAdvisor = dataset.advisors.find((advisor) => advisor.id === selected.advisorId) ?? null;
       assert.deepEqual(actual, expected, 'Los datos reales cambiaron durante la lectura o el servicio devuelve un reporte inconsistente.');
       assert.equal(actual.currency, 'COP');
@@ -643,7 +692,7 @@ test('Gerencia: Odoo y Supabase reales, lecturas acotadas y bono sin mutaciones'
       assert.deepEqual(monthly.previousRange, { from: '2026-08-01', to: '2026-08-31' });
       assert.equal(monthly.comparisonMode, 'calendar_months');
       const august = await boundedSearch(session, 'account.move', [
-        ['state', '=', 'posted'], ['move_type', 'in', ['out_invoice', 'out_refund']],
+        ['state', '=', 'posted'], ['move_type', 'in', ['out_invoice', 'out_refund']], ['company_id', '=', monthly.company!.id],
         ['invoice_user_id', '=', advisorId], ['invoice_date', '>=', '2026-08-01'], ['invoice_date', '<=', '2026-08-31'],
       ], ['id', 'amount_untaxed_signed'], 10000);
       assert.equal(monthly.previousTotals.netSales, roundCurrency(august.reduce((sum, invoice) => sum + numeric(invoice.amount_untaxed_signed), 0)));
@@ -660,7 +709,7 @@ test('Gerencia: Odoo y Supabase reales, lecturas acotadas y bono sin mutaciones'
       let combinedInvoices = 0;
       for (const [period, totals] of [[annualRange, result.totals], [previousAnnual, result.previousTotals]] as const) {
         const documents = await boundedSearch(session, 'account.move', [
-          ['state', '=', 'posted'], ['move_type', 'in', ['out_invoice', 'out_refund']],
+          ['state', '=', 'posted'], ['move_type', 'in', ['out_invoice', 'out_refund']], ['company_id', '=', annual.company.id],
           ['invoice_date', '>=', period.from], ['invoice_date', '<=', period.to],
         ], ['id', 'amount_untaxed_signed'], 10000);
         combinedInvoices += documents.length;
@@ -668,7 +717,7 @@ test('Gerencia: Odoo y Supabase reales, lecturas acotadas y bono sin mutaciones'
       }
       assert.ok(combinedInvoices > 10000, 'El período real debe reproducir el límite conjunto anterior.');
       const count = await searchCount('account.move.line', [
-        ['parent_state', '=', 'posted'], ['move_id.move_type', 'in', ['out_invoice', 'out_refund']],
+        ['parent_state', '=', 'posted'], ['move_id.move_type', 'in', ['out_invoice', 'out_refund']], ['company_id', '=', annual.company.id],
         ['display_type', '=', 'product'], ['tax_line_id', '=', false],
         '|', '&', ['move_id.invoice_date', '>=', annualRange.from], ['move_id.invoice_date', '<=', annualRange.to],
         '&', ['move_id.invoice_date', '>=', previousAnnual.from], ['move_id.invoice_date', '<=', previousAnnual.to],
@@ -677,9 +726,13 @@ test('Gerencia: Odoo y Supabase reales, lecturas acotadas y bono sin mutaciones'
       assert.equal(new Set(annual.lines.map(line => line.id)).size, count);
       assertTotals(result.totals, annual.lines.filter(line => line.invoiceDate >= annualRange.from && line.invoiceDate <= annualRange.to));
       assertTotals(result.previousTotals, annual.lines.filter(line => line.invoiceDate >= previousAnnual.from && line.invoiceDate <= previousAnnual.to));
-      const bytes = Buffer.byteLength(JSON.stringify(result));
+      assert.equal(result.trendGranularity, 'month');
+      assert.deepEqual(result.trend.map(point => point.date), [...new Set(annual.lines.filter(line => line.invoiceDate >= annualRange.from && line.invoiceDate <= annualRange.to).map(line => line.invoiceDate.slice(0, 7)))].sort());
+      const rawBytes = Buffer.byteLength(JSON.stringify(result));
+      const bytes = Buffer.byteLength(JSON.stringify(encodeFinancialReport(result)));
       assert.ok(bytes <= 3 * 1024 * 1024, 'El informe debe caber en el límite real del API.');
-      subtest.diagnostic(JSON.stringify({ annualRange, previousAnnual, documents: combinedInvoices, lines: count, responseBytes: bytes, durationMs: Date.now() - started }));
+      assert.ok(bytes < rawBytes * 0.6, 'El formato compacto debe reducir sustancialmente la respuesta.');
+      subtest.diagnostic(JSON.stringify({ annualRange, previousAnnual, documents: combinedInvoices, lines: count, responseBytes: bytes, rawBytes, durationMs: Date.now() - started }));
     });
 
     await t.test('el lector conserva su límite y devuelve una indicación útil en vez de truncar registros', async () => {
@@ -702,9 +755,11 @@ test('Cartera: los saldos actuales concilian con partidas reales de Odoo y conse
   assert.ok(config);
   const session = await authenticate(config);
   const dataset = await loadOpenBalanceDataset(false);
-  const fields = ['id', 'move_id', 'account_type', 'amount_residual', 'date_maturity', 'date', 'company_currency_id'];
+  const company = await getOdooReportCompany(session);
+  assert.deepEqual(dataset.company, company);
+  const fields = ['id', 'move_id', 'account_type', 'amount_residual', 'date_maturity', 'date', 'company_currency_id', 'company_id'];
   const domain = [
-    ['parent_state', '=', 'posted'], ['account_id.account_type', 'in', ['asset_receivable', 'liability_payable']],
+    ['parent_state', '=', 'posted'], ['company_id', '=', company.id], ['account_id.account_type', 'in', ['asset_receivable', 'liability_payable']],
     ['reconciled', '=', false], ['amount_residual', '!=', 0], ['date', '<=', dataset.asOfDate],
   ];
   const raw = await boundedSearch(session, 'account.move.line', domain, fields, 25000);
@@ -724,6 +779,9 @@ test('Cartera: los saldos actuales concilian con partidas reales de Odoo y conse
     const rows = raw.filter(line => line.account_type === accountType);
     const values = rows.map(line => roundCurrency(numeric(line.amount_residual) * (side === 'payable' ? -1 : 1)));
     assert.equal(report[side].balance, roundCurrency(values.reduce((sum, value) => sum + value, 0)));
+    assert.ok(rows.every(line => relationId(line.company_id) === company.id));
+    assert.equal(roundCurrency(report[side].accounts.reduce((sum, account) => sum + account.balance, 0)), report[side].balance);
+    assert.equal(report[side].accounts.reduce((sum, account) => sum + account.lineCount, 0), rows.length);
     assert.equal(report[side].documentCount, new Set(rows.map(line => relationId(line.move_id))).size);
     assert.equal(report[side].charges, roundCurrency(values.filter(value => value > 0).reduce((sum, value) => sum + value, 0)));
     assert.equal(report[side].credits, roundCurrency(values.filter(value => value < 0).reduce((sum, value) => sum + value, 0)));
