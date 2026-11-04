@@ -13,7 +13,9 @@ import {
   encodeFinancialReport,
   hasZeroRecordedCost,
   isZeroCostService,
+  lineCommissionRule,
   needsCostReview,
+  PENDING_MARGIN_COMMISSION_ISSUE,
   previousFinancialRange,
   financialComparison,
   regularCommissionRate,
@@ -260,11 +262,12 @@ test('Empaques paga el mes siguiente sin inventar día de pago y conserva cambio
   assert.throws(() => regularCommissionPeriod('2026-11', '2026-10-23'));
   assert.throws(() => regularCommissionPeriod('2026-13', '2026-10-23'));
   const empty = summarizeRegularCommissions([]);
-  assert.equal(empty.length, 4);
+  assert.deepEqual(empty.map(row => [row.kind, row.rate]), [['general', 1], ['low_margin', 0.5], ['generic_toner', 2], ['packaging', 2], ['unknown', null]]);
   assert.ok(empty.every(row => row.commission === 0 && row.netSales === 0 && row.lineCount === 0));
 });
-test('aritmética de comisión: base neta al 1% o 2% sin sumar el bono separado del 0,5%', () => {
+test('aritmética de comisión: base neta al 0,5%, 1% o 2% sin sumar el bono separado del 0,5%', () => {
   assert.equal(PLATFORM_BONUS_PERCENT, 0.5);
+  assert.equal(calculateRegularCommission(100, 0.5), 0.5);
   assert.equal(calculateRegularCommission(100, 1), 1);
   assert.equal(calculateRegularCommission(100, 2), 2);
   assert.equal(calculatePlatformBonus(100), 0.5);
@@ -285,13 +288,53 @@ test('aritmética de devoluciones y descuentos: conserva bases y comisiones nega
   assert.equal(calculateRegularCommission(-100, 2), -2);
 });
 
-test('comisión: rechaza bases no finitas y tasas distintas de las dos autorizadas', () => {
+test('comisión: rechaza bases no finitas y tasas distintas de las tres autorizadas', () => {
   for (const base of [NaN, Infinity, -Infinity]) {
-    for (const rate of [1, 2, null]) assert.throws(() => calculateRegularCommission(base, rate), /base/);
+    for (const rate of [0.5, 1, 2, null]) assert.throws(() => calculateRegularCommission(base, rate), /base/);
   }
-  for (const rate of [0, 0.5, 1.5, 2.5, -1, 100, NaN, Infinity]) {
-    assert.throws(() => calculateRegularCommission(100, rate), /1% o 2%/);
+  for (const rate of [0, 0.25, 1.5, 2.5, -1, 100, NaN, Infinity]) {
+    assert.throws(() => calculateRegularCommission(100, rate), /0,5%, 1% o 2%/);
   }
+});
+
+test('margen menor al 15% en líneas reales de octubre: general comisiona 0,5%, tóner genérico conserva 2% y sin costo queda pendiente', () => {
+  const company = [1, 'INVERSIONES IMPRIMA SAS'];
+  const cop = [8, 'COP'];
+  const safeInvoice = {
+    id: 273872, name: 'INIM23422', move_type: 'out_invoice', invoice_date: '2026-10-02', invoice_user_id: [11, 'ADRIANA LUCIA ARROYO FUENTES'],
+    commercial_partner_id: [18, 'ELECTRICAS DE MEDELLIN - INGENIERIA Y SERVICIOS SAS'], partner_id: [18, 'ELECTRICAS DE MEDELLIN - INGENIERIA Y SERVICIOS SAS'],
+    company_id: company, currency_id: cop, company_currency_id: cop, amount_untaxed: 14800000, amount_untaxed_signed: 14800000, margin_signed: 1778628, cost_total: 13021372, companyCurrencyId: 8,
+  };
+  const safeLine = {
+    id: 938082, move_id: [273872, 'INIM23422'], name: '[1600400497] CAJA FUERTE SUPER BLINDADA CON CERRADURA DIGITAL 89X50X50 CM',
+    product_id: [13472, '[1600400497] CAJA FUERTE SUPER BLINDADA CON CERRADURA DIGITAL 89X50X50 CM'], product_uom_id: [1, 'Units'], quantity: 1, balance: -14800000,
+    price_subtotal: 14800000, purchase_price: 13021372, margin: 1778628, margin_signed: 1778628, sale_line_ids: [262364],
+  };
+  const safeProduct = { id: 13472, default_code: '1600400497', categ_id: [52, 'Suministros de Oficina / Mobiliario y Almacenaje / Amoblamiento y Dotación'], type: 'consu' };
+  const tonerInvoice = {
+    id: 276947, name: 'INIM23860', move_type: 'out_invoice', invoice_date: '2026-10-22', invoice_user_id: [10, 'GLORIA PATRICIA GOMEZ MONCADA'],
+    commercial_partner_id: [78, 'SUPER MERCADO BOOM S.A.S.'], partner_id: [78, 'SUPER MERCADO BOOM S.A.S.'],
+    company_id: company, currency_id: cop, company_currency_id: cop, amount_untaxed: 227800, amount_untaxed_signed: 227800, margin_signed: 78521, cost_total: 149279, companyCurrencyId: 8,
+  };
+  const tonerLine = {
+    id: 949874, move_id: [276947, 'INIM23860'], name: '[1300200002] TONER GENERICO STONER HPCF280X/CE505X', product_id: [408, '[1300200002] TONER GENERICO STONER HPCF280X/CE505X'],
+    product_uom_id: [1, 'Units'], quantity: 3, balance: -105000, price_subtotal: 105000, purchase_price: 31093, margin: 11721, margin_signed: 11721, sale_line_ids: [264749],
+  };
+  const tonerProduct = { id: 408, default_code: '1300200002', categ_id: [26, 'Suministros de Oficina / Suministros de impresión / Toner genéricos'], type: 'consu' };
+  const safe = normalizeFinancialLine(safeInvoice, safeLine, safeProduct, new Set([26]), new Set(), null);
+  assert.equal(safe.marginPercent, 12.02);
+  assert.deepEqual([safe.commissionKind, safe.commissionRate, safe.commission], ['low_margin', 0.5, 74000]);
+  const toner = normalizeFinancialLine(tonerInvoice, tonerLine, tonerProduct, new Set([26]), new Set(), null);
+  assert.equal(toner.marginPercent, 11.16);
+  assert.deepEqual([toner.commissionKind, toner.commissionRate, toner.commission], ['generic_toner', 2, 2100]);
+  const pending = normalizeFinancialLine(safeInvoice, { ...safeLine, purchase_price: false }, safeProduct, new Set([26]), new Set(), null);
+  assert.deepEqual([pending.commissionKind, pending.commissionRate, pending.commission], ['general', null, null]);
+  assert.ok(pending.issues.includes(PENDING_MARGIN_COMMISSION_ISSUE));
+  assert.deepEqual(lineCommissionRule('general', -187000, -39105), { kind: 'general', rate: 1 });
+  assert.deepEqual(lineCommissionRule('general', -100000, -14990), { kind: 'low_margin', rate: 0.5 });
+  assert.deepEqual(lineCommissionRule('general', 100000, 15000), { kind: 'general', rate: 1 });
+  const breakdown = summarizeRegularCommissions([safe, toner]);
+  assert.deepEqual(breakdown.filter(row => row.lineCount).map(row => [row.kind, row.netSales, row.commission]), [['low_margin', 14800000, 74000], ['generic_toner', 105000, 2100]]);
 });
 
 test('redondeo monetario: centavos simétricos, medios centavos y ausencia de cero negativo', () => {

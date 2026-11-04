@@ -213,7 +213,7 @@ function assertTotals(totals: FinancialTotals, lines: FinancialLine[]) {
 }
 
 function assertCommissionBreakdown(breakdown: RegularCommissionBreakdown[], lines: FinancialLine[]) {
-  assert.equal(breakdown.length, 4);
+  assert.deepEqual(breakdown.map(row => row.kind), ['general', 'low_margin', 'generic_toner', 'packaging', 'unknown']);
   for (const row of breakdown) {
     const selected = lines.filter(line => line.commissionKind === row.kind);
     const sum = (values: number[]) => roundCurrency(values.reduce((total, value) => total + value, 0));
@@ -379,12 +379,15 @@ test('Gerencia: Odoo y Supabase reales, lecturas acotadas y bono sin mutaciones'
       assert.equal(independent.packagingIds.has(132), true);
       for (const id of [...independent.genericIds, ...independent.packagingIds]) assert.equal(regularCommissionRate(id, independent.genericIds, independent.packagingIds), 2);
       assert.equal(regularCommissionRate(25, independent.genericIds, independent.packagingIds), 1);
-      const counts = { generic_toner: 0, packaging: 0, general: 0, unknown: 0, refunds: 0 };
+      const counts = { generic_toner: 0, packaging: 0, general: 0, low_margin: 0, unknown: 0, refunds: 0, pendingMargin: 0 };
       for (const line of dataset.lines) {
         const product = line.productId === null ? undefined : independent.productById.get(line.productId);
         const categoryId = product ? relationId(product.categ_id) : null;
-        const kind = categoryId === null ? 'unknown' : independent.packagingIds.has(categoryId) ? 'packaging' : independent.genericIds.has(categoryId) ? 'generic_toner' : 'general';
-        const rate = kind === 'unknown' ? null : kind === 'general' ? 1 : 2;
+        const categoryKind = categoryId === null ? 'unknown' : independent.packagingIds.has(categoryId) ? 'packaging' : independent.genericIds.has(categoryId) ? 'generic_toner' : 'general';
+        const margin = line.profit === null || line.netSales === 0 ? null : roundCurrency(line.profit / line.netSales * 100);
+        const kind = categoryKind === 'general' && margin !== null && margin < 15 ? 'low_margin' : categoryKind;
+        const rate = categoryKind === 'unknown' ? null : categoryKind !== 'general' ? 2 : line.netSales === 0 ? 1 : margin === null ? null : margin < 15 ? 0.5 : 1;
+        if (categoryKind === 'general' && rate === null) counts.pendingMargin++;
         assert.equal(line.categoryId, categoryId);
         assert.equal(line.commissionKind, kind);
         assert.equal(line.commissionRate, rate);
