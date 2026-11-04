@@ -1,16 +1,28 @@
 import 'server-only';
 
 import { createHash } from 'node:crypto';
-import { authenticate, type OdooSession } from '@/lib/odoo/client';
+import { authenticate, searchCount, type OdooSession } from '@/lib/odoo/client';
 import { getServerOdooConfig } from '@/lib/odoo/serverConfig';
 import { getBogotaCalendarDate, roundCurrency } from '@/lib/comisiones/bonoPlataforma';
 import { FinancialDataError, getOdooReportCompany, readIds, searchAll } from './finanzas.server';
-import { buildOpenBalanceReport, overdueDays, type OpenBalanceCompany, type OpenBalanceFilters, type OpenBalanceLine } from './cartera';
+import {
+  buildOpenBalanceReport, overdueDays,
+  type OpenBalanceCompany, type OpenBalanceFilters, type OpenBalanceLine, type OpenInvoiceDocument, type WrittenOffSummary,
+} from './cartera';
 
 type Row = Record<string, unknown>;
-export interface OpenBalanceDataset { lines: OpenBalanceLine[]; asOfDate: string; generatedAt: string; company: OpenBalanceCompany }
+export interface OpenBalanceDataset {
+  lines: OpenBalanceLine[];
+  invoices: OpenInvoiceDocument[];
+  writtenOff: WrittenOffSummary;
+  asOfDate: string;
+  generatedAt: string;
+  company: OpenBalanceCompany;
+}
+export const EXCLUDED_WRITTEN_OFF_MOVES: readonly { id: number; name: string }[] = [{ id: 235543, name: 'I/2025/12/0487' }];
 const cache = new Map<string, { expires: number; promise: Promise<OpenBalanceDataset> }>();
 const MAX_OPEN_LINES = 25000;
+const MAX_OPEN_DOCUMENTS = 25000;
 const relationId = (value: unknown): number | null =>
   Array.isArray(value) && Number.isSafeInteger(value[0]) && value[0] > 0 ? value[0] : null;
 const relationName = (value: unknown): string | null =>
@@ -50,11 +62,42 @@ export function normalizeOpenBalanceLine(row: Row, document: Row, partner: Row |
   };
 }
 
+async function fetchOpenInvoices(session: OdooSession, company: OpenBalanceCompany): Promise<OpenInvoiceDocument[]> {
+  const rows = await searchAll(session, 'account.move', [
+    ['company_id', '=', company.id], ['state', '=', 'posted'], ['move_type', 'in', ['out_invoice', 'out_refund', 'in_invoice', 'in_refund']],
+    ['payment_state', 'in', ['not_paid', 'partial']],
+  ], ['id', 'move_type', 'journal_id', 'company_id', 'state', 'amount_total_signed', 'amount_residual_signed'], MAX_OPEN_DOCUMENTS,
+  undefined, 'Las facturas pendientes superan el límite de lectura; no se muestran totales incompletos.');
+  const journalIds = [...new Set(rows.map(row => relationId(row.journal_id)))];
+  if (journalIds.some(id => id === null)) throw new FinancialDataError('Una factura pendiente no identifica su diario en Odoo.');
+  const creditNoteJournals = new Set<number>();
+  for (const journalId of journalIds as number[]) {
+    const invoiceCount = await searchCount('account.move', [['journal_id', '=', journalId], ['state', '=', 'posted'], ['move_type', 'in', ['out_invoice', 'in_invoice']]], session);
+    if (invoiceCount === 0) creditNoteJournals.add(journalId);
+  }
+  return rows.map(row => {
+    const journalId = relationId(row.journal_id)!;
+    if (relationId(row.company_id) !== company.id || row.state !== 'posted'
+      || typeof row.amount_total_signed !== 'number' || !Number.isFinite(row.amount_total_signed)
+      || typeof row.amount_residual_signed !== 'number' || !Number.isFinite(row.amount_residual_signed)) {
+      throw new FinancialDataError('No se pudo validar el importe de una factura pendiente.');
+    }
+    const side = String(row.move_type).startsWith('out_') ? 'receivable' : 'payable';
+    const sign = side === 'payable' ? -1 : 1;
+    return {
+      id: Number(row.id), side, journalId, journalName: relationName(row.journal_id) ?? `Diario #${journalId}`,
+      creditNoteJournal: creditNoteJournals.has(journalId),
+      total: roundCurrency(sign * row.amount_total_signed), residual: roundCurrency(sign * row.amount_residual_signed),
+    };
+  });
+}
+
 async function fetchOpenBalances(session: OdooSession, today: string, company: OpenBalanceCompany): Promise<OpenBalanceDataset> {
-  const rows = await searchAll(session, 'account.move.line', [
+  const [rows, invoices] = await Promise.all([searchAll(session, 'account.move.line', [
     ['parent_state', '=', 'posted'], ['company_id', '=', company.id], ['account_id.account_type', 'in', ['asset_receivable', 'liability_payable']],
     ['reconciled', '=', false], ['amount_residual', '!=', 0], ['date', '<=', today],
-  ], ['id', 'move_id', 'partner_id', 'account_id', 'account_type', 'company_id', 'company_currency_id', 'date', 'date_maturity', 'amount_residual', 'parent_state', 'reconciled'], MAX_OPEN_LINES);
+  ], ['id', 'move_id', 'partner_id', 'account_id', 'account_type', 'company_id', 'company_currency_id', 'date', 'date_maturity', 'amount_residual', 'parent_state', 'reconciled'], MAX_OPEN_LINES),
+  fetchOpenInvoices(session, company)]);
   const [documents, partners] = await Promise.all([
     readIds(session, 'account.move', rows.flatMap(row => relationId(row.move_id) === null ? [] : [relationId(row.move_id)!]), ['id', 'name', 'ref', 'move_type', 'state', 'company_id', 'amount_residual_signed']),
     readIds(session, 'res.partner', rows.flatMap(row => relationId(row.partner_id) === null ? [] : [relationId(row.partner_id)!]), ['id', 'commercial_partner_id']),
@@ -82,7 +125,20 @@ async function fetchOpenBalances(session: OdooSession, today: string, company: O
       throw new FinancialDataError('El saldo de un documento no concilia con sus partidas. Puede haber cambiado durante la lectura; actualiza la consulta.');
     }
   }
-  return { lines, asOfDate: today, generatedAt: new Date().toISOString(), company };
+  const excluded = new Map(documents.flatMap(document => {
+    const rule = EXCLUDED_WRITTEN_OFF_MOVES.find(move => move.id === Number(document.id));
+    return rule && document.name === rule.name ? [[rule.id, rule.name] as const] : [];
+  }));
+  const writtenOffLines = lines.filter(line => excluded.has(line.documentId));
+  const writtenOff: WrittenOffSummary = {
+    documents: [...new Set(writtenOffLines.map(line => excluded.get(line.documentId)!))],
+    lineCount: writtenOffLines.length,
+    balance: roundCurrency(writtenOffLines.reduce((total, line) => total + line.balance, 0)),
+  };
+  return {
+    lines: lines.filter(line => !excluded.has(line.documentId)), invoices, writtenOff,
+    asOfDate: today, generatedAt: new Date().toISOString(), company,
+  };
 }
 
 export async function loadOpenBalanceDataset(useCache = true): Promise<OpenBalanceDataset> {
@@ -111,5 +167,7 @@ export async function loadOpenBalanceDataset(useCache = true): Promise<OpenBalan
 
 export async function getOpenBalanceReport(filters: OpenBalanceFilters) {
   const dataset = await loadOpenBalanceDataset();
-  return buildOpenBalanceReport(dataset.lines, dataset.asOfDate, dataset.generatedAt, filters, dataset.company);
+  return buildOpenBalanceReport(dataset.lines, dataset.asOfDate, dataset.generatedAt, filters, dataset.company, {
+    invoices: dataset.invoices, writtenOff: dataset.writtenOff,
+  });
 }

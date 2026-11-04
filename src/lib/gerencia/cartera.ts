@@ -38,6 +38,28 @@ export interface OpenBalanceTotals {
 
 export interface OpenBalanceFilters { side: BalanceSide; status: BalanceStatus; search: string; page: number }
 export interface OpenBalanceCompany { id: number; name: string }
+export interface OpenInvoiceDocument {
+  id: number;
+  side: BalanceSide;
+  journalId: number;
+  journalName: string;
+  creditNoteJournal: boolean;
+  total: number;
+  residual: number;
+}
+export interface OpenInvoiceSummary {
+  total: number;
+  residual: number;
+  partialPayments: number;
+  documentCount: number;
+  creditNoteResidual: number;
+  creditNoteDocumentCount: number;
+  otherOpen: number;
+  accountingBalance: number;
+  journals: string[];
+  creditNoteJournals: string[];
+}
+export interface WrittenOffSummary { documents: string[]; lineCount: number; balance: number }
 export interface OpenBalanceReport {
   currency: 'COP';
   company: OpenBalanceCompany | null;
@@ -46,6 +68,8 @@ export interface OpenBalanceReport {
   filters: OpenBalanceFilters;
   receivable: OpenBalanceTotals;
   payable: OpenBalanceTotals;
+  invoices: Record<BalanceSide, OpenInvoiceSummary> | null;
+  writtenOff: WrittenOffSummary | null;
   lines: OpenBalanceLine[];
   filteredBalance: number;
   pagination: { page: number; pageSize: number; total: number; totalPages: number };
@@ -95,8 +119,27 @@ export function summarizeOpenBalances(lines: readonly OpenBalanceLine[]): OpenBa
   };
 }
 
+export function summarizeOpenInvoices(documents: readonly OpenInvoiceDocument[], side: BalanceSide, accountingBalance: number): OpenInvoiceSummary {
+  const selected = documents.filter(document => document.side === side);
+  if (selected.some(document => !Number.isFinite(document.total) || !Number.isFinite(document.residual))) throw new Error('Importe de factura no válido.');
+  const invoices = selected.filter(document => !document.creditNoteJournal);
+  const creditNotes = selected.filter(document => document.creditNoteJournal);
+  const sum = (rows: readonly OpenInvoiceDocument[], field: 'total' | 'residual') => roundCurrency(rows.reduce((total, row) => total + row[field], 0));
+  const total = sum(invoices, 'total');
+  const residual = sum(invoices, 'residual');
+  const creditNoteResidual = sum(creditNotes, 'residual');
+  const names = (rows: readonly OpenInvoiceDocument[]) => [...new Set(rows.map(row => row.journalName))].sort((a, b) => a.localeCompare(b, 'es'));
+  return {
+    total, residual, partialPayments: roundCurrency(residual - total), documentCount: invoices.length,
+    creditNoteResidual, creditNoteDocumentCount: creditNotes.length,
+    otherOpen: roundCurrency(accountingBalance - residual - creditNoteResidual), accountingBalance: roundCurrency(accountingBalance),
+    journals: names(invoices), creditNoteJournals: names(creditNotes),
+  };
+}
+
 export function buildOpenBalanceReport(
   lines: readonly OpenBalanceLine[], asOfDate: string, generatedAt: string, filters: OpenBalanceFilters, company: OpenBalanceCompany | null = null,
+  extras: { invoices?: readonly OpenInvoiceDocument[]; writtenOff?: WrittenOffSummary | null } = {},
 ): OpenBalanceReport {
   if (!Number.isSafeInteger(filters.page) || filters.page < 1) throw new Error('Página no válida.');
   if (new Set(lines.map(line => line.id)).size !== lines.length) throw new Error('Hay partidas contables duplicadas.');
@@ -117,16 +160,24 @@ export function buildOpenBalanceReport(
   });
   const totalPages = Math.max(1, Math.ceil(selected.length / BALANCE_PAGE_SIZE));
   const page = Math.min(filters.page, totalPages);
+  const receivable = summarizeOpenBalances(lines.filter(line => line.side === 'receivable'));
+  const payable = summarizeOpenBalances(lines.filter(line => line.side === 'payable'));
+  const writtenOff = extras.writtenOff ?? null;
   return {
-    currency: 'COP', company, asOfDate, generatedAt, filters: { ...filters, page },
-    receivable: summarizeOpenBalances(lines.filter(line => line.side === 'receivable')),
-    payable: summarizeOpenBalances(lines.filter(line => line.side === 'payable')),
+    currency: 'COP', company, asOfDate, generatedAt, filters: { ...filters, page }, receivable, payable,
+    invoices: extras.invoices ? {
+      receivable: summarizeOpenInvoices(extras.invoices, 'receivable', receivable.balance),
+      payable: summarizeOpenInvoices(extras.invoices, 'payable', payable.balance),
+    } : null,
+    writtenOff,
     filteredBalance: roundCurrency(selected.reduce((sum, line) => sum + line.balance, 0)),
     lines: ordered.slice((page - 1) * BALANCE_PAGE_SIZE, page * BALANCE_PAGE_SIZE),
     pagination: { page, pageSize: BALANCE_PAGE_SIZE, total: selected.length, totalPages },
     warnings: [
       ...(company ? [`Compañía Odoo consultada: ${company.name}. No incluye saldos de otras compañías del mismo Odoo.`] : []),
-      'Saldos abiertos actuales de las cuentas tipo por cobrar y por pagar de Odoo (las mismas del informe de antigüedad), con asientos publicados hasta hoy. Incluyen impuestos, retenciones y pagos aplicados; no corresponden al rango ni a los filtros de ventas.',
+      ...(extras.invoices ? ['Facturas pendientes: igual al tablero de Contabilidad de Odoo, suma el valor total de las facturas no pagadas o con pago parcial de los diarios de facturas (incluidas sus propias notas crédito). Las facturas con abonos cuentan por su valor completo; los diarios dedicados a notas crédito se muestran aparte.'] : []),
+      ...(writtenOff && writtenOff.lineCount ? [`Por decisión de Gerencia se excluye la cartera castigada que sigue abierta en Odoo: ${writtenOff.documents.join(', ')}.`] : []),
+      'Saldo contable: saldos abiertos actuales de las cuentas tipo por cobrar y por pagar de Odoo (las mismas del informe de antigüedad), con asientos publicados hasta hoy. Incluyen impuestos, retenciones y pagos aplicados; no corresponden al rango ni a los filtros de ventas.',
       'Los anticipos de clientes y a proveedores configurados en esas cuentas se compensan en el saldo neto; el desglose por cuenta los muestra por separado.',
       'El saldo neto incorpora abonos y notas crédito pendientes de conciliación. Los vencidos y su antigüedad muestran cargos positivos, sin compensar automáticamente abonos de otros documentos.',
       'Esta consulta no reconstruye cartera histórica, no concilia partidas ni registra cobros o pagos.',

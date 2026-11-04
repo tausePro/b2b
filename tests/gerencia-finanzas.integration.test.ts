@@ -31,7 +31,7 @@ import {
   type FinancialDataset,
 } from '../src/lib/gerencia/finanzas.server';
 import { buildOpenBalanceReport, overdueDays } from '../src/lib/gerencia/cartera';
-import { loadOpenBalanceDataset } from '../src/lib/gerencia/cartera.server';
+import { EXCLUDED_WRITTEN_OFF_MOVES, loadOpenBalanceDataset } from '../src/lib/gerencia/cartera.server';
 import { nextCommissionMonth, type RegularCommissionBreakdown } from '../src/lib/comisiones/habitual';
 import { getRegularCommissionReport, resolveRegularCommissionScope } from '../src/lib/comisiones/habitual.server';
 import type { AuthorizedApiContext, ApiActorRole } from '../src/lib/auth/apiRouteGuards';
@@ -758,10 +758,35 @@ test('Cartera: los saldos actuales concilian con partidas reales de Odoo y conse
   const company = await getOdooReportCompany(session);
   assert.deepEqual(dataset.company, company);
   const fields = ['id', 'move_id', 'account_type', 'amount_residual', 'date_maturity', 'date', 'company_currency_id', 'company_id'];
-  const domain = [
+  const openDomain = [
     ['parent_state', '=', 'posted'], ['company_id', '=', company.id], ['account_id.account_type', 'in', ['asset_receivable', 'liability_payable']],
     ['reconciled', '=', false], ['amount_residual', '!=', 0], ['date', '<=', dataset.asOfDate],
   ];
+  const excludedMoves = (await readChunks(session, 'account.move', EXCLUDED_WRITTEN_OFF_MOVES.map(move => move.id), ['id', 'name']))
+    .filter(move => EXCLUDED_WRITTEN_OFF_MOVES.some(rule => rule.id === numeric(move.id) && rule.name === move.name)).map(move => numeric(move.id));
+  const writtenOffRaw = excludedMoves.length ? await boundedSearch(session, 'account.move.line', [...openDomain, ['move_id', 'in', excludedMoves]], fields, 1000) : [];
+  assert.equal(dataset.writtenOff.lineCount, writtenOffRaw.length);
+  assert.equal(dataset.writtenOff.balance, roundCurrency(writtenOffRaw.reduce((sum, line) => sum + numeric(line.amount_residual) * (line.account_type === 'liability_payable' ? -1 : 1), 0)));
+  const domain = excludedMoves.length ? [...openDomain, ['move_id', 'not in', excludedMoves]] : openDomain;
+  const openInvoices = await boundedSearch(session, 'account.move', [
+    ['company_id', '=', company.id], ['state', '=', 'posted'], ['move_type', 'in', ['out_invoice', 'out_refund', 'in_invoice', 'in_refund']], ['payment_state', 'in', ['not_paid', 'partial']],
+  ], ['id', 'move_type', 'journal_id', 'amount_total_signed', 'amount_residual_signed'], 25000);
+  assert.equal(dataset.invoices.length, openInvoices.length);
+  const invoiceJournals = new Set<number>();
+  for (const journalId of new Set(openInvoices.map(row => relationId(row.journal_id)!))) {
+    if (await searchCount('account.move', [['journal_id', '=', journalId], ['state', '=', 'posted'], ['move_type', 'in', ['out_invoice', 'in_invoice']]], session) > 0) invoiceJournals.add(journalId);
+  }
+  const full = buildOpenBalanceReport(dataset.lines, dataset.asOfDate, dataset.generatedAt, { side: 'receivable', status: 'all', search: '', page: 1 }, dataset.company, {
+    invoices: dataset.invoices, writtenOff: dataset.writtenOff,
+  });
+  for (const [side, prefix, sign] of [['receivable', 'out_', 1], ['payable', 'in_', -1]] as const) {
+    const rows = openInvoices.filter(row => String(row.move_type).startsWith(prefix) && invoiceJournals.has(relationId(row.journal_id)!));
+    const summary = full.invoices![side];
+    assert.equal(summary.total, roundCurrency(rows.reduce((sum, row) => sum + sign * numeric(row.amount_total_signed), 0)));
+    assert.equal(summary.residual, roundCurrency(rows.reduce((sum, row) => sum + sign * numeric(row.amount_residual_signed), 0)));
+    assert.equal(summary.documentCount, rows.length);
+    assert.equal(roundCurrency(summary.total + summary.partialPayments + summary.creditNoteResidual + summary.otherOpen), full[side].balance);
+  }
   const raw = await boundedSearch(session, 'account.move.line', domain, fields, 25000);
   assert.equal(dataset.lines.length, await searchCount('account.move.line', domain, session));
   assert.deepEqual(dataset.lines.map(line => line.id).sort((a, b) => a - b), raw.map(line => numeric(line.id)).sort((a, b) => a - b));
