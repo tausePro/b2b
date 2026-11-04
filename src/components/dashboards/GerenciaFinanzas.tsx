@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useCallback, useEffect, useId, useMemo, useState, type ReactNode } from 'react';
+import { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { ArrowLeft, BadgeDollarSign, Building2, DollarSign, FileText, Loader2, RefreshCw, TrendingUp } from 'lucide-react';
@@ -398,6 +398,9 @@ function FinancialView({ advisorId, initialQuery, bonusPeriod, onBonusPeriodChan
   const [page, setPage] = useState(1);
   const [refresh, setRefresh] = useState(0);
   const [onlyMissingCost, setOnlyMissingCost] = useState(() => new URLSearchParams(initialQuery).get('pendientes_costo') === '1');
+  const detailHeadingRef = useRef<HTMLHeadingElement>(null);
+  const scrollToDetailRef = useRef(false);
+  const scrollTokenRef = useRef(0);
   const [portalCompanyByPartnerId, setPortalCompanyByPartnerId] = useState<Map<number, string>>(() => new Map());
 
   useEffect(() => {
@@ -447,6 +450,28 @@ function FinancialView({ advisorId, initialQuery, bonusPeriod, onBonusPeriodChan
     }
   }, [expectedFilters, range.from, range.to]);
   const { data: report, error, loading } = useReadonlyJson<FinancialReport>(!authLoading && canAccess && !rangePending && !validationError ? `/api/gerencia/finanzas?${query}` : null, user?.id, refresh, validate);
+  const focusDetail = useCallback(async () => {
+    const heading = detailHeadingRef.current;
+    if (!heading) return;
+    const token = ++scrollTokenRef.current;
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    await heading.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
+    if (token === scrollTokenRef.current) heading.focus({ preventScroll: true });
+  }, []);
+  useEffect(() => {
+    if (!scrollToDetailRef.current || !report?.filters.onlyMissingCost) return;
+    scrollToDetailRef.current = false;
+    void focusDetail();
+  }, [report, focusDetail]);
+  const showReviewLines = () => {
+    if (onlyMissingCost && page === 1 && report) {
+      void focusDetail();
+      return;
+    }
+    scrollToDetailRef.current = true;
+    setOnlyMissingCost(true);
+    setPage(1);
+  };
   const isAdvisor = filters.asesora !== '';
   const selectedAdvisor = report?.selectedAdvisor ?? report?.advisors.find((group) => group.id === requestedFilters.advisorId);
   const dateQuery = new URLSearchParams({ desde: range.from, hasta: range.to });
@@ -528,8 +553,8 @@ function FinancialView({ advisorId, initialQuery, bonusPeriod, onBonusPeriodChan
       </section>
 
       <aside className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
-        <p><strong>Alcance financiero:</strong> ventas netas en COP sin impuestos, con notas crédito descontadas según su signo contable. El costo procede de la factura registrada en Odoo, no del costo actual del catálogo. Los costos faltantes o no verificables dejan la utilidad pendiente.</p>
-        <p className="mt-2"><strong>Utilidad bruta de ventas:</strong> venta neta sin IVA menos costo de los productos facturados. Aún no descuenta nómina, arriendo, comisiones ni otros gastos de operación. Cuando faltan costos se muestra únicamente la parte verificada, no una utilidad total estimada.</p>
+        <p><strong>Alcance financiero:</strong> ventas netas en COP sin impuestos, con notas crédito descontadas según su signo contable. El costo procede de la factura registrada en Odoo, no del costo actual del catálogo. Los costos no disponibles o que no concilian dejan la utilidad pendiente.</p>
+        <p className="mt-2"><strong>Utilidad bruta de ventas:</strong> venta neta sin IVA menos costo de los productos facturados, igual que el margen de Odoo. Las líneas con costo cero en Odoo suman su venta completa como utilidad y se señalan para revisión. Aún no descuenta nómina, arriendo, comisiones ni otros gastos de operación. Cuando faltan costos se muestra únicamente la parte verificada, no una utilidad total estimada.</p>
         <p className="mt-2"><strong>Comisión habitual calculada:</strong> 1% general; 2% para tóner genéricos y Soluciones de Empaques, incluidas sus subcategorías. Se calcula por línea sobre el neto sin IVA, descontando notas crédito. Empaques se paga el mes siguiente a la facturación. El bono plataforma 0,5% se liquida por separado.</p>
       </aside>
       <div id="financial-error">{(validationError || error) && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{validationError || error}</p>}</div>
@@ -546,18 +571,39 @@ function FinancialView({ advisorId, initialQuery, bonusPeriod, onBonusPeriodChan
         )}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
           <KpiCard title="Venta neta sin impuestos" value={currencyFormatter.format(report.totals.netSales)} subtitle={`Facturación: ${currencyFormatter.format(report.totals.invoicedSales)} · Notas crédito (con signo): ${currencyFormatter.format(report.totals.creditNotes)}`} icon={<DollarSign aria-hidden="true" className="h-5 w-5" />} />
-          <KpiCard title={report.totals.cost === null ? 'Costo verificado · parcial' : 'Costo de ventas verificado'} value={money(report.totals.cost ?? report.totals.knownCost)} subtitle={`Cobertura sobre ventas en valor absoluto: ${percent(report.totals.costCoveragePercent)} · ${report.totals.missingCostLines} líneas pendientes`} icon={<FileText aria-hidden="true" className="h-5 w-5" />} />
-          <KpiCard title={report.totals.profit === null ? 'Utilidad bruta verificada · parcial' : 'Utilidad bruta de ventas'} value={money(report.totals.profit ?? report.totals.verifiedProfit)} subtitle={`Venta con costo verificado: ${money(report.totals.verifiedSales)} · Margen sobre esa venta: ${percent(report.totals.verifiedMarginPercent)}`} icon={<TrendingUp aria-hidden="true" className="h-5 w-5" />} />
+          <KpiCard title={report.totals.cost === null ? 'Costo verificado · parcial' : 'Costo de ventas verificado'} value={money(report.totals.cost ?? report.totals.knownCost)} subtitle={`Cobertura sobre ventas en valor absoluto: ${percent(report.totals.costCoveragePercent)} · ${report.totals.missingCostLines} pendientes · ${report.costReview.zeroCostLines} con costo cero`} icon={<FileText aria-hidden="true" className="h-5 w-5" />} />
+          <KpiCard title={report.totals.profit === null ? 'Utilidad bruta verificada · parcial' : 'Utilidad bruta de ventas'} value={money(report.totals.profit ?? report.totals.verifiedProfit)} subtitle={`${report.totals.profit === null ? `Venta con costo verificado: ${money(report.totals.verifiedSales)} · Margen sobre esa venta: ${percent(report.totals.verifiedMarginPercent)}` : `Margen bruto: ${percent(report.totals.marginPercent)}`}${report.costReview.zeroCostLines ? ` · Incluye ${money(report.costReview.zeroCostSales)} de ${report.costReview.zeroCostLines} líneas con costo cero` : ''}`} icon={<TrendingUp aria-hidden="true" className="h-5 w-5" />} />
           <KpiCard title="Comisión habitual calculada" value={money(report.totals.commission)} subtitle={`General 1% · Tóner 2% · Empaques 2% · ${report.totals.missingCommissionLines} líneas pendientes`} icon={<BadgeDollarSign aria-hidden="true" className="h-5 w-5" />} />
           <KpiCard title="Clientes facturados" value={String(report.totals.clientCount)} subtitle={`${report.totals.invoiceCount} facturas · ${report.totals.creditNoteCount} notas crédito · ${report.totals.lineCount} líneas`} icon={<Building2 aria-hidden="true" className="h-5 w-5" />} />
           <KpiCard title="Factura promedio sin impuestos" value={report.totals.averageInvoice === null ? 'No disponible' : currencyFormatter.format(report.totals.averageInvoice)} subtitle="Promedio de facturas, sin mezclar notas crédito" icon={<FileText aria-hidden="true" className="h-5 w-5" />} />
         </div>
-        {(report.totals.cost === null || report.totals.profit === null || report.totals.commission === null) && (
+        {(report.costReview.zeroCostLines > 0 || report.totals.cost === null || report.totals.profit === null || report.totals.commission === null) && (
           <section className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900" aria-label="Importes parciales y costos por revisar">
-            <h2 className="font-semibold">Los importes parciales incluyen solo las líneas con costo verificado</h2>
-            <p className="mt-2">Venta con costo verificado: {money(report.totals.verifiedSales)} · Venta cuyo costo requiere revisión: {money(report.totals.unverifiedSales)}.</p>
-            <p className="mt-1">{report.totals.missingCostLines} líneas en {report.totals.missingCostInvoices} documentos requieren revisar su costo en Odoo. Pendientes de comisión: {report.totals.missingCommissionLines}. Un costo cero registrado no se toma como rentabilidad confirmada.</p>
-            {report.totals.missingCostLines > 0 && <button type="button" className={`${buttonClass} mt-3`} onClick={() => { setOnlyMissingCost(true); setPage(1); }}>Mostrar líneas con costo pendiente en el detalle</button>}
+            {report.costReview.zeroCostLines > 0 && <>
+              <h2 className="font-semibold">{report.costReview.zeroCostLines} líneas en {report.costReview.zeroCostInvoices} documentos tienen costo cero en Odoo</h2>
+              <p className="mt-2">Se incluyen en la utilidad igual que en Odoo: su venta de {money(report.costReview.zeroCostSales)} cuenta completa como utilidad. Sin esas líneas, la utilidad sería {money(roundCurrency((report.totals.profit ?? report.totals.verifiedProfit) - report.costReview.zeroCostSales))}. Revisa en Odoo si corresponde registrarles costo.</p>
+            </>}
+            {(report.totals.cost === null || report.totals.profit === null || report.totals.commission === null) && <>
+              <h2 className={`font-semibold ${report.costReview.zeroCostLines > 0 ? 'mt-4' : ''}`}>Los importes parciales incluyen solo las líneas con costo verificado</h2>
+              <p className="mt-2">Venta con costo verificado: {money(report.totals.verifiedSales)} · Venta cuyo costo requiere revisión: {money(report.totals.unverifiedSales)}.</p>
+              <p className="mt-1">{report.totals.missingCostLines} líneas en {report.totals.missingCostInvoices} documentos requieren revisar su costo en Odoo. Pendientes de comisión: {report.totals.missingCommissionLines}.</p>
+            </>}
+            {report.costReview.products.length > 0 && <>
+              <button type="button" className={`${buttonClass} mt-3`} onClick={showReviewLines}>Ver las {report.costReview.zeroCostLines + report.totals.missingCostLines} líneas por revisar en el detalle</button>
+              <details className="mt-3">
+                <summary className="cursor-pointer font-medium">Productos con costo cero o pendiente ({report.costReview.products.length})</summary>
+                <div className="mt-2 overflow-x-auto rounded-lg border border-amber-200 bg-white text-foreground" role="region" aria-label="Productos con costo por revisar" tabIndex={0}>
+                  <table className="w-full text-sm">
+                    <caption className="sr-only">Productos con líneas de costo cero o pendiente en el rango y filtros consultados. Valores COP sin impuestos.</caption>
+                    <thead><tr className="border-b border-border bg-background-light/50"><th scope="col" className="px-4 py-3 text-left font-medium text-muted">Producto / categoría</th><th scope="col" className={headingCellClass}>Líneas con costo cero</th><th scope="col" className={headingCellClass}>Líneas pendientes</th><th scope="col" className={headingCellClass}>Facturas / NC</th><th scope="col" className={headingCellClass}>Venta neta</th></tr></thead>
+                    <tbody>{report.costReview.products.map((group) => <tr key={group.key} className="border-b border-border/50">
+                      <th scope="row" className="min-w-52 px-4 py-3 text-left align-top font-medium">{group.name}<span className="mt-1 block text-xs font-normal text-muted">SKU: {group.sku ?? 'No disponible'} · {group.categoryName ?? 'Categoría pendiente'}</span></th>
+                      <td className={cellClass}>{group.lineCount - group.missingCostLines}</td><td className={cellClass}>{group.missingCostLines}</td><td className={cellClass}>{group.invoiceCount} / {group.creditNoteCount}</td><AmountCell value={group.netSales} />
+                    </tr>)}</tbody>
+                  </table>
+                </div>
+              </details>
+            </>}
           </section>
         )}
       </>}
@@ -592,7 +638,7 @@ function FinancialView({ advisorId, initialQuery, bonusPeriod, onBonusPeriodChan
         <GroupTable title="Productos y unidades" groups={report.products} kind="product" navigation={(group) => filterNavigation('producto', group)} />
         <TrendTable report={report} />
         <section id="detalle-financiero" className="overflow-hidden rounded-xl border border-border bg-white" aria-label="Líneas de facturas y notas crédito">
-          <div className="border-b border-border px-5 py-4"><h2 className="font-semibold text-foreground">Detalle de facturas y notas crédito</h2><p className="mt-1 text-xs text-muted">{report.pagination.pageSize} líneas por página desde Odoo. Los KPI y resúmenes incluyen todas las líneas del rango, no solo esta página. Coste unitario y costo total expresados en COP; corresponden a la factura, sin sustituirlos por costos actuales del producto.</p><label className="mt-3 inline-flex items-center gap-2 text-sm"><input type="checkbox" checked={onlyMissingCost} onChange={event => { setOnlyMissingCost(event.target.checked); setPage(1); }} />Solo líneas con costo pendiente (no altera los KPI)</label></div>
+          <div className="border-b border-border px-5 py-4"><h2 ref={detailHeadingRef} tabIndex={-1} className="scroll-mt-20 font-semibold text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">Detalle de facturas y notas crédito</h2><p className="mt-1 text-xs text-muted">{report.pagination.pageSize} líneas por página desde Odoo. Los KPI y resúmenes incluyen todas las líneas del rango, no solo esta página. Coste unitario y costo total expresados en COP; corresponden a la factura, sin sustituirlos por costos actuales del producto.</p><label className="mt-3 inline-flex items-center gap-2 text-sm"><input type="checkbox" checked={onlyMissingCost} onChange={event => { scrollToDetailRef.current = false; setOnlyMissingCost(event.target.checked); setPage(1); }} />Solo líneas con costo cero o pendiente (no altera los KPI)</label></div>
           <div className="overflow-x-auto" role="region" aria-label="Tabla de líneas facturadas" tabIndex={0}>
             <table className="w-full text-sm"><caption className="sr-only">Detalle paginado de líneas Odoo con costo histórico, utilidad y comisión habitual calculada</caption>
               <thead><tr className="border-b border-border bg-background-light/50"><th scope="col" className="px-4 py-3 text-left font-medium text-muted">Documento / fecha</th><th scope="col" className="px-4 py-3 text-left font-medium text-muted">Cliente / asesora</th><th scope="col" className="px-4 py-3 text-left font-medium text-muted">Producto / categoría</th><th scope="col" className={headingCellClass}>Cantidad / unidad</th><th scope="col" className={headingCellClass}>Venta neta</th><th scope="col" className={headingCellClass}>Coste unitario Odoo (COP)</th><th scope="col" className={headingCellClass}>Costo total</th><th scope="col" className={headingCellClass}>Utilidad bruta</th><th scope="col" className={headingCellClass}>Margen bruto</th><th scope="col" className={headingCellClass}>Tasa habitual</th><th scope="col" className={headingCellClass}>Comisión habitual</th><th scope="col" className="px-4 py-3 text-left font-medium text-muted">Canal / incidencias</th></tr></thead>

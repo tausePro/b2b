@@ -15,6 +15,7 @@ import {
   regularCommissionRate,
   summarizeFinancialLines,
   validateFinancialRange,
+  ZERO_RECORDED_COST_ISSUE,
   type FinancialFilters,
   type FinancialLine,
   type FinancialRange,
@@ -480,12 +481,24 @@ test('Gerencia: Odoo y Supabase reales, lecturas acotadas y bono sin mutaciones'
       assert.deepEqual(await resolveRegularCommissionScope(managerContext, null), { canViewTeam: true, advisorId: null, odooUserId: undefined });
     });
 
-    await t.test('costos cero o ausentes impiden margen validado; costos actuales se comparan solo en una muestra', async (subtest) => {
+    await t.test('costos ausentes o negativos impiden margen validado; costo cero cuenta como en Odoo y se señala; costos actuales solo en muestra', async (subtest) => {
       const unavailable = dataset.lines.filter((line) => {
         const price = independent.lineById.get(line.id)!.purchase_price;
-        return typeof price !== 'number' || !Number.isFinite(price) || price <= 0;
+        return typeof price !== 'number' || !Number.isFinite(price) || price < 0;
       });
-      if (!unavailable.length) subtest.diagnostic('El rango real no contiene costos cero o ausentes; no se fabricaron filas para esa condición.');
+      const zeroCost = dataset.lines.filter((line) => independent.lineById.get(line.id)!.purchase_price === 0 && line.netSales !== 0);
+      if (!unavailable.length) subtest.diagnostic('El rango real no contiene costos ausentes o negativos; no se fabricaron filas para esa condición.');
+      if (!zeroCost.length) subtest.diagnostic('El rango real no contiene costos cero; no se fabricaron filas para esa condición.');
+      for (const line of zeroCost) {
+        if (line.cost === null) {
+          assert.ok(line.issues.length > 0 && !line.issues.includes(ZERO_RECORDED_COST_ISSUE));
+          continue;
+        }
+        assert.equal(line.cost, 0);
+        assert.equal(line.profit, line.netSales);
+        assert.equal(line.profit, roundCurrency(numeric(independent.lineById.get(line.id)!.margin_signed)));
+        assert.ok(line.issues.includes(ZERO_RECORDED_COST_ISSUE));
+      }
       for (const line of unavailable) {
         assert.equal(line.cost, null);
         assert.equal(line.profit, null);
@@ -523,7 +536,21 @@ test('Gerencia: Odoo y Supabase reales, lecturas acotadas y bono sin mutaciones'
         const raw = independent.lineById.get(line.id)!;
         if (typeof raw.purchase_price === 'number' && typeof product.standard_price === 'number' && roundCurrency(raw.purchase_price) !== roundCurrency(product.standard_price)) historicalDifferences++;
       }
-      subtest.diagnostic(JSON.stringify({ missingOrZeroCostLines: unavailable.length, validatedCostLines: dataset.lines.filter((line) => line.cost !== null).length, currentCostSampleOnly: currentProducts.length, historicalDifferences }));
+      subtest.diagnostic(JSON.stringify({ missingCostLines: unavailable.length, zeroCostLines: zeroCost.length, validatedCostLines: dataset.lines.filter((line) => line.cost !== null).length, currentCostSampleOnly: currentProducts.length, historicalDifferences }));
+    });
+
+    await t.test('la utilidad y el costo completos coinciden con el margen firmado y el costo de las cabeceras Odoo', (subtest) => {
+      const headers = independent.invoices.filter(invoice => String(invoice.invoice_date) >= range.from && String(invoice.invoice_date) <= range.to);
+      const odooMargin = roundCurrency(headers.reduce((total, invoice) => total + numeric(invoice.margin_signed), 0));
+      const odooCost = roundCurrency(headers.reduce((total, invoice) => total + numeric(invoice.cost_total), 0));
+      subtest.diagnostic(JSON.stringify({ odooMargin, odooCost, profit: report.totals.profit, cost: report.totals.cost, zeroCostLines: report.costReview.zeroCostLines, zeroCostSales: report.costReview.zeroCostSales, missingCostLines: report.totals.missingCostLines }));
+      if (report.totals.profit === null || report.totals.cost === null) {
+        subtest.diagnostic('Hay costos pendientes en el rango real; la utilidad total no se presenta y no se compara con Odoo.');
+        return;
+      }
+      const tolerance = Math.max(0.05, current.length * 0.01);
+      assert.ok(Math.abs(report.totals.profit - odooMargin) <= tolerance, `Utilidad ${report.totals.profit} frente a margen Odoo ${odooMargin}.`);
+      assert.ok(Math.abs(report.totals.cost - odooCost) <= tolerance, `Costo ${report.totals.cost} frente a costo Odoo ${odooCost}.`);
     });
 
     await t.test('filtros por vendedor, cliente, producto y factura conservan intersección y comparación anterior', () => {
@@ -575,8 +602,18 @@ test('Gerencia: Odoo y Supabase reales, lecturas acotadas y bono sin mutaciones'
       const pending = buildFinancialReport(dataset.lines, range, { page: 1, onlyMissingCost: true }, dataset.generatedAt);
       assert.deepEqual(pending.totals, report.totals);
       assert.deepEqual(pending.advisors, report.advisors);
-      assert.equal(pending.pagination.total, current.filter(line => line.cost === null).length);
-      assert.ok(pending.lines.every(line => line.cost === null));
+      const review = current.filter(line => line.cost === null || line.profit === null || (line.cost === 0 && line.netSales !== 0));
+      const zeroCost = review.filter(line => line.cost === 0);
+      assert.equal(pending.pagination.total, review.length);
+      assert.equal(report.costReview.zeroCostLines, zeroCost.length);
+      assert.equal(report.costReview.zeroCostInvoices, new Set(zeroCost.map(line => line.invoiceId)).size);
+      assert.equal(report.costReview.zeroCostSales, roundCurrency(zeroCost.reduce((total, line) => total + line.netSales, 0)));
+      assert.equal(review.length, report.totals.missingCostLines + report.costReview.zeroCostLines);
+      assert.ok(pending.lines.every(line => review.includes(line)));
+      assert.deepEqual(pending.costReview, report.costReview);
+      assert.equal(report.costReview.products.reduce((total, group) => total + group.lineCount, 0), review.length);
+      assert.equal(report.costReview.products.reduce((total, group) => total + group.lineCount - group.missingCostLines, 0), zeroCost.length);
+      assert.equal(roundCurrency(report.costReview.products.reduce((total, group) => total + group.netSales, 0)), roundCurrency(review.reduce((total, line) => total + line.netSales, 0)));
     });
 
     await t.test('los filtros se aplican al leer Odoo y conservan las líneas completas para conciliar cada factura', async () => {

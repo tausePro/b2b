@@ -118,6 +118,18 @@ La tasa depende de la categoría de cada línea, también para las ventas de Van
 
 `GET /api/comisiones/habitual` permite a cada asesora consultar únicamente su vendedor Odoo vinculado. Dirección y Super Admin pueden consultar el equipo o una asesora. La comisión habitual es informativa y permanece separada del bono plataforma del 0,5% y sus liquidaciones. Este release no requiere migraciones nuevas.
 
+## Utilidad bruta en Gerencia
+
+La utilidad bruta de ventas equivale al margen firmado de Odoo (`margin_signed`): venta neta sin IVA menos el costo registrado en cada línea de factura o nota crédito.
+
+- Las líneas con costo cero registrado en Odoo suman su venta completa como utilidad, igual que en Odoo, y se señalan para revisión: KPI, aviso con la utilidad sin esas líneas, resumen de productos por revisar y filtro del detalle.
+- Los costos ausentes, negativos, con cantidad cero o que no concilian con la línea o la cabecera siguen pendientes y dejan la utilidad total sin presentar.
+- El filtro `pendientes_costo=1` lista líneas con costo cero o pendiente; no cambia los KPI ni los resúmenes.
+- `GET /api/gerencia/finanzas` entrega esos indicadores en `costReview` (`zeroCostLines`, `zeroCostInvoices`, `zeroCostSales` y `products` con categoría), no en cada grupo, para no aumentar la respuesta de 366 días, que ya está cerca del límite de 3 MB.
+- No se completan costos con el `standard_price` actual ni se modifica Odoo.
+
+Conciliación de octubre de 2026: venta 607.606.414,28, costo 400.610.438,47 y utilidad 206.995.975,81, iguales a Odoo. Incluye 41 líneas con costo cero (9.090.220) en 32 documentos.
+
 ## Bono Plataforma para asesoras
 
 La migración `supabase/migrations/048_bono_plataforma_asesoras.sql` habilita el bono adicional del 0,5% desde septiembre de 2026.

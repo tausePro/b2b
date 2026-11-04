@@ -7,8 +7,8 @@ import { getServerOdooConfig } from '@/lib/odoo/serverConfig';
 import { roundCurrency } from '@/lib/comisiones/bonoPlataforma';
 import { PACKAGING_CATEGORY_ID, nextCommissionMonth, regularCommissionKind, summarizeRegularCommissions } from '@/lib/comisiones/habitual';
 import {
-  buildFinancialReport, calculateRegularCommission, financialMargin, GENERIC_TONER_CATEGORY_ID,
-  previousFinancialRange, regularCommissionRate, validateFinancialRange,
+  buildFinancialReport, calculateRegularCommission, financialMargin, GENERIC_TONER_CATEGORY_ID, hasZeroRecordedCost,
+  previousFinancialRange, regularCommissionRate, validateFinancialRange, ZERO_RECORDED_COST_ISSUE,
   type FinancialAdvisor, type FinancialFilters, type FinancialLine, type FinancialRange,
 } from './finanzas';
 
@@ -113,8 +113,8 @@ export function normalizeFinancialLine(invoice: Row, line: Row, product: Row | u
   const signedMargin = typeof line.margin_signed === 'number' && Number.isFinite(line.margin_signed) ? line.margin_signed : null;
   let cost: number | null = null;
   let profit: number | null = null;
-  if (purchasePrice === null || purchasePrice <= 0 || (quantity === 0 && netSales !== 0)) {
-    issues.push('Costo de factura cero, negativo o no disponible: requiere revisión.');
+  if (purchasePrice === null || purchasePrice < 0 || (quantity === 0 && netSales !== 0)) {
+    issues.push('Costo de factura negativo, no disponible o con cantidad cero: requiere revisión.');
   } else if (conversion === null || !Number.isFinite(conversion) || conversion <= 0 || recordedMargin === null || signedMargin === null) {
     issues.push('No se puede conciliar el costo y el margen en moneda de compañía.');
   } else {
@@ -127,6 +127,7 @@ export function normalizeFinancialLine(invoice: Row, line: Row, product: Row | u
     } else {
       cost = expectedCost;
       profit = expectedProfit;
+      if (hasZeroRecordedCost({ cost, netSales })) issues.push(ZERO_RECORDED_COST_ISSUE);
     }
   }
   const productId = relationId(line.product_id);
@@ -190,7 +191,7 @@ async function fetchDataset(admin: SupabaseClient, session: OdooSession, range: 
     'Comisión habitual calculada: 1% general; 2% para tóner genéricos (categoría 26) y Soluciones de Empaques (categoría 132), incluidas sus subcategorías. No registra pagos ni modifica liquidaciones.',
     'Empaques: el mes previsto de pago es el siguiente al mes de la factura o nota crédito. Las notas crédito conservan su signo y ajustan la comisión; el bono plataforma 0,5% se calcula por separado.',
     'La clasificación de producto y el vendedor son los registrados actualmente en Odoo. Las consultas históricas no sustituyen liquidaciones anteriores.',
-    'Utilidad bruta comercial según costo de factura; no es utilidad neta después de gastos. Costos cero o inconsistentes se señalan para revisión.',
+    'Utilidad bruta comercial según costo de factura, igual que el margen de Odoo; no es utilidad neta después de gastos. Las líneas con costo cero registrado suman su venta completa como utilidad y se señalan para revisión; los costos no disponibles o inconsistentes quedan pendientes.',
     'Otros/sin vínculo identifica líneas sin vínculo verificable a pedidos del portal; no presume su canal comercial.',
   ];
   const [currentInvoices, previousInvoices, categories, portal] = await Promise.all([
@@ -310,6 +311,7 @@ async function fetchDataset(admin: SupabaseClient, session: OdooSession, range: 
             line.cost = null;
             line.profit = null;
             line.marginPercent = null;
+            line.issues = line.issues.filter(issue => issue !== ZERO_RECORDED_COST_ISSUE);
             line.issues.push('Los costos de las líneas no concilian con la cabecera de factura.');
           }
         }

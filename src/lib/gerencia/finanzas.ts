@@ -7,6 +7,7 @@ import {
 export const GENERIC_TONER_CATEGORY_ID = 26;
 export const FINANCIAL_MAX_DAYS = 366;
 export const FINANCIAL_PAGE_SIZE = 100;
+export const ZERO_RECORDED_COST_ISSUE = 'Costo cero registrado en Odoo: la venta completa cuenta como utilidad, igual que en Odoo. Revisa si el producto requiere costo.';
 
 export type FinancialChannel = 'portal' | 'mixed' | 'other';
 export interface FinancialRange { from: string; to: string }
@@ -81,9 +82,16 @@ export interface FinancialGroup extends FinancialTotals {
   name: string;
   portalAdvisorId?: string | null;
   sku?: string | null;
+  categoryName?: string | null;
   unitName?: string;
   quantity?: number;
   commissionBreakdown?: RegularCommissionBreakdown[];
+}
+export interface FinancialCostReview {
+  zeroCostLines: number;
+  zeroCostInvoices: number;
+  zeroCostSales: number;
+  products: FinancialGroup[];
 }
 export interface FinancialTrend { date: string; netSales: number; profit: number | null; commission: number | null }
 export interface FinancialAdvisor { id: number; name: string; portalAdvisorId: string | null }
@@ -102,6 +110,7 @@ export interface FinancialReport {
   advisors: FinancialGroup[];
   clients: FinancialGroup[];
   products: FinancialGroup[];
+  costReview: FinancialCostReview;
   trend: FinancialTrend[];
   lines: FinancialLine[];
   pagination: { page: number; pageSize: number; total: number; totalPages: number };
@@ -181,6 +190,14 @@ export function financialMargin(profit: number | null, sales: number): number | 
   return profit === null || sales <= 0 ? null : roundCurrency(profit / sales * 100);
 }
 
+export function hasZeroRecordedCost(line: Pick<FinancialLine, 'cost' | 'netSales'>): boolean {
+  return line.cost === 0 && line.netSales !== 0;
+}
+
+export function needsCostReview(line: Pick<FinancialLine, 'cost' | 'profit' | 'netSales'>): boolean {
+  return line.cost === null || line.profit === null || hasZeroRecordedCost(line);
+}
+
 export function summarizeFinancialLines(lines: readonly FinancialLine[]): FinancialTotals {
   const invoiceIds = new Set<number>();
   const creditIds = new Set<number>();
@@ -247,7 +264,7 @@ export function filterFinancialLines(lines: readonly FinancialLine[], filters: F
     && (filters.invoiceId === undefined || line.invoiceId === filters.invoiceId));
 }
 
-function groupFinancialLines(lines: readonly FinancialLine[], kind: 'advisor' | 'client' | 'product'): FinancialGroup[] {
+function groupFinancialLines(lines: readonly FinancialLine[], kind: 'advisor' | 'client' | 'product', withCategory = false): FinancialGroup[] {
   const groups = new Map<string, { first: FinancialLine; lines: FinancialLine[] }>();
   for (const line of lines) {
     const id = kind === 'advisor' ? line.advisorId : kind === 'client' ? line.clientId : line.productId;
@@ -262,6 +279,7 @@ function groupFinancialLines(lines: readonly FinancialLine[], kind: 'advisor' | 
     name: kind === 'advisor' ? first.advisorName : kind === 'client' ? first.clientName : first.productId === null ? 'Líneas sin producto identificado' : first.productName,
     ...(kind === 'advisor' ? { portalAdvisorId: first.portalAdvisorId, commissionBreakdown: summarizeRegularCommissions(grouped) } : {}),
     ...(kind === 'product' ? { sku: first.sku, unitName: first.unitName, quantity: Number(grouped.reduce((total, line) => total + line.quantity, 0).toPrecision(15)) } : {}),
+    ...(withCategory ? { categoryName: first.categoryName } : {}),
     ...summarizeFinancialLines(grouped),
   })).sort((a, b) => b.netSales - a.netSales || a.name.localeCompare(b.name, 'es'));
 }
@@ -284,7 +302,9 @@ export function buildFinancialReport(allLines: readonly FinancialLine[], range: 
     rows.push(line);
     byDate.set(line.invoiceDate, rows);
   }
-  const details = filters.onlyMissingCost ? current.filter(line => line.cost === null) : current;
+  const review = current.filter(needsCostReview);
+  const zeroCost = review.filter(hasZeroRecordedCost);
+  const details = filters.onlyMissingCost ? review : current;
   const totalPages = Math.max(1, Math.ceil(details.length / FINANCIAL_PAGE_SIZE));
   const page = Math.min(filters.page, totalPages);
   const ordered = [...details].sort((a, b) => b.invoiceDate.localeCompare(a.invoiceDate) || b.invoiceId - a.invoiceId || a.id - b.id);
@@ -293,6 +313,12 @@ export function buildFinancialReport(allLines: readonly FinancialLine[], range: 
     totals: summarizeFinancialLines(current), previousTotals: summarizeFinancialLines(previous),
     commissionBreakdown: summarizeRegularCommissions(current), packagingPayments: packagingPaymentSchedule(current, range),
     advisors: groupFinancialLines(current, 'advisor'), clients: groupFinancialLines(current, 'client'), products: groupFinancialLines(current, 'product'),
+    costReview: {
+      zeroCostLines: zeroCost.length,
+      zeroCostInvoices: new Set(zeroCost.map(line => line.invoiceId)).size,
+      zeroCostSales: roundCurrency(zeroCost.reduce((total, line) => total + line.netSales, 0)),
+      products: groupFinancialLines(review, 'product', true),
+    },
     trend: [...byDate].sort(([a], [b]) => a.localeCompare(b)).map(([date, rows]) => {
       const totals = summarizeFinancialLines(rows);
       return { date, netSales: totals.netSales, profit: totals.profit, commission: totals.commission };
