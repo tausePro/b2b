@@ -33,11 +33,14 @@ export interface OpenBalanceTotals {
   documentCount: number;
   partnerCount: number;
   aging: { label: string; amount: number }[];
+  accounts: { name: string; balance: number; lineCount: number }[];
 }
 
 export interface OpenBalanceFilters { side: BalanceSide; status: BalanceStatus; search: string; page: number }
+export interface OpenBalanceCompany { id: number; name: string }
 export interface OpenBalanceReport {
   currency: 'COP';
+  company: OpenBalanceCompany | null;
   asOfDate: string;
   generatedAt: string;
   filters: OpenBalanceFilters;
@@ -63,9 +66,14 @@ export function overdueDays(dueDate: string | null, today: string): number | nul
 
 export function summarizeOpenBalances(lines: readonly OpenBalanceLine[]): OpenBalanceTotals {
   const aging = ['1–30 días', '31–60 días', '61–90 días', 'Más de 90 días'].map(label => ({ label, amount: 0 }));
+  const accounts = new Map<string, { name: string; balance: number; lineCount: number }>();
   let charges = 0, credits = 0, overdue = 0, notDue = 0, withoutDueDate = 0;
   for (const line of lines) {
     if (!Number.isFinite(line.balance)) throw new Error('Saldo contable no válido.');
+    const account = accounts.get(line.accountName) ?? { name: line.accountName, balance: 0, lineCount: 0 };
+    account.balance += line.balance;
+    account.lineCount++;
+    accounts.set(line.accountName, account);
     if (line.balance < 0) { credits += line.balance; continue; }
     charges += line.balance;
     if (line.daysOverdue === null) withoutDueDate += line.balance;
@@ -82,11 +90,13 @@ export function summarizeOpenBalances(lines: readonly OpenBalanceLine[]): OpenBa
     lineCount: lines.length, documentCount: new Set(lines.map(line => line.documentId)).size,
     partnerCount: new Set(lines.flatMap(line => line.partnerId === null ? [] : [`${line.companyId}:${line.partnerId}`])).size,
     aging: aging.map(bucket => ({ ...bucket, amount: roundCurrency(bucket.amount) })),
+    accounts: [...accounts.values()].map(account => ({ ...account, balance: roundCurrency(account.balance) }))
+      .sort((a, b) => Math.abs(b.balance) - Math.abs(a.balance) || a.name.localeCompare(b.name, 'es')),
   };
 }
 
 export function buildOpenBalanceReport(
-  lines: readonly OpenBalanceLine[], asOfDate: string, generatedAt: string, filters: OpenBalanceFilters,
+  lines: readonly OpenBalanceLine[], asOfDate: string, generatedAt: string, filters: OpenBalanceFilters, company: OpenBalanceCompany | null = null,
 ): OpenBalanceReport {
   if (!Number.isSafeInteger(filters.page) || filters.page < 1) throw new Error('Página no válida.');
   if (new Set(lines.map(line => line.id)).size !== lines.length) throw new Error('Hay partidas contables duplicadas.');
@@ -108,14 +118,16 @@ export function buildOpenBalanceReport(
   const totalPages = Math.max(1, Math.ceil(selected.length / BALANCE_PAGE_SIZE));
   const page = Math.min(filters.page, totalPages);
   return {
-    currency: 'COP', asOfDate, generatedAt, filters: { ...filters, page },
+    currency: 'COP', company, asOfDate, generatedAt, filters: { ...filters, page },
     receivable: summarizeOpenBalances(lines.filter(line => line.side === 'receivable')),
     payable: summarizeOpenBalances(lines.filter(line => line.side === 'payable')),
     filteredBalance: roundCurrency(selected.reduce((sum, line) => sum + line.balance, 0)),
     lines: ordered.slice((page - 1) * BALANCE_PAGE_SIZE, page * BALANCE_PAGE_SIZE),
     pagination: { page, pageSize: BALANCE_PAGE_SIZE, total: selected.length, totalPages },
     warnings: [
-      'Saldos abiertos actuales de cuentas por cobrar y pagar, con asientos publicados hasta hoy. Incluyen impuestos, retenciones y pagos aplicados; no corresponden al rango ni a los filtros de ventas.',
+      ...(company ? [`Compañía Odoo consultada: ${company.name}. No incluye saldos de otras compañías del mismo Odoo.`] : []),
+      'Saldos abiertos actuales de las cuentas tipo por cobrar y por pagar de Odoo (las mismas del informe de antigüedad), con asientos publicados hasta hoy. Incluyen impuestos, retenciones y pagos aplicados; no corresponden al rango ni a los filtros de ventas.',
+      'Los anticipos de clientes y a proveedores configurados en esas cuentas se compensan en el saldo neto; el desglose por cuenta los muestra por separado.',
       'El saldo neto incorpora abonos y notas crédito pendientes de conciliación. Los vencidos y su antigüedad muestran cargos positivos, sin compensar automáticamente abonos de otros documentos.',
       'Esta consulta no reconstruye cartera histórica, no concilia partidas ni registra cobros o pagos.',
     ],

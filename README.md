@@ -122,13 +122,22 @@ La tasa depende de la categoría de cada línea, también para las ventas de Van
 
 La utilidad bruta de ventas equivale al margen firmado de Odoo (`margin_signed`): venta neta sin IVA menos el costo registrado en cada línea de factura o nota crédito.
 
-- Las líneas con costo cero registrado en Odoo suman su venta completa como utilidad, igual que en Odoo, y se señalan para revisión: KPI, aviso con la utilidad sin esas líneas, resumen de productos por revisar y filtro del detalle.
+- Los servicios (productos Odoo de tipo `service`: rentas, mantenimientos, envíos, etc.) sin costo registrado se toman con costo cero por definición de Gerencia y no quedan por revisar.
+- La mercancía con costo cero suma su venta completa como utilidad, igual que en Odoo, y se señala para revisión: KPI, aviso con la utilidad sin esas líneas, resumen de productos por revisar y filtro del detalle.
 - Los costos ausentes, negativos, con cantidad cero o que no concilian con la línea o la cabecera siguen pendientes y dejan la utilidad total sin presentar.
-- El filtro `pendientes_costo=1` lista líneas con costo cero o pendiente; no cambia los KPI ni los resúmenes.
-- `GET /api/gerencia/finanzas` entrega esos indicadores en `costReview` (`zeroCostLines`, `zeroCostInvoices`, `zeroCostSales` y `products` con categoría), no en cada grupo, para no aumentar la respuesta de 366 días, que ya está cerca del límite de 3 MB.
+- El filtro `pendientes_costo=1` lista mercancía con costo cero y costos pendientes; no cambia los KPI ni los resúmenes.
+- La consulta se limita a la compañía activa del usuario Odoo de la integración (hoy INVERSIONES IMPRIMA SAS); no mezcla documentos de VALU OLIVEROS SAS.
+- `GET /api/gerencia/finanzas` responde en formato compacto: `advisors`, `clients`, `products` y `costReview.products` llegan como `{ fields, rows }` y el cliente los reconstruye con `decodeFinancialReport`. `costReview` resume `zeroCostGoods*`, `zeroCostService*` y los productos por revisar con su categoría. En rangos de más de 62 días la evolución se agrupa por mes (`trendGranularity`).
 - No se completan costos con el `standard_price` actual ni se modifica Odoo.
 
-Conciliación de octubre de 2026: venta 607.606.414,28, costo 400.610.438,47 y utilidad 206.995.975,81, iguales a Odoo. Incluye 41 líneas con costo cero (9.090.220) en 32 documentos.
+Conciliación de octubre de 2026: venta 607.606.414,28, costo 400.610.438,47 y utilidad 206.995.975,81, iguales a Odoo. De las 41 líneas con costo cero, 33 son servicios (7.123.920) y 8 mercancía por revisar (1.966.300). La respuesta de octubre pasó de 714.681 a 245.392 bytes.
+
+## Cuentas por cobrar y por pagar en Gerencia
+
+- Saldos abiertos actuales (`amount_residual`) de las cuentas Odoo tipo por cobrar y por pagar, publicados hasta hoy, de la compañía activa del usuario de la integración. Es el mismo criterio del informe de antigüedad de Odoo.
+- Los anticipos configurados en esas cuentas se compensan en el saldo neto; la sección "Composición y antigüedad" muestra el saldo por cuenta contable.
+- Antes del 2026-11-04 se sumaban también los saldos de VALU OLIVEROS SAS (+43.342.535 por cobrar y +254.242.053 por pagar). Al 2026-11-04, INVERSIONES IMPRIMA SAS: por cobrar 1.016.602.317,13 (clientes 1.045.569.929,00 menos anticipos de clientes 28.967.611,87) y por pagar 430.241.005,11 (proveedores 417.999.224,21 más otras cuentas por pagar 32.810.724,54 menos anticipos a proveedores 20.568.943,64).
+- Las retenciones, impuestos y obligaciones laborales del PUC (clases 13, 23 y 24) no son cuentas tipo por cobrar o por pagar en Odoo y no se incluyen.
 
 ## Bono Plataforma para asesoras
 

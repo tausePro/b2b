@@ -4,11 +4,11 @@ import { createHash } from 'node:crypto';
 import { authenticate, type OdooSession } from '@/lib/odoo/client';
 import { getServerOdooConfig } from '@/lib/odoo/serverConfig';
 import { getBogotaCalendarDate, roundCurrency } from '@/lib/comisiones/bonoPlataforma';
-import { FinancialDataError, readIds, searchAll } from './finanzas.server';
-import { buildOpenBalanceReport, overdueDays, type OpenBalanceFilters, type OpenBalanceLine } from './cartera';
+import { FinancialDataError, getOdooReportCompany, readIds, searchAll } from './finanzas.server';
+import { buildOpenBalanceReport, overdueDays, type OpenBalanceCompany, type OpenBalanceFilters, type OpenBalanceLine } from './cartera';
 
 type Row = Record<string, unknown>;
-export interface OpenBalanceDataset { lines: OpenBalanceLine[]; asOfDate: string; generatedAt: string }
+export interface OpenBalanceDataset { lines: OpenBalanceLine[]; asOfDate: string; generatedAt: string; company: OpenBalanceCompany }
 const cache = new Map<string, { expires: number; promise: Promise<OpenBalanceDataset> }>();
 const MAX_OPEN_LINES = 25000;
 const relationId = (value: unknown): number | null =>
@@ -50,9 +50,9 @@ export function normalizeOpenBalanceLine(row: Row, document: Row, partner: Row |
   };
 }
 
-async function fetchOpenBalances(session: OdooSession, today: string): Promise<OpenBalanceDataset> {
+async function fetchOpenBalances(session: OdooSession, today: string, company: OpenBalanceCompany): Promise<OpenBalanceDataset> {
   const rows = await searchAll(session, 'account.move.line', [
-    ['parent_state', '=', 'posted'], ['account_id.account_type', 'in', ['asset_receivable', 'liability_payable']],
+    ['parent_state', '=', 'posted'], ['company_id', '=', company.id], ['account_id.account_type', 'in', ['asset_receivable', 'liability_payable']],
     ['reconciled', '=', false], ['amount_residual', '!=', 0], ['date', '<=', today],
   ], ['id', 'move_id', 'partner_id', 'account_id', 'account_type', 'company_id', 'company_currency_id', 'date', 'date_maturity', 'amount_residual', 'parent_state', 'reconciled'], MAX_OPEN_LINES);
   const [documents, partners] = await Promise.all([
@@ -66,6 +66,7 @@ async function fetchOpenBalances(session: OdooSession, today: string): Promise<O
     if (!document) throw new FinancialDataError('No se pudo leer un documento de cartera.');
     return normalizeOpenBalanceLine(row, document, partnerById.get(relationId(row.partner_id) ?? -1), today);
   });
+  if (lines.some(line => line.companyId !== company.id)) throw new FinancialDataError('Odoo devolvió partidas de otra compañía. No se mezclan saldos.');
   const documentBalances = new Map<number, { balance: number; count: number }>();
   for (const line of lines) {
     const summary = documentBalances.get(line.documentId) ?? { balance: 0, count: 0 };
@@ -81,7 +82,7 @@ async function fetchOpenBalances(session: OdooSession, today: string): Promise<O
       throw new FinancialDataError('El saldo de un documento no concilia con sus partidas. Puede haber cambiado durante la lectura; actualiza la consulta.');
     }
   }
-  return { lines, asOfDate: today, generatedAt: new Date().toISOString() };
+  return { lines, asOfDate: today, generatedAt: new Date().toISOString(), company };
 }
 
 export async function loadOpenBalanceDataset(useCache = true): Promise<OpenBalanceDataset> {
@@ -89,10 +90,11 @@ export async function loadOpenBalanceDataset(useCache = true): Promise<OpenBalan
   if (!config) throw new FinancialDataError('No está configurada la conexión Odoo.', 503);
   const session = await authenticate(config);
   const today = getBogotaCalendarDate();
-  const key = createHash('sha256').update(JSON.stringify([session.config, session.uid, today])).digest('hex');
+  const company = await getOdooReportCompany(session);
+  const key = createHash('sha256').update(JSON.stringify([session.config, session.uid, today, company.id])).digest('hex');
   const previous = cache.get(key);
   if (useCache && previous && previous.expires > Date.now()) return previous.promise;
-  const promise = fetchOpenBalances(session, today);
+  const promise = fetchOpenBalances(session, today, company);
   if (!useCache) return promise;
   if (cache.size >= 2) cache.delete(cache.keys().next().value!);
   const entry = { expires: Infinity, promise };
@@ -109,5 +111,5 @@ export async function loadOpenBalanceDataset(useCache = true): Promise<OpenBalan
 
 export async function getOpenBalanceReport(filters: OpenBalanceFilters) {
   const dataset = await loadOpenBalanceDataset();
-  return buildOpenBalanceReport(dataset.lines, dataset.asOfDate, dataset.generatedAt, filters);
+  return buildOpenBalanceReport(dataset.lines, dataset.asOfDate, dataset.generatedAt, filters, dataset.company);
 }

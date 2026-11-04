@@ -7,7 +7,8 @@ import {
 export const GENERIC_TONER_CATEGORY_ID = 26;
 export const FINANCIAL_MAX_DAYS = 366;
 export const FINANCIAL_PAGE_SIZE = 100;
-export const ZERO_RECORDED_COST_ISSUE = 'Costo cero registrado en Odoo: la venta completa cuenta como utilidad, igual que en Odoo. Revisa si el producto requiere costo.';
+export const FINANCIAL_DAILY_TREND_MAX_DAYS = 62;
+export const ZERO_RECORDED_COST_ISSUE = 'Mercancía con costo cero en Odoo: la venta completa cuenta como utilidad, igual que en Odoo. Revisa si el producto requiere costo.';
 
 export type FinancialChannel = 'portal' | 'mixed' | 'other';
 export interface FinancialRange { from: string; to: string }
@@ -35,6 +36,7 @@ export interface FinancialLine {
   productId: number | null;
   productName: string;
   sku: string | null;
+  isService: boolean;
   categoryId: number | null;
   categoryName: string | null;
   unitId: number | null;
@@ -88,15 +90,19 @@ export interface FinancialGroup extends FinancialTotals {
   commissionBreakdown?: RegularCommissionBreakdown[];
 }
 export interface FinancialCostReview {
-  zeroCostLines: number;
-  zeroCostInvoices: number;
-  zeroCostSales: number;
+  zeroCostGoodsLines: number;
+  zeroCostGoodsInvoices: number;
+  zeroCostGoodsSales: number;
+  zeroCostServiceLines: number;
+  zeroCostServiceSales: number;
   products: FinancialGroup[];
 }
+export interface FinancialCompany { id: number; name: string }
 export interface FinancialTrend { date: string; netSales: number; profit: number | null; commission: number | null }
 export interface FinancialAdvisor { id: number; name: string; portalAdvisorId: string | null }
 export interface FinancialReport {
   selectedAdvisor?: FinancialAdvisor | null;
+  company?: FinancialCompany;
   range: FinancialRange;
   previousRange: FinancialRange;
   comparisonMode: 'calendar_months' | 'month_progress' | 'equal_days';
@@ -111,11 +117,19 @@ export interface FinancialReport {
   clients: FinancialGroup[];
   products: FinancialGroup[];
   costReview: FinancialCostReview;
+  trendGranularity: 'day' | 'month';
   trend: FinancialTrend[];
   lines: FinancialLine[];
   pagination: { page: number; pageSize: number; total: number; totalPages: number };
   warnings: string[];
 }
+export interface CompactRows { fields: string[]; rows: unknown[][] }
+export type FinancialReportWire = Omit<FinancialReport, 'advisors' | 'clients' | 'products' | 'costReview'> & {
+  advisors: CompactRows;
+  clients: CompactRows;
+  products: CompactRows;
+  costReview: Omit<FinancialCostReview, 'products'> & { products: CompactRows };
+};
 
 function calendarDate(value: string): number {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error('Usa fechas válidas con formato AAAA-MM-DD.');
@@ -194,8 +208,46 @@ export function hasZeroRecordedCost(line: Pick<FinancialLine, 'cost' | 'netSales
   return line.cost === 0 && line.netSales !== 0;
 }
 
-export function needsCostReview(line: Pick<FinancialLine, 'cost' | 'profit' | 'netSales'>): boolean {
-  return line.cost === null || line.profit === null || hasZeroRecordedCost(line);
+export function isZeroCostService(line: Pick<FinancialLine, 'cost' | 'netSales' | 'isService'>): boolean {
+  return line.isService && hasZeroRecordedCost(line);
+}
+
+export function needsCostReview(line: Pick<FinancialLine, 'cost' | 'profit' | 'netSales' | 'isService'>): boolean {
+  return line.cost === null || line.profit === null || (hasZeroRecordedCost(line) && !line.isService);
+}
+
+function compactRows(rows: readonly object[]): CompactRows {
+  const fields = [...new Set(rows.flatMap(row => Object.keys(row)))];
+  return { fields, rows: rows.map(row => fields.map(field => (row as Record<string, unknown>)[field] ?? null)) };
+}
+
+function expandRows<T>(compact: CompactRows): T[] {
+  if (!compact || !Array.isArray(compact.fields) || !Array.isArray(compact.rows)
+    || compact.fields.some(field => typeof field !== 'string')
+    || compact.rows.some(row => !Array.isArray(row) || row.length !== compact.fields.length)) {
+    throw new Error('El servicio no devolvió un reporte válido. Intenta actualizar.');
+  }
+  return compact.rows.map(row => Object.fromEntries(compact.fields.map((field, index) => [field, row[index]])) as T);
+}
+
+export function encodeFinancialReport(report: FinancialReport): FinancialReportWire {
+  return {
+    ...report,
+    advisors: compactRows(report.advisors), clients: compactRows(report.clients), products: compactRows(report.products),
+    costReview: { ...report.costReview, products: compactRows(report.costReview.products) },
+  };
+}
+
+export function decodeFinancialReport(wire: FinancialReportWire): FinancialReport {
+  if (!wire || typeof wire !== 'object' || !wire.costReview || typeof wire.costReview !== 'object') {
+    throw new Error('El servicio no devolvió un reporte válido. Intenta actualizar.');
+  }
+  return {
+    ...wire,
+    advisors: expandRows<FinancialGroup>(wire.advisors), clients: expandRows<FinancialGroup>(wire.clients),
+    products: expandRows<FinancialGroup>(wire.products),
+    costReview: { ...wire.costReview, products: expandRows<FinancialGroup>(wire.costReview.products) },
+  };
 }
 
 export function summarizeFinancialLines(lines: readonly FinancialLine[]): FinancialTotals {
@@ -296,14 +348,17 @@ export function buildFinancialReport(allLines: readonly FinancialLine[], range: 
   const filtered = filterFinancialLines(allLines, filters);
   const current = filtered.filter((line) => line.invoiceDate >= range.from && line.invoiceDate <= range.to);
   const previous = filtered.filter((line) => line.invoiceDate >= previousRange.from && line.invoiceDate <= previousRange.to);
+  const trendGranularity = (calendarDate(range.to) - calendarDate(range.from)) / 86400000 + 1 > FINANCIAL_DAILY_TREND_MAX_DAYS ? 'month' : 'day';
   const byDate = new Map<string, FinancialLine[]>();
   for (const line of current) {
-    const rows = byDate.get(line.invoiceDate) ?? [];
+    const key = trendGranularity === 'month' ? line.invoiceDate.slice(0, 7) : line.invoiceDate;
+    const rows = byDate.get(key) ?? [];
     rows.push(line);
-    byDate.set(line.invoiceDate, rows);
+    byDate.set(key, rows);
   }
   const review = current.filter(needsCostReview);
-  const zeroCost = review.filter(hasZeroRecordedCost);
+  const zeroCostGoods = review.filter(hasZeroRecordedCost);
+  const zeroCostServices = current.filter(isZeroCostService);
   const details = filters.onlyMissingCost ? review : current;
   const totalPages = Math.max(1, Math.ceil(details.length / FINANCIAL_PAGE_SIZE));
   const page = Math.min(filters.page, totalPages);
@@ -314,11 +369,14 @@ export function buildFinancialReport(allLines: readonly FinancialLine[], range: 
     commissionBreakdown: summarizeRegularCommissions(current), packagingPayments: packagingPaymentSchedule(current, range),
     advisors: groupFinancialLines(current, 'advisor'), clients: groupFinancialLines(current, 'client'), products: groupFinancialLines(current, 'product'),
     costReview: {
-      zeroCostLines: zeroCost.length,
-      zeroCostInvoices: new Set(zeroCost.map(line => line.invoiceId)).size,
-      zeroCostSales: roundCurrency(zeroCost.reduce((total, line) => total + line.netSales, 0)),
+      zeroCostGoodsLines: zeroCostGoods.length,
+      zeroCostGoodsInvoices: new Set(zeroCostGoods.map(line => line.invoiceId)).size,
+      zeroCostGoodsSales: roundCurrency(zeroCostGoods.reduce((total, line) => total + line.netSales, 0)),
+      zeroCostServiceLines: zeroCostServices.length,
+      zeroCostServiceSales: roundCurrency(zeroCostServices.reduce((total, line) => total + line.netSales, 0)),
       products: groupFinancialLines(review, 'product', true),
     },
+    trendGranularity,
     trend: [...byDate].sort(([a], [b]) => a.localeCompare(b)).map(([date, rows]) => {
       const totals = summarizeFinancialLines(rows);
       return { date, netSales: totals.netSales, profit: totals.profit, commission: totals.commission };
