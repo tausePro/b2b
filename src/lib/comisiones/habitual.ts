@@ -2,9 +2,14 @@ import { roundCurrency } from './bonoPlataforma';
 import type { FinancialLine, FinancialRange } from '@/lib/gerencia/finanzas';
 
 export const PACKAGING_CATEGORY_ID = 132;
-export type RegularCommissionKind = 'general' | 'generic_toner' | 'packaging' | 'unknown';
+export const LOW_MARGIN_COMMISSION_THRESHOLD = 15;
+export const LOW_MARGIN_COMMISSION_RATE = 0.5;
+export type RegularCommissionKind = 'general' | 'low_margin' | 'generic_toner' | 'packaging' | 'unknown';
 export const REGULAR_COMMISSION_LABELS: Record<RegularCommissionKind, string> = {
-  general: 'General', generic_toner: 'Tóner genéricos', packaging: 'Soluciones de Empaques', unknown: 'Categoría pendiente',
+  general: 'General', low_margin: 'Margen menor al 15%', generic_toner: 'Tóner genéricos', packaging: 'Soluciones de Empaques', unknown: 'Categoría pendiente',
+};
+const REGULAR_COMMISSION_RATES: Record<RegularCommissionKind, number | null> = {
+  general: 1, low_margin: LOW_MARGIN_COMMISSION_RATE, generic_toner: 2, packaging: 2, unknown: null,
 };
 
 export interface RegularCommissionBreakdown {
@@ -83,9 +88,9 @@ export function regularCommissionPeriod(period: string, today: string): Financia
 }
 
 export function summarizeRegularCommissions(lines: readonly FinancialLine[]): RegularCommissionBreakdown[] {
-  const kinds: RegularCommissionKind[] = ['general', 'generic_toner', 'packaging', 'unknown'];
+  const kinds: RegularCommissionKind[] = ['general', 'low_margin', 'generic_toner', 'packaging', 'unknown'];
   const buckets = new Map(kinds.map(kind => [kind, {
-    kind, rate: kind === 'unknown' ? null : kind === 'general' ? 1 : 2,
+    kind, rate: REGULAR_COMMISSION_RATES[kind],
     netSales: 0, invoicedSales: 0, creditNotes: 0, knownCommission: 0,
     missingCommissionLines: 0, lineCount: 0, invoices: new Set<number>(), credits: new Set<number>(),
   }]));
