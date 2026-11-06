@@ -32,6 +32,7 @@ import {
 } from '../src/lib/gerencia/finanzas.server';
 import { buildOpenBalanceReport, overdueDays } from '../src/lib/gerencia/cartera';
 import { EXCLUDED_WRITTEN_OFF_MOVES, loadOpenBalanceDataset } from '../src/lib/gerencia/cartera.server';
+import { getProductPurchaseHistory } from '../src/lib/compras/historial.server';
 import { nextCommissionMonth, type RegularCommissionBreakdown } from '../src/lib/comisiones/habitual';
 import { getRegularCommissionReport, resolveRegularCommissionScope } from '../src/lib/comisiones/habitual.server';
 import type { AuthorizedApiContext, ApiActorRole } from '../src/lib/auth/apiRouteGuards';
@@ -839,4 +840,26 @@ test('Cartera: los saldos actuales concilian con partidas reales de Odoo y conse
   assert.ok(filtered.lines.every(line => `${line.partnerName} ${line.documentName} ${line.reference ?? ''} ${line.accountName}`.toLocaleLowerCase('es').includes(selected.partnerName.toLocaleLowerCase('es'))));
   assert.deepEqual(filtered.receivable, report.receivable);
   assert.deepEqual(filtered.payable, report.payable);
+});
+
+test('historial de compras real: costo más bajo y promedio coinciden con las órdenes de compra de Odoo', async () => {
+  const config = await getServerOdooConfig();
+  assert.ok(config);
+  const session = await authenticate(config);
+  const company = await getOdooReportCompany(session);
+  const report = await getProductPurchaseHistory(408);
+  assert.deepEqual(report.company, { id: company.id, name: company.name });
+  const next = new Date(`${report.range.to}T00:00:00Z`);
+  next.setUTCDate(next.getUTCDate() + 1);
+  const raw = await boundedSearch(session, 'purchase.order.line', [
+    ['company_id', '=', company.id], ['state', 'in', ['purchase', 'done']], ['display_type', '=', false], ['product_id', '=', 408],
+    ['order_id.date_order', '>=', `${report.range.from} 05:00:00`], ['order_id.date_order', '<', `${next.toISOString().slice(0, 10)} 05:00:00`],
+    ['product_qty', '>', 0], ['price_subtotal', '>', 0],
+  ], ['id', 'product_qty', 'price_subtotal'], 5000);
+  assert.ok(raw.length > 0);
+  assert.deepEqual(report.lines.map(line => line.id).sort((a, b) => a - b), raw.map(row => numeric(row.id)).sort((a, b) => a - b));
+  assert.equal(report.summary.lowest?.unitCost, Math.min(...raw.map(row => roundCurrency(numeric(row.price_subtotal) / numeric(row.product_qty)))));
+  const quantity = raw.reduce((sum, row) => sum + numeric(row.product_qty), 0);
+  assert.equal(report.summary.averageUnitCost, roundCurrency(raw.reduce((sum, row) => sum + numeric(row.price_subtotal), 0) / quantity));
+  console.log(JSON.stringify({ producto: report.product.name, compras: report.summary.purchaseCount, costoMasBajo: report.summary.lowest, promedio: report.summary.averageUnitCost }));
 });
