@@ -25,6 +25,7 @@ const VALID_ROLES: ReadonlySet<UserRole> = new Set([
   'asesor',
   'direccion',
   'editor_contenido',
+  'compras',
 ]);
 
 function getSupabaseAdmin() {

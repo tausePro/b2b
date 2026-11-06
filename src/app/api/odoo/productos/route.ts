@@ -22,9 +22,9 @@ import { getOdooCostAgeStatus, markupOnCost, type OdooCostAgeStatus } from '@/li
  *   - asesor: consume desde su vista comercial (Fase 2 agregará la pantalla).
  * Se excluyen comprador y aprobador (usuarios del cliente) y editor_contenido.
  */
-const COST_VISIBLE_ROLES = new Set(['super_admin', 'direccion', 'asesor']);
+const COST_VISIBLE_ROLES = new Set(['super_admin', 'direccion', 'asesor', 'compras']);
 
-const AUTHENTICATED_PRODUCT_ROLES = ['super_admin', 'direccion', 'asesor', 'comprador', 'aprobador'] as const;
+const AUTHENTICATED_PRODUCT_ROLES = ['super_admin', 'direccion', 'asesor', 'compras', 'comprador', 'aprobador'] as const;
 const AUTHENTICATED_MAX_LIMIT = 500;
 const PUBLIC_MAX_LIMIT = 50;
 export const dynamic = 'force-dynamic';

@@ -75,7 +75,7 @@ export async function GET(
     const pedido = pedidoData as PedidoOdooResumen;
     const membership = perfil.empresas_asignadas?.find((item) => item.empresa_id === pedido.empresa_id);
     const effectiveRole = membership?.rol ?? perfil.rol;
-    let canShowPrices = ['super_admin', 'aprobador', 'asesor', 'direccion'].includes(effectiveRole);
+    let canShowPrices = ['super_admin', 'aprobador', 'asesor', 'direccion', 'compras'].includes(effectiveRole);
 
     if (['comprador', 'aprobador'].includes(effectiveRole)) {
       let extra = membership?.configuracion_extra ?? {};

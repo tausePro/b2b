@@ -133,6 +133,12 @@ La utilidad bruta de ventas equivale al margen firmado de Odoo (`margin_signed`)
 
 Conciliación de octubre de 2026: venta 607.606.414,28, costo 400.610.438,47 y utilidad 206.995.975,81, iguales a Odoo. De las 41 líneas con costo cero, 33 son servicios (7.123.920) y 8 mercancía por revisar (1.966.300). La respuesta de octubre pasó de 714.681 a 245.392 bytes.
 
+## Compras con proveedores y rol Compras
+
+- `/dashboard/compras` (asesoras, Dirección, Super Admin y rol `compras`) busca productos y muestra el historial de órdenes de compra confirmadas (`purchase.order` en estado `purchase`/`done`) de los últimos 12 meses, por fecha de la orden y solo de la compañía activa de Odoo. Muestra costo más bajo (proveedor, fecha y orden), último costo, promedio ponderado por cantidad y el detalle.
+- Costo unitario = `price_subtotal ÷ product_qty` (sin IVA, con descuentos), convertido a la unidad del producto (`uom.uom.factor`) y a COP con `purchase.order.currency_rate`. Se excluyen y avisan las líneas sin cantidad, sin costo (bonificaciones), sin fecha, sin tasa o con unidad no convertible. API: `GET /api/compras/historial?buscar=` y `?producto_id=` (solo lectura).
+- Rol `compras` (migración manual 054): Compras con proveedores, Pedidos (lectura de todos, sin aprobar ni validar) y Catálogo con costos. No ve leads, comisiones ni Gerencia. La migración solo agrega políticas SELECT.
+
 ## Cuentas por cobrar y por pagar en Gerencia
 
 - Desde v2.14.29, la cifra principal de cada lado es la de "facturas pendientes" del tablero de Contabilidad de Odoo (decisión de Gerencia): suma el valor total (`amount_total_signed`) de las facturas publicadas no pagadas o con pago parcial de los diarios de facturas, incluidas sus propias notas crédito. Las facturas con abonos cuentan por su valor completo. Los diarios que nunca han tenido facturas (solo notas crédito, p. ej. "Nota Crédito Electronica") se muestran aparte. El 2026-11-04 cuadró al peso con Odoo en por cobrar (897.365.461,25).
