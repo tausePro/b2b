@@ -22,6 +22,9 @@ export default function DashboardPage() {
     if (!loading && user?.rol === 'editor_contenido') {
       router.replace('/admin/cms');
     }
+    if (!loading && user?.rol === 'compras') {
+      router.replace('/dashboard/compras');
+    }
   }, [loading, user, router]);
 
   if (loading) {
@@ -63,6 +66,13 @@ export default function DashboardPage() {
         <div className="flex flex-col items-center justify-center h-full mt-20 gap-4">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
           <p className="text-muted">Redirigiendo al panel de contenido...</p>
+        </div>
+      );
+    case 'compras':
+      return (
+        <div className="flex flex-col items-center justify-center h-full mt-20 gap-4">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+          <p className="text-muted">Redirigiendo a compras con proveedores...</p>
         </div>
       );
     default:

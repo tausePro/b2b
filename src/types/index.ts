@@ -5,7 +5,7 @@
 
 import type { UserCompanyMembership } from '@/lib/auth/companyContext';
 
-export type UserRole = 'super_admin' | 'comprador' | 'aprobador' | 'asesor' | 'direccion' | 'editor_contenido';
+export type UserRole = 'super_admin' | 'comprador' | 'aprobador' | 'asesor' | 'direccion' | 'editor_contenido' | 'compras';
 
 export interface User {
   id: string;
@@ -386,6 +386,17 @@ export const ROLE_CONFIG: Record<UserRole, {
     canViewDashboard: false,
     canManageBudgets: false,
     canViewTraceability: false,
+    isImprima: true,
+  },
+  compras: {
+    label: 'Compras',
+    showPrices: true,
+    canCreateOrders: false,
+    canApproveOrders: false,
+    canValidateOrders: false,
+    canViewDashboard: false,
+    canManageBudgets: false,
+    canViewTraceability: true,
     isImprima: true,
   },
 };

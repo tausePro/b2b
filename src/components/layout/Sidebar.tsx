@@ -24,6 +24,7 @@ import {
   Building2,
   X,
   UserPlus,
+  Truck,
 } from 'lucide-react';
 
 interface SidebarItem {
@@ -42,6 +43,7 @@ const MENU_BY_ROLE: Record<UserRole, SidebarItem[]> = {
     { label: 'Presupuestos', href: '/dashboard/presupuestos', icon: <DollarSign className="w-5 h-5" />, activePattern: '/dashboard/presupuestos' },
     { label: 'Reportes', href: '/dashboard/reportes', icon: <BarChart3 className="w-5 h-5" />, activePattern: '/dashboard/reportes' },
     { label: 'Comisiones', href: '/dashboard/comisiones', icon: <DollarSign className="w-5 h-5" />, activePattern: '/dashboard/comisiones' },
+    { label: 'Compras con proveedores', href: '/dashboard/compras', icon: <Truck className="w-5 h-5" />, activePattern: '/dashboard/compras' },
     { label: 'Panel Admin', href: '/admin', icon: <Settings className="w-5 h-5" />, activePattern: '/admin' },
   ],
   comprador: [
@@ -61,6 +63,7 @@ const MENU_BY_ROLE: Record<UserRole, SidebarItem[]> = {
   asesor: [
     { label: 'Dashboard', href: '/dashboard', icon: <LayoutDashboard className="w-5 h-5" />, activePattern: '/dashboard$' },
     { label: 'Gestión Pedidos', href: '/dashboard/gestion-pedidos', icon: <Package className="w-5 h-5" />, activePattern: '/dashboard/gestion-pedidos' },
+    { label: 'Compras con proveedores', href: '/dashboard/compras', icon: <Truck className="w-5 h-5" />, activePattern: '/dashboard/compras' },
     { label: 'Mis Clientes', href: '/dashboard/clientes', icon: <Users className="w-5 h-5" />, activePattern: '/dashboard/clientes' },
     { label: 'Bono Plataforma', href: '/dashboard/comisiones', icon: <DollarSign className="w-5 h-5" />, activePattern: '/dashboard/comisiones' },
     { label: 'Reportes', href: '/dashboard/reportes', icon: <BarChart3 className="w-5 h-5" />, activePattern: '/dashboard/reportes' },
@@ -69,6 +72,7 @@ const MENU_BY_ROLE: Record<UserRole, SidebarItem[]> = {
     { label: 'Resumen Ejecutivo', href: '/dashboard', icon: <LayoutDashboard className="w-5 h-5" />, activePattern: '/dashboard$' },
     { label: 'Clientes', href: '/dashboard/clientes', icon: <Building2 className="w-5 h-5" />, activePattern: '/dashboard/clientes' },
     { label: 'Leads', href: '/dashboard/leads', icon: <UserPlus className="w-5 h-5" />, activePattern: '/dashboard/leads' },
+    { label: 'Compras con proveedores', href: '/dashboard/compras', icon: <Truck className="w-5 h-5" />, activePattern: '/dashboard/compras' },
     { label: 'Pedidos', href: '/dashboard/pedidos', icon: <ClipboardList className="w-5 h-5" />, activePattern: '/dashboard/pedidos' },
     { label: 'Informes Pedidos', href: '/dashboard/reportes', icon: <BarChart3 className="w-5 h-5" />, activePattern: '/dashboard/reportes' },
     { label: 'Analítica Ventas', href: '/dashboard/analitica', icon: <TrendingUp className="w-5 h-5" />, activePattern: '/dashboard/analitica' },
@@ -82,6 +86,11 @@ const MENU_BY_ROLE: Record<UserRole, SidebarItem[]> = {
   editor_contenido: [
     { label: 'CMS Landing', href: '/admin/cms', icon: <FileText className="w-5 h-5" />, activePattern: '/admin/cms' },
     { label: 'Leads', href: '/admin/leads', icon: <UserPlus className="w-5 h-5" />, activePattern: '/admin/leads' },
+  ],
+  compras: [
+    { label: 'Compras con proveedores', href: '/dashboard/compras', icon: <Truck className="w-5 h-5" />, activePattern: '/dashboard/compras' },
+    { label: 'Pedidos', href: '/dashboard/pedidos', icon: <ClipboardList className="w-5 h-5" />, activePattern: '/dashboard/pedidos' },
+    { label: 'Catálogo', href: '/dashboard/catalogo', icon: <ShoppingBag className="w-5 h-5" />, activePattern: '/dashboard/catalogo' },
   ],
 };
 

@@ -19,7 +19,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 
-type InternalRole = 'super_admin' | 'asesor' | 'direccion' | 'editor_contenido';
+type InternalRole = 'super_admin' | 'asesor' | 'direccion' | 'editor_contenido' | 'compras';
 
 interface AdminUser {
   id: string;
@@ -60,6 +60,11 @@ const ASSIGNABLE_EXTRA_ROLES: { value: InternalRole; label: string; description:
     label: 'Asesor Comercial',
     description: 'Acceso a gestión de pedidos y clientes asignados.',
   },
+  {
+    value: 'compras',
+    label: 'Compras',
+    description: 'Historial de compras a proveedores con el costo más bajo, pedidos y catálogo en solo lectura. Sin leads.',
+  },
 ];
 
 const ROLE_LABELS: Record<InternalRole, { label: string; color: string; icon: React.ComponentType<{ className?: string }> }> = {
@@ -67,6 +72,7 @@ const ROLE_LABELS: Record<InternalRole, { label: string; color: string; icon: Re
   asesor: { label: 'Asesor Comercial', color: 'bg-blue-100 text-blue-700', icon: Briefcase },
   direccion: { label: 'Dirección', color: 'bg-purple-100 text-purple-700', icon: Eye },
   editor_contenido: { label: 'Editor Contenido', color: 'bg-emerald-100 text-emerald-700', icon: Briefcase },
+  compras: { label: 'Compras', color: 'bg-amber-100 text-amber-700', icon: Briefcase },
 };
 
 export default function AdministradoresPage() {
@@ -568,6 +574,7 @@ export default function AdministradoresPage() {
                   <option value="asesor">Asesor Comercial</option>
                   <option value="direccion">Dirección</option>
                   <option value="editor_contenido">Editor Contenido</option>
+                  <option value="compras">Compras</option>
                   <option value="super_admin">Super Admin</option>
                 </select>
               </div>
@@ -643,6 +650,7 @@ export default function AdministradoresPage() {
                   <option value="asesor">Asesor Comercial</option>
                   <option value="direccion">Dirección</option>
                   <option value="editor_contenido">Editor Contenido</option>
+                  <option value="compras">Compras</option>
                   <option value="super_admin">Super Admin</option>
                 </select>
               </div>

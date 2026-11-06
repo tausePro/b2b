@@ -24,6 +24,7 @@ const ROLE_PATH_PREFIXES: Record<UserRole, string[]> = {
   ],
   asesor: [
     '/dashboard/gestion-pedidos',
+    '/dashboard/compras',
     '/dashboard/clientes',
     '/dashboard/comisiones',
     '/dashboard/alertas',
@@ -39,6 +40,7 @@ const ROLE_PATH_PREFIXES: Record<UserRole, string[]> = {
     '/dashboard/operativo',
     '/dashboard/clientes',
     '/dashboard/leads',
+    '/dashboard/compras',
     '/dashboard/pedidos',
     '/dashboard/presupuestos',
     '/dashboard/alertas',
@@ -49,6 +51,12 @@ const ROLE_PATH_PREFIXES: Record<UserRole, string[]> = {
   editor_contenido: [
     '/admin/cms',
     '/admin/leads',
+  ],
+  compras: [
+    '/dashboard/compras',
+    '/dashboard/pedidos',
+    '/dashboard/catalogo',
+    '/dashboard/perfil',
   ],
 };
 
