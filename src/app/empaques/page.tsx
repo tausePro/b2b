@@ -86,12 +86,6 @@ export async function generateMetadata({ searchParams }: EmpaquesPageProps): Pro
   };
 }
 
-const currencyFormatter = new Intl.NumberFormat('es-CO', {
-  style: 'currency',
-  currency: 'COP',
-  maximumFractionDigits: 0,
-});
-
 const EMPAQUES_FEATURED_CATEGORY_ID = 132;
 
 function getSingleSearchParam(value: string | string[] | undefined) {
@@ -392,15 +386,7 @@ function ProductCard({ product }: { product: EmpaquesCatalogProduct }) {
               <p className="line-clamp-1 text-xs font-bold text-slate-500">{product.categ_id[1]}</p>
             )}
           </div>
-          <div className="flex items-end justify-between gap-3 border-t border-slate-100 pt-4">
-            <div>
-              <p className="text-xs font-black uppercase tracking-wide text-slate-400">Precio</p>
-              {product.price === null ? (
-                <p className="text-sm font-black text-amber-700">Pendiente manual</p>
-              ) : (
-                <p className="text-xl font-black text-slate-950">{currencyFormatter.format(product.price)}</p>
-              )}
-            </div>
+          <div className="flex items-end justify-end gap-3 border-t border-slate-100 pt-4">
             <span className="rounded-full bg-[#D9E997] px-3 py-1 text-xs font-black text-slate-950">
               {product.requiere_precio_manual ? 'Cotizar' : 'Disponible'}
             </span>

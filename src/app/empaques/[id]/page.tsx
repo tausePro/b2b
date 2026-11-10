@@ -33,12 +33,6 @@ type EmpaquesProductPageProps = {
   params: Promise<{ id: string }>;
 };
 
-const currencyFormatter = new Intl.NumberFormat('es-CO', {
-  style: 'currency',
-  currency: 'COP',
-  maximumFractionDigits: 0,
-});
-
 function parseProductId(value: string) {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
@@ -110,9 +104,7 @@ function RelatedProductCard({ product }: { product: EmpaquesCatalogProduct }) {
         )}
         <h3 className="line-clamp-2 min-h-10 font-black leading-tight text-slate-950">{product.name}</h3>
         <div className="flex items-center justify-between gap-3 border-t border-slate-100 pt-3">
-          <span className="font-black text-slate-950">
-            {product.price === null ? 'Cotizar' : currencyFormatter.format(product.price)}
-          </span>
+          <span className="font-black text-slate-950">Cotizar</span>
           <ArrowRight className="h-4 w-4 text-[#9CBB06] transition group-hover:translate-x-1" />
         </div>
       </div>
@@ -204,18 +196,6 @@ export default async function EmpaquesProductPage({ params }: EmpaquesProductPag
                   {product.default_code && (
                     <p className="font-mono text-sm font-bold text-slate-400">Referencia: {product.default_code}</p>
                   )}
-                </div>
-
-                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                  <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Precio público</p>
-                  {product.price === null ? (
-                    <p className="mt-2 text-2xl font-black text-amber-700">Cotización personalizada</p>
-                  ) : (
-                    <p className="mt-2 text-4xl font-black tracking-tight text-slate-950">
-                      {currencyFormatter.format(product.price)}
-                    </p>
-                  )}
-                  <p className="mt-2 text-sm font-semibold text-slate-500">Precio antes de IVA.</p>
                 </div>
 
                 {description && (
