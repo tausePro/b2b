@@ -219,6 +219,12 @@ interface EmpaquesCatalogInput {
    * producto. Reservado para admins (super_admin / direccion).
    */
   includeCostInfo?: boolean;
+  /**
+   * Precios calculados (costo + margen o manuales). Solo el panel admin los
+   * pide. El storefront público no muestra precios (decisión de Gerencia,
+   * 2026-11-09): por defecto el precio sale en null.
+   */
+  includePrices?: boolean;
 }
 
 interface CategoryTreeData {
@@ -694,9 +700,10 @@ function mapProduct(
   product: OdooProduct,
   pricingCtx: PricingContext,
   editorialCtx: StorefrontEditorialContext,
-  options: { includeCostInfo?: boolean; variantInfo?: OdooTemplateCostInfo } = {}
+  options: { includeCostInfo?: boolean; includePrices?: boolean; variantInfo?: OdooTemplateCostInfo } = {}
 ): EmpaquesCatalogProduct {
-  const pricing = resolveEmpaquesPrice(pricingCtx, product);
+  const resolvedPricing = resolveEmpaquesPrice(pricingCtx, product);
+  const pricing = options.includePrices ? resolvedPricing : { ...resolvedPricing, price: null };
   const override = editorialCtx.products.get(product.id);
   const name = override?.nombre_publico?.trim() || product.name;
   const description = override?.descripcion_corta?.trim() || (typeof product.description_sale === 'string' ? product.description_sale : false);
@@ -1008,6 +1015,7 @@ export async function getEmpaquesCatalogData(input: EmpaquesCatalogInput = {}): 
     productos: productosTyped.map((product) =>
       mapProduct(product, pricingCtx, editorialCtx, {
         includeCostInfo,
+        includePrices: input.includePrices === true,
         variantInfo: costInfoByTemplate?.get(product.id),
       })
     ),
