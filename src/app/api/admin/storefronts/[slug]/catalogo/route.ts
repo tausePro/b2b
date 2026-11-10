@@ -90,6 +90,7 @@ export async function GET(
       page,
       includeInactive: true,
       includeCostInfo,
+      includePrices: true,
     });
 
     return NextResponse.json({
