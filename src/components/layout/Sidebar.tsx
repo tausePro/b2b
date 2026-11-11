@@ -89,8 +89,8 @@ const MENU_BY_ROLE: Record<UserRole, SidebarItem[]> = {
     { label: 'Leads', href: '/admin/leads', icon: <UserPlus className="w-5 h-5" />, activePattern: '/admin/leads' },
   ],
   cartera: [
+    { label: 'Dashboard', href: '/dashboard', icon: <LayoutDashboard className="w-5 h-5" />, activePattern: '/dashboard$' },
     { label: 'Cartera', href: '/dashboard/cartera', icon: <Wallet className="w-5 h-5" />, activePattern: '/dashboard/cartera' },
-    { label: 'Pedidos', href: '/dashboard/pedidos', icon: <ClipboardList className="w-5 h-5" />, activePattern: '/dashboard/pedidos' },
   ],
   compras: [
     { label: 'Compras con proveedores', href: '/dashboard/compras', icon: <Truck className="w-5 h-5" />, activePattern: '/dashboard/compras' },

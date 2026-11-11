@@ -61,7 +61,6 @@ const ROLE_PATH_PREFIXES: Record<UserRole, string[]> = {
   ],
   cartera: [
     '/dashboard/cartera',
-    '/dashboard/pedidos',
     '/dashboard/perfil',
   ],
 };
