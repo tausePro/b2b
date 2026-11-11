@@ -133,6 +133,13 @@ La utilidad bruta de ventas equivale al margen firmado de Odoo (`margin_signed`)
 
 Conciliación de octubre de 2026: venta 607.606.414,28, costo 400.610.438,47 y utilidad 206.995.975,81, iguales a Odoo. De las 41 líneas con costo cero, 33 son servicios (7.123.920) y 8 mercancía por revisar (1.966.300). La respuesta de octubre pasó de 714.681 a 245.392 bytes.
 
+## Resumen ejecutivo de Gerencia (v2.14.36)
+
+- `/dashboard` para Dirección y Super Admin muestra arriba `ResumenEjecutivo` y deja el análisis detallado (`GerenciaFinanzas`) plegado; solo carga al abrirlo (se abre solo si la URL trae filtros). `/dashboard/gerencia` conserva la vista detallada completa.
+- `GET /api/gerencia/resumen` (`loadExecutiveSummary`, caché 60 s, solo lectura con `read_group`): mes en curso comparado con el mismo período (día 1 a hoy) del mes anterior y del año anterior; mes a mes de 12 meses con variación vs mes anterior y vs mismo mes del año anterior; usa los totales de cabecera de Odoo (`amount_untaxed_signed`, `cost_total`, `margin_signed`) de facturas publicadas, incluidas notas crédito.
+- Facturas en borrador: `account.move` en `draft` (facturas y notas crédito de clientes, no cuentan en ventas). Pendiente por facturar: Σ `untaxed_amount_to_invoice` de líneas `to invoice` de pedidos confirmados (saldo sin IVA, decisión de Gerencia), con los 10 pedidos de mayor saldo y el total por asesora. Por cobrar/pagar reutiliza `/api/gerencia/cartera` (cifra del tablero de Odoo).
+- PWA: el aviso de instalación también aparece en computador cuando el navegador permite instalar (Chrome/Edge).
+
 ## PWA y notificaciones push (v2.14.34)
 
 - El portal se puede instalar (Android, iPhone, escritorio): `public/manifest.webmanifest`, íconos en `public/pwa/`, service worker `public/sw.js` (push, clic que abre la ruta y página `/offline.html`; no guarda en caché páginas ni datos). `PwaHead` agrega manifest y metadatos solo en login, dashboard y admin; la landing y Empaques no son instalables.

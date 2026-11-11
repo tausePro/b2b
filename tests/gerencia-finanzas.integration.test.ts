@@ -33,6 +33,7 @@ import {
 import { buildOpenBalanceReport, overdueDays } from '../src/lib/gerencia/cartera';
 import { EXCLUDED_WRITTEN_OFF_MOVES, loadOpenBalanceDataset } from '../src/lib/gerencia/cartera.server';
 import { getProductPurchaseHistory } from '../src/lib/compras/historial.server';
+import { loadExecutiveSummary } from '../src/lib/gerencia/resumen.server';
 import { nextCommissionMonth, type RegularCommissionBreakdown } from '../src/lib/comisiones/habitual';
 import { getRegularCommissionReport, resolveRegularCommissionScope } from '../src/lib/comisiones/habitual.server';
 import type { AuthorizedApiContext, ApiActorRole } from '../src/lib/auth/apiRouteGuards';
@@ -45,7 +46,7 @@ globalThis.fetch = (input, init) => {
   if (url.pathname.endsWith('/xmlrpc/2/object')) {
     const params = [...String(init?.body).matchAll(/<param>([\s\S]*?)<\/param>/g)];
     const method = params[4]?.[1].match(/<string>(.*?)<\/string>/)?.[1];
-    assert.ok(method && ['read', 'search_read', 'search_count', 'fields_get'].includes(method), 'La prueba bloquea mutaciones Odoo.');
+    assert.ok(method && ['read', 'search_read', 'search_count', 'fields_get', 'read_group'].includes(method), 'La prueba bloquea mutaciones Odoo.');
   } else if (!url.pathname.endsWith('/xmlrpc/2/common')) {
     const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
     assert.ok(method === 'GET' || method === 'HEAD', 'La prueba bloquea mutaciones Supabase.');
@@ -862,4 +863,26 @@ test('historial de compras real: costo más bajo y promedio coinciden con las ó
   const quantity = raw.reduce((sum, row) => sum + numeric(row.product_qty), 0);
   assert.equal(report.summary.averageUnitCost, roundCurrency(raw.reduce((sum, row) => sum + numeric(row.price_subtotal), 0) / quantity));
   console.log(JSON.stringify({ producto: report.product.name, compras: report.summary.purchaseCount, costoMasBajo: report.summary.lowest, promedio: report.summary.averageUnitCost }));
+});
+
+test('resumen ejecutivo real: mes cerrado, borradores y pedidos por facturar coinciden con Odoo', async () => {
+  const config = await getServerOdooConfig();
+  assert.ok(config);
+  const session = await authenticate(config);
+  const company = await getOdooReportCompany(session);
+  const summary = await loadExecutiveSummary(false);
+  assert.deepEqual(summary.company, { id: company.id, name: company.name });
+  const closed = summary.months[1];
+  const [year, month] = closed.month.split('-').map(Number);
+  const to = new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
+  const headers = await boundedSearch(session, 'account.move', [
+    ['company_id', '=', company.id], ['state', '=', 'posted'], ['move_type', 'in', ['out_invoice', 'out_refund']],
+    ['invoice_date', '>=', `${closed.month}-01`], ['invoice_date', '<=', to],
+  ], ['id', 'amount_untaxed_signed', 'margin_signed', 'cost_total'], 20000);
+  const sum = (field: string) => roundCurrency(headers.reduce((total, row) => total + numeric(row[field]), 0));
+  assert.deepEqual([closed.sales, closed.profit, closed.cost, closed.documents], [sum('amount_untaxed_signed'), sum('margin_signed'), sum('cost_total'), headers.length]);
+  assert.equal(summary.drafts.count, await searchCount('account.move', [['company_id', '=', company.id], ['state', '=', 'draft'], ['move_type', 'in', ['out_invoice', 'out_refund']]], session));
+  assert.equal(summary.toInvoice.orderCount, await searchCount('sale.order', [['company_id', '=', company.id], ['state', '=', 'sale'], ['invoice_status', '=', 'to invoice']], session));
+  assert.equal(roundCurrency(summary.toInvoice.byAdvisor.reduce((total, row) => total + row.amount, 0)), summary.toInvoice.untaxed);
+  console.log(JSON.stringify({ mesCerrado: closed.month, ventas: closed.sales, utilidad: closed.profit, borradores: summary.drafts.count, porFacturar: summary.toInvoice.untaxed }));
 });
