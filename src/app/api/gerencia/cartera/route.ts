@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { authorizeApiRoles } from '@/lib/auth/apiRouteGuards';
 import { FinancialDataError } from '@/lib/gerencia/finanzas.server';
 import { getOpenBalanceReport } from '@/lib/gerencia/cartera.server';
-import type { BalanceStatus, OpenBalanceFilters } from '@/lib/gerencia/cartera';
+import { receivableOnlyReport, type BalanceStatus, type OpenBalanceFilters } from '@/lib/gerencia/cartera';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -13,8 +13,9 @@ function json(data: unknown, status = 200) {
 }
 
 export async function GET(request: NextRequest) {
-  const auth = await authorizeApiRoles(['direccion', 'super_admin']);
+  const auth = await authorizeApiRoles(['direccion', 'super_admin', 'cartera']);
   if (auth instanceof NextResponse) return auth;
+  const fullAccess = [auth.actor.rol, ...auth.actor.rolesExtra].some(role => role === 'direccion' || role === 'super_admin');
   try {
     const params = request.nextUrl.searchParams;
     const type = params.get('tipo') ?? 'cobrar';
@@ -28,7 +29,9 @@ export async function GET(request: NextRequest) {
     const filters: OpenBalanceFilters = {
       side: type === 'cobrar' ? 'receivable' : 'payable', status: status as BalanceStatus, search, page: Number(page),
     };
-    const report = await getOpenBalanceReport(filters);
+    if (!fullAccess && filters.side !== 'receivable') return json({ error: 'Tu rol consulta solo cuentas por cobrar.' }, 403);
+    const fullReport = await getOpenBalanceReport(filters);
+    const report = fullAccess ? fullReport : receivableOnlyReport(fullReport);
     if (Buffer.byteLength(JSON.stringify(report)) > 3 * 1024 * 1024) {
       throw new FinancialDataError('La respuesta de cartera excede el límite de tamaño. No se muestran saldos incompletos.', 422);
     }

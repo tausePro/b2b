@@ -25,6 +25,9 @@ export default function DashboardPage() {
     if (!loading && user?.rol === 'compras') {
       router.replace('/dashboard/compras');
     }
+    if (!loading && user?.rol === 'cartera') {
+      router.replace('/dashboard/cartera');
+    }
   }, [loading, user, router]);
 
   if (loading) {
@@ -73,6 +76,13 @@ export default function DashboardPage() {
         <div className="flex flex-col items-center justify-center h-full mt-20 gap-4">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
           <p className="text-muted">Redirigiendo a compras con proveedores...</p>
+        </div>
+      );
+    case 'cartera':
+      return (
+        <div className="flex flex-col items-center justify-center h-full mt-20 gap-4">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+          <p className="text-muted">Redirigiendo a cartera...</p>
         </div>
       );
     default:

@@ -33,7 +33,7 @@ import {
 } from '../src/lib/comisiones/bonoPlataforma';
 
 import { canAccessDashboardPath } from '../src/lib/auth/routeAccess';
-import { buildOpenBalanceReport, overdueDays, summarizeOpenBalances, summarizeOpenInvoices, type OpenInvoiceDocument } from '../src/lib/gerencia/cartera';
+import { buildOpenBalanceReport, overdueDays, receivableOnlyReport, summarizeOpenBalances, summarizeOpenInvoices, type OpenInvoiceDocument } from '../src/lib/gerencia/cartera';
 import { PACKAGING_CATEGORY_ID, nextCommissionMonth, regularCommissionKind, regularCommissionPeriod, summarizeRegularCommissions } from '../src/lib/comisiones/habitual';
 
 const DAY_MS = 86_400_000;
@@ -532,4 +532,21 @@ test('reporte vacío: conserva rangos, pagina una sola vez y deduplica advertenc
   assert.equal(report.filters.page, 1);
   assert.deepEqual(report.warnings, ['Consulta sin documentos']);
   assert.equal(warnings.length, 2);
+});
+
+test('rol Cartera: solo cuentas por cobrar y pedidos; sin gerencia, comisiones, leads, compras ni por pagar', () => {
+  for (const path of ['/dashboard/cartera', '/dashboard/pedidos', '/dashboard/perfil']) assert.equal(canAccessDashboardPath('cartera', path), true);
+  for (const path of ['/dashboard/gerencia', '/dashboard/comisiones', '/dashboard/leads', '/admin/leads', '/dashboard/compras', '/dashboard/catalogo', '/dashboard/clientes']) {
+    assert.equal(canAccessDashboardPath('cartera', path), false, path);
+  }
+  assert.equal(canAccessDashboardPath('direccion', '/dashboard/cartera'), true);
+  const invoices: OpenInvoiceDocument[] = [
+    { id: 1, side: 'receivable', journalId: 1, journalName: 'Facturas de cliente Electronica', creditNoteJournal: false, total: 897365461.25, residual: 889163957.25 },
+    { id: 2, side: 'payable', journalId: 2, journalName: 'Facturas Compra', creditNoteJournal: false, total: 418997687.88, residual: 417299967.6 },
+  ];
+  const filters = { side: 'receivable' as const, status: 'all' as const, search: '', page: 1 };
+  const limited = receivableOnlyReport(buildOpenBalanceReport([], '2026-11-11', '2026-11-11T15:00:00Z', filters, { id: 1, name: 'INVERSIONES IMPRIMA SAS' }, { invoices }));
+  assert.equal(limited.invoices?.receivable.total, 897365461.25);
+  assert.deepEqual([limited.invoices?.payable.total, limited.invoices?.payable.documentCount, limited.invoices?.payable.journals, limited.payable.balance, limited.payable.lineCount], [0, 0, [], 0, 0]);
+  assert.throws(() => receivableOnlyReport(buildOpenBalanceReport([], '2026-11-11', '2026-11-11T15:00:00Z', { ...filters, side: 'payable' })));
 });

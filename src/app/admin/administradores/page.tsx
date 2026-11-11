@@ -19,7 +19,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 
-type InternalRole = 'super_admin' | 'asesor' | 'direccion' | 'editor_contenido' | 'compras';
+type InternalRole = 'super_admin' | 'asesor' | 'direccion' | 'editor_contenido' | 'compras' | 'cartera';
 
 interface AdminUser {
   id: string;
@@ -65,6 +65,11 @@ const ASSIGNABLE_EXTRA_ROLES: { value: InternalRole; label: string; description:
     label: 'Compras',
     description: 'Historial de compras a proveedores con el costo más bajo, pedidos y catálogo en solo lectura. Sin leads.',
   },
+  {
+    value: 'cartera',
+    label: 'Cartera',
+    description: 'Cuentas por cobrar (facturas pendientes, vencidos y detalle por cliente) y pedidos en solo lectura. Sin rentabilidad, comisiones ni leads.',
+  },
 ];
 
 const ROLE_LABELS: Record<InternalRole, { label: string; color: string; icon: React.ComponentType<{ className?: string }> }> = {
@@ -73,6 +78,7 @@ const ROLE_LABELS: Record<InternalRole, { label: string; color: string; icon: Re
   direccion: { label: 'Dirección', color: 'bg-purple-100 text-purple-700', icon: Eye },
   editor_contenido: { label: 'Editor Contenido', color: 'bg-emerald-100 text-emerald-700', icon: Briefcase },
   compras: { label: 'Compras', color: 'bg-amber-100 text-amber-700', icon: Briefcase },
+  cartera: { label: 'Cartera', color: 'bg-sky-100 text-sky-700', icon: Briefcase },
 };
 
 export default function AdministradoresPage() {
@@ -575,6 +581,7 @@ export default function AdministradoresPage() {
                   <option value="direccion">Dirección</option>
                   <option value="editor_contenido">Editor Contenido</option>
                   <option value="compras">Compras</option>
+                  <option value="cartera">Cartera</option>
                   <option value="super_admin">Super Admin</option>
                 </select>
               </div>
@@ -651,6 +658,7 @@ export default function AdministradoresPage() {
                   <option value="direccion">Dirección</option>
                   <option value="editor_contenido">Editor Contenido</option>
                   <option value="compras">Compras</option>
+                  <option value="cartera">Cartera</option>
                   <option value="super_admin">Super Admin</option>
                 </select>
               </div>
