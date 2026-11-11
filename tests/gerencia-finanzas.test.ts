@@ -535,8 +535,8 @@ test('reporte vacío: conserva rangos, pagina una sola vez y deduplica advertenc
 });
 
 test('rol Cartera: solo cuentas por cobrar y pedidos; sin gerencia, comisiones, leads, compras ni por pagar', () => {
-  for (const path of ['/dashboard/cartera', '/dashboard/pedidos', '/dashboard/perfil']) assert.equal(canAccessDashboardPath('cartera', path), true);
-  for (const path of ['/dashboard/gerencia', '/dashboard/comisiones', '/dashboard/leads', '/admin/leads', '/dashboard/compras', '/dashboard/catalogo', '/dashboard/clientes']) {
+  for (const path of ['/dashboard', '/dashboard/cartera', '/dashboard/perfil']) assert.equal(canAccessDashboardPath('cartera', path), true);
+  for (const path of ['/dashboard/pedidos', '/dashboard/gerencia', '/dashboard/comisiones', '/dashboard/leads', '/admin/leads', '/dashboard/compras', '/dashboard/catalogo', '/dashboard/clientes']) {
     assert.equal(canAccessDashboardPath('cartera', path), false, path);
   }
   assert.equal(canAccessDashboardPath('direccion', '/dashboard/cartera'), true);

@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildExecutiveMonths, executiveRange, marginPercent, percentChange, samePeriod, shiftMonth, type MonthTotals } from '../src/lib/gerencia/resumen';
+import {
+  buildExecutiveMonths, executiveRange, marginPercent, percentChange, salesOnlySummary, samePeriod, shiftMonth,
+  type ExecutiveSummary, type MonthTotals,
+} from '../src/lib/gerencia/resumen';
 
 // Totales reales de cabecera en Odoo (INVERSIONES IMPRIMA SAS), leídos el 2026-11-11.
 const OCT_2026: MonthTotals = { sales: 607606414.28, cost: 401836600.94, profit: 205769813.34, documents: 684 };
@@ -37,4 +40,23 @@ test('resumen ejecutivo: mismo período del mes en curso, 24 meses de base y var
   assert.equal(percentChange(-50, -100), 50);
   assert.equal(marginPercent({ sales: 0, cost: 0, profit: 0, documents: 0 }), null);
   assert.throws(() => samePeriod('2026-02-30', -1));
+});
+
+test('foto de la empresa para Cartera: conserva facturación y pendientes reales, sin costos, utilidad ni márgenes', () => {
+  const months = buildExecutiveMonths(new Map([['2026-10', OCT_2026], ['2026-09', SEP_2026], ['2025-10', OCT_2025]]), '2026-11-11', { previousMonth: OCT_2026_AL_11, previousYear: NOV_2025_AL_11 });
+  const summary: ExecutiveSummary = {
+    currency: 'COP', scope: 'full', company: { id: 1, name: 'INVERSIONES IMPRIMA SAS' }, asOfDate: '2026-11-11', generatedAt: '2026-11-11T15:00:00Z', months,
+    currentPeriod: { range: { from: '2026-11-01', to: '2026-11-11' }, previousMonthRange: samePeriod('2026-11-11', -1), previousYearRange: samePeriod('2026-11-11', -12) },
+    drafts: { count: 6, untaxed: 1665860, invoices: 5, creditNotes: 1, items: [] },
+    toInvoice: { orderCount: 255, lineCount: 944, untaxed: 292197763.06, orders: [], byAdvisor: [] },
+    warnings: [],
+  };
+  const limited = salesOnlySummary(summary);
+  assert.equal(limited.scope, 'sales');
+  assert.deepEqual(limited.months.map(month => [month.sales, month.documents, month.salesVsPreviousMonth, month.salesVsPreviousYear]), months.map(month => [month.sales, month.documents, month.salesVsPreviousMonth, month.salesVsPreviousYear]));
+  assert.ok(limited.months.every(month => month.cost === 0 && month.profit === 0 && month.marginPercent === null
+    && month.profitVsPreviousMonth === null && month.profitVsPreviousYear === null
+    && month.previousMonth.profit === 0 && month.previousMonth.cost === 0 && month.previousYear.profit === 0 && month.previousYear.cost === 0));
+  assert.deepEqual([limited.months[1].salesVsPreviousMonth, limited.months[1].salesVsPreviousYear], [1.19, 4.69]);
+  assert.deepEqual([limited.toInvoice.untaxed, limited.drafts.untaxed, summary.months[1].profit], [292197763.06, 1665860, 205769813.34]);
 });

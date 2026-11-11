@@ -87,7 +87,7 @@ async function fetchSummary(session: OdooSession, company: { id: number; name: s
   });
 
   return {
-    currency: 'COP', company, asOfDate: today, generatedAt: new Date().toISOString(),
+    currency: 'COP', scope: 'full', company, asOfDate: today, generatedAt: new Date().toISOString(),
     months: buildExecutiveMonths(buckets, today, { previousMonth: totalsFrom(previousMonthRows[0]), previousYear: totalsFrom(previousYearRows[0]) }),
     currentPeriod: { range: { from: `${today.slice(0, 7)}-01`, to: today }, previousMonthRange, previousYearRange },
     drafts: {

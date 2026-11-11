@@ -7,6 +7,7 @@ import DashboardComprador from '@/components/dashboards/DashboardComprador';
 import DashboardAprobador from '@/components/dashboards/DashboardAprobador';
 import DashboardAsesor from '@/components/dashboards/DashboardAsesor';
 import ResumenGerencia from '@/components/dashboards/ResumenGerencia';
+import ResumenEjecutivo from '@/components/dashboards/ResumenEjecutivo';
 import { Loader2 } from 'lucide-react';
 
 export default function DashboardPage() {
@@ -24,9 +25,6 @@ export default function DashboardPage() {
     }
     if (!loading && user?.rol === 'compras') {
       router.replace('/dashboard/compras');
-    }
-    if (!loading && user?.rol === 'cartera') {
-      router.replace('/dashboard/cartera');
     }
   }, [loading, user, router]);
 
@@ -79,12 +77,7 @@ export default function DashboardPage() {
         </div>
       );
     case 'cartera':
-      return (
-        <div className="flex flex-col items-center justify-center h-full mt-20 gap-4">
-          <Loader2 className="w-8 h-8 animate-spin text-primary" />
-          <p className="text-muted">Redirigiendo a cartera...</p>
-        </div>
-      );
+      return <ResumenEjecutivo variant="cartera" />;
     default:
       return (
         <div className="flex flex-col items-center justify-center h-full text-center space-y-4 mt-20">
