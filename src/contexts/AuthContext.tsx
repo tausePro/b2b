@@ -38,6 +38,7 @@ const VALID_ROLES: ReadonlySet<UserRole> = new Set([
   'direccion',
   'editor_contenido',
   'compras',
+  'cartera',
 ]);
 
 function normalizeRolesExtra(raw: unknown): UserRole[] {

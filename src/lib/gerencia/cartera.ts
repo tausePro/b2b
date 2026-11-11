@@ -184,3 +184,15 @@ export function buildOpenBalanceReport(
     ],
   };
 }
+
+/** Vista del rol Cartera: solo cuentas por cobrar; oculta saldos y facturas de proveedores. */
+export function receivableOnlyReport(report: OpenBalanceReport): OpenBalanceReport {
+  if (report.filters.side !== 'receivable' || report.lines.some(line => line.side !== 'receivable')) {
+    throw new Error('El rol Cartera solo consulta cuentas por cobrar.');
+  }
+  return {
+    ...report,
+    payable: summarizeOpenBalances([]),
+    invoices: report.invoices ? { receivable: report.invoices.receivable, payable: summarizeOpenInvoices([], 'payable', 0) } : null,
+  };
+}

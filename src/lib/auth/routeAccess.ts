@@ -41,6 +41,7 @@ const ROLE_PATH_PREFIXES: Record<UserRole, string[]> = {
     '/dashboard/clientes',
     '/dashboard/leads',
     '/dashboard/compras',
+    '/dashboard/cartera',
     '/dashboard/pedidos',
     '/dashboard/presupuestos',
     '/dashboard/alertas',
@@ -56,6 +57,11 @@ const ROLE_PATH_PREFIXES: Record<UserRole, string[]> = {
     '/dashboard/compras',
     '/dashboard/pedidos',
     '/dashboard/catalogo',
+    '/dashboard/perfil',
+  ],
+  cartera: [
+    '/dashboard/cartera',
+    '/dashboard/pedidos',
     '/dashboard/perfil',
   ],
 };
