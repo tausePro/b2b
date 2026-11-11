@@ -70,6 +70,7 @@ export interface OpenBalanceReport {
   payable: OpenBalanceTotals;
   invoices: Record<BalanceSide, OpenInvoiceSummary> | null;
   writtenOff: WrittenOffSummary | null;
+  topReceivablePartners: ReceivablePartner[];
   lines: OpenBalanceLine[];
   filteredBalance: number;
   pagination: { page: number; pageSize: number; total: number; totalPages: number };
@@ -170,6 +171,7 @@ export function buildOpenBalanceReport(
       payable: summarizeOpenInvoices(extras.invoices, 'payable', payable.balance),
     } : null,
     writtenOff,
+    topReceivablePartners: topReceivablePartners(lines),
     filteredBalance: roundCurrency(selected.reduce((sum, line) => sum + line.balance, 0)),
     lines: ordered.slice((page - 1) * BALANCE_PAGE_SIZE, page * BALANCE_PAGE_SIZE),
     pagination: { page, pageSize: BALANCE_PAGE_SIZE, total: selected.length, totalPages },
@@ -195,4 +197,24 @@ export function receivableOnlyReport(report: OpenBalanceReport): OpenBalanceRepo
     payable: summarizeOpenBalances([]),
     invoices: report.invoices ? { receivable: report.invoices.receivable, payable: summarizeOpenInvoices([], 'payable', 0) } : null,
   };
+}
+
+export interface ReceivablePartner { partnerName: string; balance: number; overdue: number; documentCount: number }
+
+/** Clientes con mayor cartera vencida (y luego mayor saldo), calculado sobre todas las partidas abiertas por cobrar. */
+export function topReceivablePartners(lines: readonly OpenBalanceLine[], limit = 10): ReceivablePartner[] {
+  const groups = new Map<string, { partnerName: string; balance: number; overdue: number; documents: Set<number> }>();
+  for (const line of lines) {
+    if (line.side !== 'receivable') continue;
+    const key = line.partnerId === null ? `sin:${line.partnerName}` : `${line.companyId}:${line.partnerId}`;
+    const group = groups.get(key) ?? { partnerName: line.partnerName, balance: 0, overdue: 0, documents: new Set<number>() };
+    group.balance += line.balance;
+    if (line.balance > 0 && line.daysOverdue !== null && line.daysOverdue > 0) group.overdue += line.balance;
+    group.documents.add(line.documentId);
+    groups.set(key, group);
+  }
+  return [...groups.values()]
+    .map(group => ({ partnerName: group.partnerName, balance: roundCurrency(group.balance), overdue: roundCurrency(group.overdue), documentCount: group.documents.size }))
+    .sort((a, b) => b.overdue - a.overdue || b.balance - a.balance || a.partnerName.localeCompare(b.partnerName, 'es'))
+    .slice(0, limit);
 }
