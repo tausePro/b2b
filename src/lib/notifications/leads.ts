@@ -6,6 +6,8 @@ import {
   renderEditableNotificationTemplate,
 } from '@/lib/notifications/emailTemplateStore';
 import { processPendingEmailNotifications } from '@/lib/notifications/processPendingEmails';
+import { getPushAdmin, loadActiveRoleUserIds, safeSendPushToUsers } from '@/lib/push/push.server';
+import { buildPushPayload } from '@/lib/push/shared';
 import { LEAD_NOTIFICATION_SETTINGS_ID, LEAD_NOTIFICATION_SETTINGS_TABLE, recipientsFromPrivateSettings } from '@/lib/notifications/leadRecipients';
 
 type LeadRow = {
@@ -202,14 +204,34 @@ export async function enqueueLeadNotifications(leadId: string): Promise<EnqueueL
   return { emailCount: emailRows.length, skippedReason: null };
 }
 
+async function sendLeadPush(leadId: string) {
+  try {
+    const { data: lead } = await getPushAdmin().from('leads').select('id, nombre, empresa').eq('id', leadId).maybeSingle();
+    if (!lead) return;
+    const userIds = await loadActiveRoleUserIds('direccion');
+    await safeSendPushToUsers(userIds.map((usuarioId) => ({
+      usuarioId,
+      payload: buildPushPayload({
+        title: 'Nuevo lead', body: [lead.nombre, lead.empresa].filter(Boolean).join(' · '),
+        url: `/dashboard/leads?lead=${lead.id}`, tag: `lead-${lead.id}`,
+      }),
+    })));
+  } catch (error) {
+    console.error('[push] No se pudo avisar el lead:', error instanceof Error ? error.message : error);
+  }
+}
+
 /** Variante segura: un fallo del aviso nunca debe perder ni bloquear el lead. */
 export async function safeEnqueueLeadNotifications(leadId: string) {
+  let outcome: { error: string | null; result: Awaited<ReturnType<typeof enqueueLeadNotifications>> | null };
   try {
-    return { error: null, result: await enqueueLeadNotifications(leadId) };
+    outcome = { error: null, result: await enqueueLeadNotifications(leadId) };
   } catch (error) {
-    return {
+    outcome = {
       error: error instanceof Error ? error.message : 'No se pudo encolar el aviso del lead.',
       result: null,
     };
   }
+  await sendLeadPush(leadId);
+  return outcome;
 }

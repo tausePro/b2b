@@ -133,6 +133,13 @@ La utilidad bruta de ventas equivale al margen firmado de Odoo (`margin_signed`)
 
 Conciliación de octubre de 2026: venta 607.606.414,28, costo 400.610.438,47 y utilidad 206.995.975,81, iguales a Odoo. De las 41 líneas con costo cero, 33 son servicios (7.123.920) y 8 mercancía por revisar (1.966.300). La respuesta de octubre pasó de 714.681 a 245.392 bytes.
 
+## PWA y notificaciones push (v2.14.34)
+
+- El portal se puede instalar (Android, iPhone, escritorio): `public/manifest.webmanifest`, íconos en `public/pwa/`, service worker `public/sw.js` (push, clic que abre la ruta y página `/offline.html`; no guarda en caché páginas ni datos). `PwaHead` agrega manifest y metadatos solo en login, dashboard y admin; la landing y Empaques no son instalables.
+- Cada usuario activa las notificaciones de su dispositivo en **Mi Perfil › Aplicación y notificaciones** (activar, desactivar, enviar prueba e instalar). En iPhone solo funcionan con el portal agregado a la pantalla de inicio (iOS 16.4+).
+- Eventos: todos los de `enqueuePedidoNotifications` (mismo destinatario, título, descripción y ruta que la notificación interna: pedido por aprobar, aprobado, rechazado, procesado, pedidos de clientes de la asesora) y lead nuevo para Dirección (rol principal o extra). Un fallo de push nunca bloquea pedidos, leads ni correos.
+- Suscripciones en `push_suscripciones` (migración manual 055, solo service role); 404/410 desactivan el dispositivo. Llaves en Vercel (Producción): `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` (sensible) y `VAPID_SUBJECT`. Sin llaves, el portal informa que no está configurado.
+
 ## Compras con proveedores y rol Compras
 
 - `/dashboard/compras` (asesoras, Dirección, Super Admin y rol `compras`) busca productos y muestra el historial de órdenes de compra confirmadas (`purchase.order` en estado `purchase`/`done`) de los últimos 12 meses, por fecha de la orden y solo de la compañía activa de Odoo. Muestra costo más bajo (proveedor, fecha y orden), último costo, promedio ponderado por cantidad y el detalle.

@@ -5,6 +5,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { createClient } from '@/lib/supabase/client';
 import { ROLE_CONFIG } from '@/types';
 import { User, Mail, Building2, MapPin, Key, Loader2, Check, Eye, EyeOff } from 'lucide-react';
+import PushSettings from '@/components/pwa/PushSettings';
 
 export default function PerfilPage() {
   const { user, activeCompany } = useAuth();
@@ -175,6 +176,8 @@ export default function PerfilPage() {
           </button>
         </div>
       </div>
+
+      <PushSettings />
     </div>
   );
 }

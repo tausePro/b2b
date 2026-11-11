@@ -4,6 +4,8 @@ import {
   renderEditableNotificationTemplate,
 } from '@/lib/notifications/emailTemplateStore';
 import { processPendingEmailNotifications } from '@/lib/notifications/processPendingEmails';
+import { safeSendPushToUsers } from '@/lib/push/push.server';
+import { buildPushPayload } from '@/lib/push/shared';
 import type { NivelNotificacion, TipoNotificacion } from '@/types';
 
 type PedidoNotificationEvent = Exclude<TipoNotificacion, 'lead_creado'>;
@@ -436,6 +438,11 @@ export async function enqueuePedidoNotifications(input: EnqueuePedidoNotificatio
   if (emailRes.error) {
     throw new Error(emailRes.error.message);
   }
+
+  await safeSendPushToUsers(inAppRows.map((row) => ({
+    usuarioId: row.usuario_id,
+    payload: buildPushPayload({ title: row.titulo, body: row.descripcion, url: row.ruta, tag: `pedido-${pedido.id}` }),
+  })));
 
   // Envío inmediato: intentar enviar los emails ahora mismo.
   // Si falla, el cron los recogerá como respaldo.
