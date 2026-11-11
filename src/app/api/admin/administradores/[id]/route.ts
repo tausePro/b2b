@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 
-const INTERNAL_ROLES = new Set(['super_admin', 'asesor', 'direccion', 'editor_contenido', 'compras'] as const);
+const INTERNAL_ROLES = new Set(['super_admin', 'asesor', 'direccion', 'editor_contenido', 'compras', 'cartera'] as const);
 
 function getSupabaseAdmin() {
   return createSupabaseClient(
@@ -59,7 +59,7 @@ export async function PATCH(
       );
     }
 
-    if (!INTERNAL_ROLES.has(target.rol as 'super_admin' | 'asesor' | 'direccion' | 'editor_contenido' | 'compras')) {
+    if (!INTERNAL_ROLES.has(target.rol as 'super_admin' | 'asesor' | 'direccion' | 'editor_contenido' | 'compras' | 'cartera')) {
       return NextResponse.json(
         { error: 'Este endpoint solo gestiona usuarios internos Imprima.' },
         { status: 400 }

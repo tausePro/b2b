@@ -25,6 +25,7 @@ import {
   X,
   UserPlus,
   Truck,
+  Wallet,
 } from 'lucide-react';
 
 interface SidebarItem {
@@ -86,6 +87,10 @@ const MENU_BY_ROLE: Record<UserRole, SidebarItem[]> = {
   editor_contenido: [
     { label: 'CMS Landing', href: '/admin/cms', icon: <FileText className="w-5 h-5" />, activePattern: '/admin/cms' },
     { label: 'Leads', href: '/admin/leads', icon: <UserPlus className="w-5 h-5" />, activePattern: '/admin/leads' },
+  ],
+  cartera: [
+    { label: 'Cartera', href: '/dashboard/cartera', icon: <Wallet className="w-5 h-5" />, activePattern: '/dashboard/cartera' },
+    { label: 'Pedidos', href: '/dashboard/pedidos', icon: <ClipboardList className="w-5 h-5" />, activePattern: '/dashboard/pedidos' },
   ],
   compras: [
     { label: 'Compras con proveedores', href: '/dashboard/compras', icon: <Truck className="w-5 h-5" />, activePattern: '/dashboard/compras' },

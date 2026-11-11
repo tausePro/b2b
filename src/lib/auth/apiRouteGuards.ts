@@ -99,7 +99,7 @@ export async function authorizeApiRoles(
       rolesExtra = extraRows
         .map((row) => String((row as { rol: string }).rol))
         .filter((r): r is ApiActorRole =>
-          ['super_admin', 'comprador', 'aprobador', 'asesor', 'direccion', 'editor_contenido', 'compras'].includes(r),
+          ['super_admin', 'comprador', 'aprobador', 'asesor', 'direccion', 'editor_contenido', 'compras', 'cartera'].includes(r),
         ) as ApiActorRole[];
     }
   } catch {
