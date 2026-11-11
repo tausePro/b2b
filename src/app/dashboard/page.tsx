@@ -7,7 +7,7 @@ import DashboardComprador from '@/components/dashboards/DashboardComprador';
 import DashboardAprobador from '@/components/dashboards/DashboardAprobador';
 import DashboardAsesor from '@/components/dashboards/DashboardAsesor';
 import ResumenGerencia from '@/components/dashboards/ResumenGerencia';
-import ResumenEjecutivo from '@/components/dashboards/ResumenEjecutivo';
+import DashboardCartera from '@/components/dashboards/DashboardCartera';
 import { Loader2 } from 'lucide-react';
 
 export default function DashboardPage() {
@@ -77,7 +77,7 @@ export default function DashboardPage() {
         </div>
       );
     case 'cartera':
-      return <ResumenEjecutivo variant="cartera" />;
+      return <DashboardCartera />;
     default:
       return (
         <div className="flex flex-col items-center justify-center h-full text-center space-y-4 mt-20">
