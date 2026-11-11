@@ -784,6 +784,14 @@ test('Cartera: los saldos actuales concilian con partidas reales de Odoo y conse
   const full = buildOpenBalanceReport(dataset.lines, dataset.asOfDate, dataset.generatedAt, { side: 'receivable', status: 'all', search: '', page: 1 }, dataset.company, {
     invoices: dataset.invoices, writtenOff: dataset.writtenOff,
   });
+  const overdueByPartner = new Map<string, number>();
+  for (const line of dataset.lines) {
+    if (line.side !== 'receivable' || line.balance <= 0 || line.daysOverdue === null || line.daysOverdue <= 0) continue;
+    const key = line.partnerId === null ? `sin:${line.partnerName}` : `${line.companyId}:${line.partnerId}`;
+    overdueByPartner.set(key, (overdueByPartner.get(key) ?? 0) + line.balance);
+  }
+  assert.ok(full.topReceivablePartners.length <= 10);
+  assert.equal(full.topReceivablePartners[0]?.overdue ?? 0, roundCurrency(Math.max(0, ...overdueByPartner.values())));
   for (const [side, prefix, sign] of [['receivable', 'out_', 1], ['payable', 'in_', -1]] as const) {
     const rows = openInvoices.filter(row => String(row.move_type).startsWith(prefix) && invoiceJournals.has(relationId(row.journal_id)!));
     const summary = full.invoices![side];
