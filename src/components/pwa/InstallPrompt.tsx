@@ -25,7 +25,7 @@ function deviceKey(): string {
   ].map(Number).join('');
 }
 
-/** Sugerencia de instalación solo en celulares: botón cuando el navegador lo permite; instrucciones en iPhone. */
+/** Sugerencia de instalación en celular y computador: botón cuando el navegador lo permite; instrucciones en iPhone/iPad. */
 export default function InstallPrompt() {
   const key = useSyncExternalStore(subscribeNoop, deviceKey, () => '');
   const canInstall = useSyncExternalStore(subscribeInstallAvailability, canPromptInstall, () => false);
@@ -33,7 +33,7 @@ export default function InstallPrompt() {
   const [busy, setBusy] = useState(false);
   if (!key || hidden) return null;
   const [ios, mobile, standalone, snoozed, viewAs] = key.split('').map(value => value === '1');
-  if (!mobile || standalone || snoozed || viewAs || (!ios && !canInstall)) return null;
+  if (standalone || snoozed || viewAs || (!ios && !canInstall)) return null;
 
   const dismiss = () => {
     try {
@@ -56,15 +56,17 @@ export default function InstallPrompt() {
   };
 
   return (
-    <aside aria-labelledby="pwa-instalar-titulo" className="fixed inset-x-3 bottom-3 z-[60] mx-auto max-w-md rounded-2xl border border-border bg-white p-4 shadow-xl" style={{ marginBottom: 'env(safe-area-inset-bottom)' }}>
+    <aside aria-labelledby="pwa-instalar-titulo" className="fixed inset-x-3 bottom-3 z-[60] mx-auto max-w-md rounded-2xl border border-border bg-white p-4 shadow-xl sm:inset-x-auto sm:bottom-6 sm:right-6 sm:mx-0 sm:max-w-sm" style={{ marginBottom: 'env(safe-area-inset-bottom)' }}>
       <div className="flex items-start gap-3">
         <Image src="/pwa/icon-192.png" alt="" width={44} height={44} className="rounded-xl" />
         <div className="min-w-0 flex-1">
-          <p id="pwa-instalar-titulo" className="font-semibold text-foreground">Instala Imprima en tu celular</p>
+          <p id="pwa-instalar-titulo" className="font-semibold text-foreground">{mobile ? 'Instala Imprima en tu celular' : 'Instala Imprima en tu computador'}</p>
           <p className="mt-1 text-sm text-muted">
             {ios
               ? <>Toca <strong>Compartir</strong> y luego <strong>Agregar a pantalla de inicio</strong>. Así podrás recibir avisos de tus pedidos.</>
-              : 'Ábrela como app desde tu pantalla de inicio y recibe avisos de tus pedidos.'}
+              : mobile
+                ? 'Ábrela como app desde tu pantalla de inicio y recibe avisos de tus pedidos.'
+                : 'Ábrela como aplicación en su propia ventana y recibe avisos de tus pedidos.'}
           </p>
         </div>
         <button type="button" onClick={dismiss} aria-label="Cerrar sugerencia de instalación" className="rounded-lg p-2 text-muted hover:bg-background-light focus-visible:outline-2 focus-visible:outline-primary">
