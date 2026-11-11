@@ -20,6 +20,7 @@ export interface ExecutiveOrderToInvoice { id: number; name: string; partnerName
 export interface ExecutiveAdvisorAmount { advisorId: number | null; advisorName: string; amount: number; lineCount: number }
 export interface ExecutiveSummary {
   currency: 'COP';
+  scope: 'full' | 'sales';
   company: { id: number; name: string };
   asOfDate: string;
   generatedAt: string;
@@ -89,4 +90,17 @@ export function buildExecutiveMonths(
       profitVsPreviousYear: percentChange(totals.profit, previousYear.profit),
     };
   });
+}
+
+/** Vista del rol Cartera: facturación, cartera y pendientes, sin costos, utilidad ni márgenes. */
+export function salesOnlySummary(summary: ExecutiveSummary): ExecutiveSummary {
+  const hide = (totals: MonthTotals): MonthTotals => ({ ...totals, cost: 0, profit: 0 });
+  return {
+    ...summary,
+    scope: 'sales',
+    months: summary.months.map(month => ({
+      ...month, cost: 0, profit: 0, marginPercent: null, profitVsPreviousMonth: null, profitVsPreviousYear: null,
+      previousMonth: hide(month.previousMonth), previousYear: hide(month.previousYear),
+    })),
+  };
 }
