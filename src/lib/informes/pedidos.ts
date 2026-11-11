@@ -720,7 +720,7 @@ export function buildOrderMetricsReport(input: {
   };
 }
 
-function escapeCsvCell(value: string | number | null | undefined): string {
+export function escapeCsvCell(value: string | number | null | undefined): string {
   if (value === null || value === undefined) return '';
   const text = String(value);
   const safeText = /^[=+\-@\t\r]/.test(text) ? `'${text}` : text;
