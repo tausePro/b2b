@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { Loader2 } from 'lucide-react';
+import PwaHead from '@/components/pwa/PwaHead';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -69,6 +70,7 @@ export default function LoginPage() {
 
   return (
     <div className="flex min-h-screen">
+      <PwaHead />
       {/* Panel izquierdo - Branding */}
       <div className="hidden lg:flex lg:w-1/2 bg-primary items-center justify-center relative overflow-hidden">
         <div className="absolute inset-0 opacity-10">

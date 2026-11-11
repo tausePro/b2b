@@ -6,6 +6,7 @@ import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 import type { UserRole } from '@/types';
 import { getEffectiveRoles, userHasAnyRole } from '@/lib/auth/roles';
+import PwaHead from '@/components/pwa/PwaHead';
 import {
   Loader2,
   LayoutDashboard,
@@ -244,6 +245,7 @@ export default function AdminLayout({
 
   return (
     <div className="h-screen flex overflow-hidden bg-background-light font-display antialiased">
+      <PwaHead />
       {/* Sidebar Desktop */}
       <aside className="hidden lg:flex lg:w-64 flex-col bg-white border-r border-border flex-shrink-0 z-20">
         {renderSidebarContent()}
