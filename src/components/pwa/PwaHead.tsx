@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
+import InstallPrompt from '@/components/pwa/InstallPrompt';
 
 /** Manifest e íconos de la PWA solo en el portal (login, dashboard y admin); React los ubica en <head>. */
 export default function PwaHead() {
@@ -17,6 +18,7 @@ export default function PwaHead() {
       <meta name="apple-mobile-web-app-capable" content="yes" />
       <meta name="apple-mobile-web-app-title" content="Imprima" />
       <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+      <InstallPrompt />
     </>
   );
 }

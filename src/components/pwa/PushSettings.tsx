@@ -3,9 +3,9 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { Bell, BellOff, Download, Loader2, Send, Smartphone } from 'lucide-react';
 import { urlBase64ToUint8Array } from '@/lib/push/shared';
+import { canPromptInstall, promptInstall, subscribeInstallAvailability } from '@/lib/pwa/install';
 
 type ServerStatus = { configured: boolean; publicKey: string | null };
-type InstallPromptEvent = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> };
 type Message = { tone: 'ok' | 'error'; text: string };
 
 const subscribeNoop = () => () => {};
@@ -28,7 +28,7 @@ export default function PushSettings() {
   const [status, setStatus] = useState<ServerStatus | null>(null);
   const [permission, setPermission] = useState<NotificationPermission | null>(() => (typeof Notification === 'undefined' ? null : Notification.permission));
   const [subscribed, setSubscribed] = useState(false);
-  const [installEvent, setInstallEvent] = useState<InstallPromptEvent | null>(null);
+  const canInstall = useSyncExternalStore(subscribeInstallAvailability, canPromptInstall, () => false);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<Message | null>(null);
 
@@ -39,11 +39,6 @@ export default function PushSettings() {
     if ('serviceWorker' in navigator && 'PushManager' in window) {
       navigator.serviceWorker.ready.then(registration => registration.pushManager.getSubscription()).then(subscription => setSubscribed(Boolean(subscription))).catch(() => undefined);
     }
-    const onInstallPrompt = (event: Event) => { event.preventDefault(); setInstallEvent(event as InstallPromptEvent); };
-    const onInstalled = () => setInstallEvent(null);
-    window.addEventListener('beforeinstallprompt', onInstallPrompt);
-    window.addEventListener('appinstalled', onInstalled);
-    return () => { window.removeEventListener('beforeinstallprompt', onInstallPrompt); window.removeEventListener('appinstalled', onInstalled); };
   }, []);
 
   const run = async (name: string, action: () => Promise<string>) => {
@@ -94,11 +89,9 @@ export default function PushSettings() {
   });
 
   const install = () => run('instalar', async () => {
-    if (!installEvent) throw new Error('La instalación no está disponible en este navegador.');
-    await installEvent.prompt();
-    const choice = await installEvent.userChoice;
-    setInstallEvent(null);
-    return choice.outcome === 'accepted' ? 'Imprima quedó instalada en este dispositivo.' : 'Instalación cancelada.';
+    const outcome = await promptInstall();
+    if (outcome === 'unavailable') throw new Error('La instalación no está disponible en este navegador.');
+    return outcome === 'accepted' ? 'Imprima quedó instalada en este dispositivo.' : 'Instalación cancelada.';
   });
 
   const iosNeedsInstall = Boolean(env?.ios && !env.standalone);
@@ -115,7 +108,7 @@ export default function PushSettings() {
       {status && !status.configured && <p className="rounded-lg border border-border bg-background-light p-3 text-sm text-muted">Las notificaciones aún no están configuradas en el servidor.</p>}
       {permission === 'denied' && <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">Las notificaciones están bloqueadas para este sitio. Habilítalas en la configuración del navegador y vuelve a intentarlo.</p>}
       <div className="flex flex-wrap gap-3">
-        {installEvent && <button type="button" className={button} onClick={install} disabled={busy !== null}><Download className="h-4 w-4" aria-hidden="true" />Instalar aplicación</button>}
+        {canInstall && !env?.standalone && <button type="button" className={button} onClick={install} disabled={busy !== null}><Download className="h-4 w-4" aria-hidden="true" />Instalar aplicación</button>}
         {subscribed
           ? <button type="button" className={button} onClick={deactivate} disabled={busy !== null}>{busy === 'desactivar' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <BellOff className="h-4 w-4" aria-hidden="true" />}Desactivar en este dispositivo</button>
           : <button type="button" className={button} onClick={activate} disabled={!canActivate}>{busy === 'activar' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Bell className="h-4 w-4" aria-hidden="true" />}Activar notificaciones</button>}
