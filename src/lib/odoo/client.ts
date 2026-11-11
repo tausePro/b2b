@@ -365,6 +365,21 @@ async function executeKw(
 // Métodos genéricos
 // =============================================
 
+/** Lectura agregada (read_group) de solo lectura. */
+export async function readGroup(
+  model: string,
+  domain: unknown[],
+  fields: string[],
+  groupby: string[],
+  options: { orderby?: string; limit?: number; session?: OdooSession; config?: OdooConfig } = {}
+): Promise<Record<string, unknown>[]> {
+  const session = options.session ?? await authenticate(options.config);
+  const kwargs: Record<string, unknown> = { lazy: false };
+  if (options.orderby) kwargs.orderby = options.orderby;
+  if (options.limit) kwargs.limit = options.limit;
+  return await executeKw(session, model, 'read_group', [domain, fields, groupby], kwargs) as Record<string, unknown>[];
+}
+
 export async function searchRead(
   model: string,
   domain: unknown[] = [],

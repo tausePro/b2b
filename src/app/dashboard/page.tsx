@@ -6,7 +6,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import DashboardComprador from '@/components/dashboards/DashboardComprador';
 import DashboardAprobador from '@/components/dashboards/DashboardAprobador';
 import DashboardAsesor from '@/components/dashboards/DashboardAsesor';
-import GerenciaFinanzas from '@/components/dashboards/GerenciaFinanzas';
+import ResumenGerencia from '@/components/dashboards/ResumenGerencia';
 import { Loader2 } from 'lucide-react';
 
 export default function DashboardPage() {
@@ -52,7 +52,7 @@ export default function DashboardPage() {
 
   switch (user.rol) {
     case 'super_admin':
-      return <GerenciaFinanzas />;
+      return <ResumenGerencia />;
     case 'comprador':
       return <DashboardComprador />;
     case 'aprobador':
@@ -60,7 +60,7 @@ export default function DashboardPage() {
     case 'asesor':
       return <DashboardAsesor />;
     case 'direccion':
-      return <GerenciaFinanzas />;
+      return <ResumenGerencia />;
     case 'editor_contenido':
       return (
         <div className="flex flex-col items-center justify-center h-full mt-20 gap-4">
