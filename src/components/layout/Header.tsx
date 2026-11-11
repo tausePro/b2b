@@ -18,6 +18,7 @@ import {
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import PwaHead from '@/components/pwa/PwaHead';
 
 interface HeaderProps {
   onToggleSidebar: () => void;
@@ -109,6 +110,7 @@ export default function Header({ onToggleSidebar, portalBranding }: HeaderProps)
 
   return (
     <header className="h-16 bg-white border-b border-border flex items-center justify-between px-4 lg:px-6 sticky top-0 z-30">
+      <PwaHead />
       {/* Izquierda: Toggle + Logo + Búsqueda */}
       <div className="flex items-center gap-4 flex-1">
         <button
