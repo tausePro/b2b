@@ -42,6 +42,7 @@ const ROLE_PATH_PREFIXES: Record<UserRole, string[]> = {
     '/dashboard/leads',
     '/dashboard/compras',
     '/dashboard/cartera',
+    '/dashboard/productos-cliente',
     '/dashboard/pedidos',
     '/dashboard/presupuestos',
     '/dashboard/alertas',

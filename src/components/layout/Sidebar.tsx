@@ -73,6 +73,7 @@ const MENU_BY_ROLE: Record<UserRole, SidebarItem[]> = {
     { label: 'Resumen Ejecutivo', href: '/dashboard', icon: <LayoutDashboard className="w-5 h-5" />, activePattern: '/dashboard$' },
     { label: 'Clientes', href: '/dashboard/clientes', icon: <Building2 className="w-5 h-5" />, activePattern: '/dashboard/clientes' },
     { label: 'Leads', href: '/dashboard/leads', icon: <UserPlus className="w-5 h-5" />, activePattern: '/dashboard/leads' },
+    { label: 'Productos por cliente', href: '/dashboard/productos-cliente', icon: <Package className="w-5 h-5" />, activePattern: '/dashboard/productos-cliente' },
     { label: 'Compras con proveedores', href: '/dashboard/compras', icon: <Truck className="w-5 h-5" />, activePattern: '/dashboard/compras' },
     { label: 'Pedidos', href: '/dashboard/pedidos', icon: <ClipboardList className="w-5 h-5" />, activePattern: '/dashboard/pedidos' },
     { label: 'Informes Pedidos', href: '/dashboard/reportes', icon: <BarChart3 className="w-5 h-5" />, activePattern: '/dashboard/reportes' },
