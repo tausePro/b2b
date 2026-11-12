@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useSyncExternalStore } from 'react';
+import Link from 'next/link';
 import { Bell, BellOff, Download, Loader2, Send, Smartphone } from 'lucide-react';
 import { urlBase64ToUint8Array } from '@/lib/push/shared';
 import { canPromptInstall, promptInstall, subscribeInstallAvailability } from '@/lib/pwa/install';
@@ -103,7 +104,7 @@ export default function PushSettings() {
         <h2 id="pwa-titulo" className="flex items-center gap-2 text-lg font-semibold text-foreground"><Smartphone className="h-5 w-5 text-primary" aria-hidden="true" />Aplicación y notificaciones</h2>
         <p className="mt-1 text-sm text-muted">Instala el portal en tu celular o computador y recibe avisos de pedidos por aprobar, aprobaciones, rechazos y novedades de tus clientes.</p>
       </div>
-      {iosNeedsInstall && <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">En iPhone o iPad: toca <strong>Compartir</strong> y luego <strong>Agregar a pantalla de inicio</strong>. Abre Imprima desde ese ícono y vuelve a esta sección para activar las notificaciones (requiere iOS 16.4 o superior).</p>}
+      {iosNeedsInstall && <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">En iPhone o iPad: toca <strong>Compartir</strong> y luego <strong>Agregar a pantalla de inicio</strong>. Abre Imprima desde ese ícono y vuelve a esta sección para activar las notificaciones (requiere iOS 16.4 o superior). <Link href="/instalar" className="font-medium underline underline-offset-2">Ver la guía paso a paso</Link></p>}
       {env && !env.supported && !iosNeedsInstall && <p className="rounded-lg border border-border bg-background-light p-3 text-sm text-muted">Este navegador no admite notificaciones push. Prueba con Chrome, Edge, Firefox o Safari actualizado.</p>}
       {status && !status.configured && <p className="rounded-lg border border-border bg-background-light p-3 text-sm text-muted">Las notificaciones aún no están configuradas en el servidor.</p>}
       {permission === 'denied' && <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">Las notificaciones están bloqueadas para este sitio. Habilítalas en la configuración del navegador y vuelve a intentarlo.</p>}
