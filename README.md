@@ -133,6 +133,13 @@ La utilidad bruta de ventas equivale al margen firmado de Odoo (`margin_signed`)
 
 Conciliación de octubre de 2026: venta 607.606.414,28, costo 400.610.438,47 y utilidad 206.995.975,81, iguales a Odoo. De las 41 líneas con costo cero, 33 son servicios (7.123.920) y 8 mercancía por revisar (1.966.300). La respuesta de octubre pasó de 714.681 a 245.392 bytes.
 
+## Propuesta de Gerencia: escritorio y PWA (v2.14.42)
+
+- Menú agrupado (`src/lib/navigation/menu.ts`, sin JSX y probado contra `routeAccess`): Gerencia, Comercial, Operación y Sistema para Dirección; grupos equivalentes para Super Admin, asesoras, Compras, Cartera y Editor; el portal de clientes queda sin encabezados. Multi-rol fusiona grupos y quita repetidos. Alertas muestra el contador de notificaciones sin leer (`useUnreadNotifications`, una sola suscripción compartida con el encabezado).
+- Buscador ⌘K / Ctrl K (`CommandPalette`, `<dialog>` nativo con `closedby="any"` y alternativa `useLightDismiss`): opciones del menú del rol y `GET /api/buscar` (pedidos y clientes del portal con la RLS de la sesión; clientes y productos de Odoo, solo lectura, según el rol). Enlaces directos: `/dashboard/productos-cliente?cliente=<id>` y `/dashboard/compras?producto=<id>`.
+- Resumen ejecutivo: pestañas Resumen (`/dashboard`), Rentabilidad (`/dashboard/gerencia`), Cartera y Comisiones (`GerenciaTabs`); período Mes en curso / Mes anterior / Año a la fecha (`buildPeriodKpis`, sin consultas extra); gráfico de 12 meses con margen sobre las barras; "Requiere atención" (borradores, pedidos con más de 15 días sin facturar, cartera vencida a más de 90 días, mercancía con costo cero); cartera hoy con antigüedad; por facturar por asesora; pedidos con antigüedad y mes a mes plegado. `/dashboard/por-facturar` lista todos los pedidos con filtros en chips y los borradores.
+- Celular (perfiles internos): barra inferior con 4 destinos (Dirección: Resumen, Ventas, Pedidos por facturar, Cartera) y "Más" con el perfil y el menú agrupado; indicadores en carrusel, gráfico de 6 meses y tablas como tarjetas. `--mobile-nav-offset` reserva el espacio de la barra.
+
 ## Resumen ejecutivo de Gerencia (v2.14.36)
 
 - `/dashboard` para Dirección y Super Admin muestra arriba `ResumenEjecutivo` y deja el análisis detallado (`GerenciaFinanzas`) plegado; solo carga al abrirlo (se abre solo si la URL trae filtros). `/dashboard/gerencia` conserva la vista detallada completa.

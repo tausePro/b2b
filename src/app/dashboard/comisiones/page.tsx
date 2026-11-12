@@ -7,6 +7,7 @@ import { userHasAnyRole } from '@/lib/auth/roles';
 import { AlertCircle, BadgeDollarSign, Building2, CheckCircle2, FileText, Loader2, LockKeyhole, RefreshCw } from 'lucide-react';
 import KpiCard from '@/components/ui/KpiCard';
 import ComisionHabitual from '@/components/dashboards/ComisionHabitual';
+import GerenciaTabs from '@/components/dashboards/GerenciaTabs';
 import { useAuth } from '@/contexts/AuthContext';
 import { getBogotaCalendarDate, getCommissionPeriodRange, PLATFORM_BONUS_START_DATE, roundCurrency } from '@/lib/comisiones/bonoPlataforma';
 import type { CommissionPeriodStatus, PlatformBonusClientSummary, PlatformBonusDetail, PlatformBonusTotals } from '@/lib/comisiones/bonoPlataforma';
@@ -551,5 +552,10 @@ function ComisionesLocation() {
 }
 
 export default function ComisionesPage() {
-  return <Suspense fallback={<div className="flex items-center justify-center gap-3 py-20 text-sm text-muted" role="status"><Loader2 aria-hidden="true" className="h-6 w-6 animate-spin text-primary" />Cargando liquidación…</div>}><ComisionesLocation /></Suspense>;
+  return (
+    <div className="space-y-6">
+      <GerenciaTabs />
+      <Suspense fallback={<div className="flex items-center justify-center gap-3 py-20 text-sm text-muted" role="status"><Loader2 aria-hidden="true" className="h-6 w-6 animate-spin text-primary" />Cargando liquidación…</div>}><ComisionesLocation /></Suspense>
+    </div>
+  );
 }

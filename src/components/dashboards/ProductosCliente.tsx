@@ -38,10 +38,10 @@ function download(filename: string, content: string) {
 
 const fileSlug = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'cliente';
 
-export default function ProductosCliente() {
+export default function ProductosCliente({ initialCustomerId = null }: { initialCustomerId?: number | null }) {
   const [draft, setDraft] = useState('');
   const [search, setSearch] = useState('');
-  const [detail, setDetail] = useState<Detail | null>(null);
+  const [detail, setDetail] = useState<Detail | null>(initialCustomerId ? { id: initialCustomerId, from: '', to: '' } : null);
   const [period, setPeriod] = useState({ from: '', to: '' });
   const [results, setResults] = useState<Loaded<CustomerSearchResult[]> | null>(null);
   const [report, setReport] = useState<Loaded<CustomerProductsReport> | null>(null);

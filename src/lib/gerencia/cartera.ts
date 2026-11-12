@@ -71,6 +71,7 @@ export interface OpenBalanceReport {
   invoices: Record<BalanceSide, OpenInvoiceSummary> | null;
   writtenOff: WrittenOffSummary | null;
   topReceivablePartners: ReceivablePartner[];
+  receivableOver90: OverdueSummary;
   lines: OpenBalanceLine[];
   filteredBalance: number;
   pagination: { page: number; pageSize: number; total: number; totalPages: number };
@@ -172,6 +173,7 @@ export function buildOpenBalanceReport(
     } : null,
     writtenOff,
     topReceivablePartners: topReceivablePartners(lines),
+    receivableOver90: summarizeOverdue(lines, 90),
     filteredBalance: roundCurrency(selected.reduce((sum, line) => sum + line.balance, 0)),
     lines: ordered.slice((page - 1) * BALANCE_PAGE_SIZE, page * BALANCE_PAGE_SIZE),
     pagination: { page, pageSize: BALANCE_PAGE_SIZE, total: selected.length, totalPages },
@@ -217,4 +219,17 @@ export function topReceivablePartners(lines: readonly OpenBalanceLine[], limit =
     .map(group => ({ partnerName: group.partnerName, balance: roundCurrency(group.balance), overdue: roundCurrency(group.overdue), documentCount: group.documents.size }))
     .sort((a, b) => b.overdue - a.overdue || b.balance - a.balance || a.partnerName.localeCompare(b.partnerName, 'es'))
     .slice(0, limit);
+}
+
+export interface OverdueSummary { minDays: number; amount: number; documentCount: number; partnerCount: number }
+
+/** Cargos por cobrar vencidos hace más de `minDays` días: valor, facturas y clientes. */
+export function summarizeOverdue(lines: readonly OpenBalanceLine[], minDays: number): OverdueSummary {
+  const overdue = lines.filter(line => line.side === 'receivable' && line.balance > 0 && line.daysOverdue !== null && line.daysOverdue > minDays);
+  return {
+    minDays,
+    amount: roundCurrency(overdue.reduce((sum, line) => sum + line.balance, 0)),
+    documentCount: new Set(overdue.map(line => line.documentId)).size,
+    partnerCount: new Set(overdue.map(line => (line.partnerId === null ? `sin:${line.partnerName}` : `${line.companyId}:${line.partnerId}`))).size,
+  };
 }

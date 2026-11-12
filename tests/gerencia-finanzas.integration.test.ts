@@ -791,6 +791,12 @@ test('Cartera: los saldos actuales concilian con partidas reales de Odoo y conse
     overdueByPartner.set(key, (overdueByPartner.get(key) ?? 0) + line.balance);
   }
   assert.ok(full.topReceivablePartners.length <= 10);
+  const over90 = dataset.lines.filter(line => line.side === 'receivable' && line.balance > 0 && line.daysOverdue !== null && line.daysOverdue > 90);
+  assert.deepEqual(full.receivableOver90, {
+    minDays: 90, amount: roundCurrency(over90.reduce((sum, line) => sum + line.balance, 0)),
+    documentCount: new Set(over90.map(line => line.documentId)).size,
+    partnerCount: new Set(over90.map(line => (line.partnerId === null ? `sin:${line.partnerName}` : `${line.companyId}:${line.partnerId}`))).size,
+  });
   assert.equal(full.topReceivablePartners[0]?.overdue ?? 0, roundCurrency(Math.max(0, ...overdueByPartner.values())));
   for (const [side, prefix, sign] of [['receivable', 'out_', 1], ['payable', 'in_', -1]] as const) {
     const rows = openInvoices.filter(row => String(row.move_type).startsWith(prefix) && invoiceJournals.has(relationId(row.journal_id)!));

@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  buildExecutiveMonths, executiveRange, marginPercent, percentChange, salesOnlySummary, samePeriod, shiftMonth,
-  type ExecutiveSummary, type MonthTotals,
+  buildExecutiveMonths, buildPeriodKpis, daysBetween, executiveRange, lastDayOfMonth, marginPercent, percentChange, salesOnlySummary, samePeriod, shiftMonth, staleOrders,
+  type ExecutiveOrderToInvoice, type ExecutiveSummary, type MonthTotals,
 } from '../src/lib/gerencia/resumen';
 
 // Totales reales de cabecera en Odoo (INVERSIONES IMPRIMA SAS), leídos el 2026-11-11.
@@ -48,7 +48,11 @@ test('foto de la empresa para Cartera: conserva facturación y pendientes reales
     currency: 'COP', scope: 'full', company: { id: 1, name: 'INVERSIONES IMPRIMA SAS' }, asOfDate: '2026-11-11', generatedAt: '2026-11-11T15:00:00Z', months,
     currentPeriod: { range: { from: '2026-11-01', to: '2026-11-11' }, previousMonthRange: samePeriod('2026-11-11', -1), previousYearRange: samePeriod('2026-11-11', -12) },
     drafts: { count: 6, untaxed: 1665860, invoices: 5, creditNotes: 1, items: [] },
-    toInvoice: { orderCount: 255, lineCount: 944, untaxed: 292197763.06, orders: [], byAdvisor: [] },
+    toInvoice: { orderCount: 255, lineCount: 944, untaxed: 292197763.06, orders: [], byAdvisor: [], stale: { days: 15, count: 72, amount: 117838598, orderNames: ['S01515', 'S22012', 'S22819'] } },
+    zeroCostGoods: {
+      current: { range: { from: '2026-11-01', to: '2026-11-12' }, lineCount: 0, sales: 0 },
+      previousMonth: { range: { from: '2026-10-01', to: '2026-10-31' }, lineCount: 2, sales: 342000 },
+    },
     warnings: [],
   };
   const limited = salesOnlySummary(summary);
@@ -59,4 +63,34 @@ test('foto de la empresa para Cartera: conserva facturación y pendientes reales
     && month.previousMonth.profit === 0 && month.previousMonth.cost === 0 && month.previousYear.profit === 0 && month.previousYear.cost === 0));
   assert.deepEqual([limited.months[1].salesVsPreviousMonth, limited.months[1].salesVsPreviousYear], [1.19, 4.69]);
   assert.deepEqual([limited.toInvoice.untaxed, limited.drafts.untaxed, summary.months[1].profit], [292197763.06, 1665860, 205769813.34]);
+});
+
+// Pedidos reales por facturar al 2026-11-12 (los tres de mayor saldo).
+const ORDERS_2026_11_12: ExecutiveOrderToInvoice[] = [
+  { id: 46710, name: 'S47287', partnerName: 'TCC SAS', advisorName: 'DIANA MARIA CAYCEDO RUEDA', date: '2026-10-21', ageDays: 22, amountToInvoice: 33320000 },
+  { id: 46813, name: 'S47390', partnerName: 'ARIS MINING MARMATO S.A.S.', advisorName: 'GLORIA PATRICIA GOMEZ MONCADA', date: '2026-10-26', ageDays: 17, amountToInvoice: 24130000 },
+  { id: 47173, name: 'S47750', partnerName: 'ARIS MINING SEGOVIA', advisorName: 'GLORIA PATRICIA GOMEZ MONCADA', date: '2026-11-10', ageDays: 2, amountToInvoice: 20516400 },
+];
+
+test('requiere atención: pedidos con más de 15 días sin facturar, del más antiguo al más reciente', () => {
+  assert.equal(daysBetween('2026-10-21', '2026-11-12'), 22);
+  assert.equal(daysBetween('2026-11-10', '2026-11-12'), 2);
+  assert.equal(lastDayOfMonth('2026-02'), '2026-02-28');
+  assert.equal(lastDayOfMonth('2028-02'), '2028-02-29');
+  assert.deepEqual(staleOrders(ORDERS_2026_11_12), { days: 15, count: 2, amount: 57450000, orderNames: ['S47287', 'S47390'] });
+  assert.deepEqual(staleOrders(ORDERS_2026_11_12, 20).orderNames, ['S47287']);
+});
+
+test('indicadores por período: mes en curso, mes anterior y año a la fecha con datos reales', () => {
+  const NOV_2026_AL_12: MonthTotals = { sales: 216363701.85, cost: 129902230.48, profit: 86461471.37, documents: 351 };
+  const OCT_2026_AL_12: MonthTotals = { sales: 317982073.28, cost: 202884778.45, profit: 115097294.83, documents: 337 };
+  const NOV_2025_AL_12: MonthTotals = { sales: 213617891, cost: 127345170.22, profit: 86272720.78, documents: 288 };
+  const months = buildExecutiveMonths(new Map([['2026-11', NOV_2026_AL_12], ['2026-10', OCT_2026], ['2026-09', SEP_2026], ['2025-10', OCT_2025]]), '2026-11-12', { previousMonth: OCT_2026_AL_12, previousYear: NOV_2025_AL_12 });
+  const [mes, mesAnterior, anio] = buildPeriodKpis(months);
+  assert.deepEqual([mes.period, mes.totals.sales, mes.marginPercent, mes.comparisons.map(c => c.totals.sales)], ['mes', 216363701.85, 39.96, [317982073.28, 213617891]]);
+  assert.deepEqual([mesAnterior.period, mesAnterior.totals.sales, mesAnterior.marginPercent, mesAnterior.comparisons.map(c => c.totals.sales)], ['mes_anterior', 607606414.28, 33.87, [600459626.12, 580387608.74]]);
+  assert.equal(anio.period, 'anio');
+  assert.equal(anio.totals.sales, 1424429742.25);
+  assert.equal(anio.totals.profit, 486387476.18);
+  assert.deepEqual(anio.comparisons.map(c => [c.label, c.totals.sales]), [['2025 (mismo período)', 794005499.74]]);
 });

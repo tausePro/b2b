@@ -2,6 +2,7 @@
 
 import { Wallet } from 'lucide-react';
 import DashboardCartera from '@/components/dashboards/DashboardCartera';
+import GerenciaTabs from '@/components/dashboards/GerenciaTabs';
 import { OpenBalances } from '@/components/dashboards/GerenciaFinanzas';
 import { useAuth } from '@/contexts/AuthContext';
 import { userHasAnyRole } from '@/lib/auth/roles';
@@ -13,6 +14,7 @@ export default function CarteraPage() {
   const fullAccess = userHasAnyRole(user, ['direccion', 'super_admin']);
   return (
     <div className="space-y-6">
+      <GerenciaTabs />
       <header>
         <h1 className="flex items-center gap-2 text-2xl font-bold text-foreground"><Wallet className="h-6 w-6 text-primary" aria-hidden="true" />Cartera</h1>
         <p className="mt-1 text-sm text-muted">{fullAccess
