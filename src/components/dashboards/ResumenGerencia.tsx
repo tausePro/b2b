@@ -1,19 +1,21 @@
 'use client';
 
-import { useState } from 'react';
-import GerenciaFinanzas from '@/components/dashboards/GerenciaFinanzas';
+import { useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import GerenciaTabs from '@/components/dashboards/GerenciaTabs';
 import ResumenEjecutivo from '@/components/dashboards/ResumenEjecutivo';
 
-/** Resumen ejecutivo arriba; el análisis detallado actual queda plegado y solo carga al abrirlo. */
+/** Inicio de Gerencia: secciones (Resumen, Rentabilidad, Cartera, Comisiones) y el resumen ejecutivo. */
 export default function ResumenGerencia() {
-  const [open, setOpen] = useState(() => typeof window !== 'undefined' && window.location.search.length > 1);
+  const router = useRouter();
+  // Enlaces antiguos con filtros del análisis (desde/hasta…) ahora abren la pestaña Rentabilidad.
+  useEffect(() => {
+    if (window.location.search.length > 1) router.replace(`/dashboard/gerencia${window.location.search}`);
+  }, [router]);
   return (
     <div className="space-y-6">
+      <GerenciaTabs />
       <ResumenEjecutivo />
-      <details open={open} className="rounded-xl border border-border bg-white" onToggle={(event) => setOpen(event.currentTarget.open)}>
-        <summary className="cursor-pointer px-5 py-4 font-semibold">Análisis detallado: rentabilidad por asesora, cliente y producto, comisiones y cartera</summary>
-        {open && <div className="border-t border-border p-4"><GerenciaFinanzas /></div>}
-      </details>
     </div>
   );
 }

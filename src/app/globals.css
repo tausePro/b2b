@@ -98,3 +98,10 @@ body {
     page-break-inside: avoid;
   }
 }
+
+/* Barra inferior del portal en celular y tableta (perfiles internos): espacio reservado para el contenido y avisos flotantes. */
+@media (max-width: 1023.98px) {
+  html[data-mobile-nav='true'] {
+    --mobile-nav-offset: calc(4rem + env(safe-area-inset-bottom));
+  }
+}

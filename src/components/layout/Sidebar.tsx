@@ -2,10 +2,12 @@
 
 import BrandMark from '@/components/ui/BrandMark';
 import { useAuth } from '@/contexts/AuthContext';
-import type { PortalBranding, UserRole } from '@/types';
+import type { PortalBranding } from '@/types';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
+import { useUnreadNotifications } from '@/lib/notifications/useUnreadNotifications';
+import { buildMenuGroups, isMenuItemActive, type MenuIcon } from '@/lib/navigation/menu';
 import {
   LayoutDashboard,
   ShoppingBag,
@@ -26,80 +28,28 @@ import {
   UserPlus,
   Truck,
   Wallet,
+  type LucideIcon,
 } from 'lucide-react';
 
-interface SidebarItem {
-  label: string;
-  href: string;
-  icon: React.ReactNode;
-  activePattern: string;
-}
-
-const MENU_BY_ROLE: Record<UserRole, SidebarItem[]> = {
-  super_admin: [
-    { label: 'Resumen Ejecutivo', href: '/dashboard', icon: <LayoutDashboard className="w-5 h-5" />, activePattern: '/dashboard$' },
-    { label: 'Pedidos', href: '/dashboard/pedidos', icon: <ClipboardList className="w-5 h-5" />, activePattern: '/dashboard/pedidos' },
-    { label: 'Clientes', href: '/dashboard/clientes', icon: <Users className="w-5 h-5" />, activePattern: '/dashboard/clientes' },
-    { label: 'Catálogo', href: '/dashboard/catalogo', icon: <ShoppingBag className="w-5 h-5" />, activePattern: '/dashboard/catalogo' },
-    { label: 'Presupuestos', href: '/dashboard/presupuestos', icon: <DollarSign className="w-5 h-5" />, activePattern: '/dashboard/presupuestos' },
-    { label: 'Reportes', href: '/dashboard/reportes', icon: <BarChart3 className="w-5 h-5" />, activePattern: '/dashboard/reportes' },
-    { label: 'Comisiones', href: '/dashboard/comisiones', icon: <DollarSign className="w-5 h-5" />, activePattern: '/dashboard/comisiones' },
-    { label: 'Compras con proveedores', href: '/dashboard/compras', icon: <Truck className="w-5 h-5" />, activePattern: '/dashboard/compras' },
-    { label: 'Panel Admin', href: '/admin', icon: <Settings className="w-5 h-5" />, activePattern: '/admin' },
-  ],
-  comprador: [
-    { label: 'Catálogo', href: '/dashboard/catalogo', icon: <ShoppingBag className="w-5 h-5" />, activePattern: '/dashboard/catalogo' },
-    { label: 'Mis Pedidos', href: '/dashboard/pedidos', icon: <ClipboardList className="w-5 h-5" />, activePattern: '/dashboard/pedidos' },
-    { label: 'Informes', href: '/dashboard/reportes', icon: <BarChart3 className="w-5 h-5" />, activePattern: '/dashboard/reportes' },
-    { label: 'Facturas', href: '/dashboard/facturas', icon: <FileText className="w-5 h-5" />, activePattern: '/dashboard/facturas' },
-    { label: 'Soporte', href: '/dashboard/soporte', icon: <Headphones className="w-5 h-5" />, activePattern: '/dashboard/soporte' },
-  ],
-  aprobador: [
-    { label: 'Dashboard', href: '/dashboard', icon: <LayoutDashboard className="w-5 h-5" />, activePattern: '/dashboard$' },
-    { label: 'Aprobaciones', href: '/dashboard/aprobaciones', icon: <CheckSquare className="w-5 h-5" />, activePattern: '/dashboard/aprobaciones' },
-    { label: 'Pedidos', href: '/dashboard/pedidos', icon: <ClipboardList className="w-5 h-5" />, activePattern: '/dashboard/pedidos' },
-    { label: 'Presupuestos', href: '/dashboard/presupuestos', icon: <DollarSign className="w-5 h-5" />, activePattern: '/dashboard/presupuestos' },
-    { label: 'Informes', href: '/dashboard/reportes', icon: <BarChart3 className="w-5 h-5" />, activePattern: '/dashboard/reportes' },
-  ],
-  asesor: [
-    { label: 'Dashboard', href: '/dashboard', icon: <LayoutDashboard className="w-5 h-5" />, activePattern: '/dashboard$' },
-    { label: 'Gestión Pedidos', href: '/dashboard/gestion-pedidos', icon: <Package className="w-5 h-5" />, activePattern: '/dashboard/gestion-pedidos' },
-    { label: 'Compras con proveedores', href: '/dashboard/compras', icon: <Truck className="w-5 h-5" />, activePattern: '/dashboard/compras' },
-    { label: 'Catálogo', href: '/dashboard/catalogo', icon: <ShoppingBag className="w-5 h-5" />, activePattern: '/dashboard/catalogo' },
-    { label: 'Mis Clientes', href: '/dashboard/clientes', icon: <Users className="w-5 h-5" />, activePattern: '/dashboard/clientes' },
-    { label: 'Bono Plataforma', href: '/dashboard/comisiones', icon: <DollarSign className="w-5 h-5" />, activePattern: '/dashboard/comisiones' },
-    { label: 'Reportes', href: '/dashboard/reportes', icon: <BarChart3 className="w-5 h-5" />, activePattern: '/dashboard/reportes' },
-  ],
-  direccion: [
-    { label: 'Resumen Ejecutivo', href: '/dashboard', icon: <LayoutDashboard className="w-5 h-5" />, activePattern: '/dashboard$' },
-    { label: 'Clientes', href: '/dashboard/clientes', icon: <Building2 className="w-5 h-5" />, activePattern: '/dashboard/clientes' },
-    { label: 'Leads', href: '/dashboard/leads', icon: <UserPlus className="w-5 h-5" />, activePattern: '/dashboard/leads' },
-    { label: 'Productos por cliente', href: '/dashboard/productos-cliente', icon: <Package className="w-5 h-5" />, activePattern: '/dashboard/productos-cliente' },
-    { label: 'Cartera', href: '/dashboard/cartera', icon: <Wallet className="w-5 h-5" />, activePattern: '/dashboard/cartera' },
-    { label: 'Compras con proveedores', href: '/dashboard/compras', icon: <Truck className="w-5 h-5" />, activePattern: '/dashboard/compras' },
-    { label: 'Pedidos', href: '/dashboard/pedidos', icon: <ClipboardList className="w-5 h-5" />, activePattern: '/dashboard/pedidos' },
-    { label: 'Informes Pedidos', href: '/dashboard/reportes', icon: <BarChart3 className="w-5 h-5" />, activePattern: '/dashboard/reportes' },
-    { label: 'Analítica Ventas', href: '/dashboard/analitica', icon: <TrendingUp className="w-5 h-5" />, activePattern: '/dashboard/analitica' },
-    { label: 'Equipo Ventas', href: '/dashboard/equipo', icon: <Users className="w-5 h-5" />, activePattern: '/dashboard/equipo' },
-    { label: 'Comisiones', href: '/dashboard/comisiones', icon: <DollarSign className="w-5 h-5" />, activePattern: '/dashboard/comisiones' },
-    { label: 'Control Operativo', href: '/dashboard/operativo', icon: <Activity className="w-5 h-5" />, activePattern: '/dashboard/operativo' },
-    { label: 'Presupuestos', href: '/dashboard/presupuestos', icon: <DollarSign className="w-5 h-5" />, activePattern: '/dashboard/presupuestos' },
-    { label: 'Alertas', href: '/dashboard/alertas', icon: <AlertTriangle className="w-5 h-5" />, activePattern: '/dashboard/alertas' },
-    { label: 'Configuración', href: '/dashboard/configuracion', icon: <Settings className="w-5 h-5" />, activePattern: '/dashboard/configuracion' },
-  ],
-  editor_contenido: [
-    { label: 'CMS Landing', href: '/admin/cms', icon: <FileText className="w-5 h-5" />, activePattern: '/admin/cms' },
-    { label: 'Leads', href: '/admin/leads', icon: <UserPlus className="w-5 h-5" />, activePattern: '/admin/leads' },
-  ],
-  cartera: [
-    { label: 'Dashboard', href: '/dashboard', icon: <LayoutDashboard className="w-5 h-5" />, activePattern: '/dashboard$' },
-    { label: 'Cartera', href: '/dashboard/cartera', icon: <Wallet className="w-5 h-5" />, activePattern: '/dashboard/cartera' },
-  ],
-  compras: [
-    { label: 'Compras con proveedores', href: '/dashboard/compras', icon: <Truck className="w-5 h-5" />, activePattern: '/dashboard/compras' },
-    { label: 'Pedidos', href: '/dashboard/pedidos', icon: <ClipboardList className="w-5 h-5" />, activePattern: '/dashboard/pedidos' },
-    { label: 'Catálogo', href: '/dashboard/catalogo', icon: <ShoppingBag className="w-5 h-5" />, activePattern: '/dashboard/catalogo' },
-  ],
+export const MENU_ICONS: Record<MenuIcon, LucideIcon> = {
+  dashboard: LayoutDashboard,
+  catalog: ShoppingBag,
+  orders: ClipboardList,
+  approvals: CheckSquare,
+  invoices: FileText,
+  reports: BarChart3,
+  users: Users,
+  trending: TrendingUp,
+  alert: AlertTriangle,
+  settings: Settings,
+  support: Headphones,
+  package: Package,
+  money: DollarSign,
+  activity: Activity,
+  building: Building2,
+  userPlus: UserPlus,
+  truck: Truck,
+  wallet: Wallet,
 };
 
 interface SidebarProps {
@@ -111,32 +61,15 @@ interface SidebarProps {
 export default function Sidebar({ isOpen, onClose, portalBranding }: SidebarProps) {
   const { user } = useAuth();
   const pathname = usePathname();
+  const unreadCount = useUnreadNotifications(user?.id);
 
   if (!user) return null;
 
-  // Unión deduplicada por href entre el menú del rol primario y los menús
-  // de cada rol extra activo. Permite que un usuario multi-rol vea todas
-  // las opciones que su composición de roles habilita.
-  const primaryMenu = MENU_BY_ROLE[user.rol] ?? [];
-  const extraMenus = (user.rolesExtra ?? []).flatMap((role) => MENU_BY_ROLE[role] ?? []);
-  const seenHrefs = new Set<string>();
-  const menuItems: SidebarItem[] = [];
-  for (const item of [...primaryMenu, ...extraMenus]) {
-    if (!seenHrefs.has(item.href)) {
-      seenHrefs.add(item.href);
-      menuItems.push(item);
-    }
-  }
+  // Un usuario multi-rol ve la unión de los menús de su rol primario y sus roles extra.
+  const menuGroups = buildMenuGroups([user.rol, ...(user.rolesExtra ?? [])]);
   const isClientPortal = Boolean(
     portalBranding && (user.rol === 'comprador' || user.rol === 'aprobador')
   );
-
-  const isActive = (pattern: string) => {
-    if (pattern === '/dashboard$') {
-      return pathname === '/dashboard';
-    }
-    return pathname.startsWith(pattern);
-  };
 
   return (
     <>
@@ -151,8 +84,8 @@ export default function Sidebar({ isOpen, onClose, portalBranding }: SidebarProp
       {/* Sidebar */}
       <aside
         className={cn(
-          'fixed top-16 left-0 bottom-0 w-64 bg-white border-r border-border z-40 transition-transform duration-200 ease-in-out',
-          'lg:translate-x-0 lg:static lg:top-0',
+          'fixed top-16 left-0 bottom-0 w-64 bg-white border-r border-border z-40 transition-transform duration-200 ease-in-out flex flex-col',
+          'lg:translate-x-0 lg:sticky lg:top-16 lg:h-[calc(100vh-4rem)] lg:shrink-0',
           isOpen ? 'translate-x-0' : '-translate-x-full'
         )}
       >
@@ -190,35 +123,56 @@ export default function Sidebar({ isOpen, onClose, portalBranding }: SidebarProp
         )}
 
         {/* Navegación */}
-        <nav className="p-3 space-y-1">
-          {menuItems.map((item) => {
-            const active = isActive(item.activePattern);
+        <nav aria-label="Menú principal" className="flex-1 overflow-y-auto p-3 space-y-4">
+          {menuGroups.map((group, index) => {
+            const headingId = group.label ? `menu-grupo-${index}` : undefined;
             return (
-              <Link
-                key={item.href}
-                href={item.href}
-                onClick={onClose}
-                className={cn(
-                  'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors',
-                  active
-                    ? 'bg-primary/10 text-primary'
-                    : 'text-muted hover:bg-background-light hover:text-foreground'
+              <div key={group.label ?? `grupo-${index}`}>
+                {group.label && (
+                  <h2 id={headingId} className="px-3 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted">
+                    {group.label}
+                  </h2>
                 )}
-              >
-                <span className={cn(active ? 'text-primary' : 'text-muted')}>
-                  {item.icon}
-                </span>
-                {item.label}
-                {active && (
-                  <span className="ml-auto w-1.5 h-1.5 rounded-full bg-primary" />
-                )}
-              </Link>
+                <ul aria-labelledby={headingId} className="space-y-1">
+                  {group.items.map((item) => {
+                    const active = isMenuItemActive(pathname, item.activePattern);
+                    const badge = item.badge === 'notificaciones' && unreadCount > 0 ? unreadCount : null;
+                    const Icon = MENU_ICONS[item.icon];
+                    return (
+                      <li key={item.href}>
+                        <Link
+                          href={item.href}
+                          onClick={onClose}
+                          aria-current={active ? 'page' : undefined}
+                          className={cn(
+                            'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors',
+                            active
+                              ? 'bg-primary/10 text-primary'
+                              : 'text-muted hover:bg-background-light hover:text-foreground'
+                          )}
+                        >
+                          <Icon className={cn('w-5 h-5', active ? 'text-primary' : 'text-muted')} aria-hidden="true" />
+                          {item.label}
+                          {badge !== null ? (
+                            <span className="ml-auto min-w-5 rounded-full bg-danger px-1.5 text-center text-xs font-semibold text-white">
+                              {badge > 99 ? '99+' : badge}
+                              <span className="sr-only"> sin leer</span>
+                            </span>
+                          ) : active && (
+                            <span className="ml-auto w-1.5 h-1.5 rounded-full bg-primary" />
+                          )}
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
             );
           })}
         </nav>
 
         {/* Footer del sidebar */}
-        <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-border">
+        <div className="shrink-0 p-4 border-t border-border">
           <div className="bg-primary/5 rounded-lg p-3">
             <p className="text-xs font-semibold text-primary">
               {isClientPortal && portalBranding ? portalBranding.empresa_nombre : 'Imprima B2B'}

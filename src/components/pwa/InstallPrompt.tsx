@@ -56,7 +56,7 @@ export default function InstallPrompt() {
   };
 
   return (
-    <aside aria-labelledby="pwa-instalar-titulo" className="fixed inset-x-3 bottom-3 z-[60] mx-auto max-w-md rounded-2xl border border-border bg-white p-4 shadow-xl sm:inset-x-auto sm:bottom-6 sm:right-6 sm:mx-0 sm:max-w-sm" style={{ marginBottom: 'env(safe-area-inset-bottom)' }}>
+    <aside aria-labelledby="pwa-instalar-titulo" className="fixed inset-x-3 bottom-[calc(0.75rem+var(--mobile-nav-offset,env(safe-area-inset-bottom)))] z-[60] mx-auto max-w-md rounded-2xl border border-border bg-white p-4 shadow-xl sm:inset-x-auto sm:bottom-[calc(1.5rem+var(--mobile-nav-offset,0px))] sm:right-6 sm:mx-0 sm:max-w-sm">
       <div className="flex items-start gap-3">
         <Image src="/pwa/icon-192.png" alt="" width={44} height={44} className="rounded-xl" />
         <div className="min-w-0 flex-1">
