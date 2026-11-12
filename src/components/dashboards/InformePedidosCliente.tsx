@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useId, useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
 import KpiCard from '@/components/ui/KpiCard';
@@ -254,7 +254,19 @@ export default function InformePedidosCliente({
     return report.sedes.filter((sede) => sede.empresaId === effectiveEmpresaId);
   }, [report, effectiveEmpresaId]);
 
-  const [monthTip, setMonthTip] = useState<{ month: string; dismissed: boolean } | null>(null);
+  // Evolución mensual: el cursor muestra el valor del mes; el clic abre todas sus métricas.
+  const [monthTip, setMonthTip] = useState<string | null>(null);
+  const [monthDetail, setMonthDetail] = useState<string | null>(null);
+  const monthChartRef = useRef<HTMLDivElement>(null);
+  const monthChartId = useId();
+  useEffect(() => {
+    if (!monthDetail) return;
+    const closeOutside = (event: PointerEvent) => {
+      if (!monthChartRef.current?.contains(event.target as Node)) setMonthDetail(null);
+    };
+    document.addEventListener('pointerdown', closeOutside);
+    return () => document.removeEventListener('pointerdown', closeOutside);
+  }, [monthDetail]);
   const maxMonthMetric = useMemo(() => {
     if (!report || report.byMonth.length === 0) return 1;
     return Math.max(
@@ -603,10 +615,11 @@ export default function InformePedidosCliente({
                 ) : (
                   <>
                     {/* Sin altura fija: las columnas definen el alto y el valor superior no se recorta. */}
-                    <div className="flex items-end gap-3 pt-2 px-2 border-b border-border pb-3 overflow-x-auto">
+                    <div ref={monthChartRef} className="flex items-end gap-3 pt-2 px-2 border-b border-border pb-3 overflow-x-auto">
                       {report.byMonth.map((m, index) => {
                         const metricValue = showPrices ? (m.valueCop ?? 0) : m.orderCount;
                         const pct = maxMonthMetric > 0 ? (metricValue / maxMonthMetric) * 100 : 0;
+                        const valueText = showPrices ? formatCOP(m.valueCop ?? 0) : `${m.orderCount} ${m.orderCount === 1 ? 'pedido' : 'pedidos'}`;
                         const details = [
                           `${m.orderCount} ${m.orderCount === 1 ? 'pedido' : 'pedidos'}`,
                           `${m.approvedCount} aprobados o procesados (${m.processedCount} en Odoo)`,
@@ -616,43 +629,51 @@ export default function InformePedidosCliente({
                           showPrices && m.avgTicketCop !== null ? `Ticket promedio: ${formatCOP(m.avgTicketCop)}` : null,
                           `Tiempo de aprobación: ${formatDurationHours(m.avgApprovalHours)}`,
                         ].filter((line): line is string => line !== null);
-                        const tipOpen = monthTip?.month === m.month && !monthTip.dismissed;
+                        const detailOpen = monthDetail === m.month;
+                        const tipOpen = monthTip === m.month && !detailOpen;
                         const align = index === 0 ? 'left-0' : index === report.byMonth.length - 1 ? 'right-0' : 'left-1/2 -translate-x-1/2';
+                        const detailId = `${monthChartId}-${m.month}`;
                         return (
-                          <div
-                            key={m.month}
-                            role="img"
-                            tabIndex={0}
-                            aria-label={`${m.label}: ${details.join('; ')}`}
-                            onPointerEnter={() => setMonthTip({ month: m.month, dismissed: false })}
-                            onPointerLeave={() => setMonthTip((current) => (current?.month === m.month ? null : current))}
-                            onFocus={() => setMonthTip({ month: m.month, dismissed: false })}
-                            onBlur={() => setMonthTip((current) => (current?.month === m.month ? null : current))}
-                            onKeyDown={(event) => { if (event.key === 'Escape') setMonthTip({ month: m.month, dismissed: true }); }}
-                            className="group relative flex-1 min-w-16 flex flex-col items-center gap-1 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                          >
-                            <span className="text-[11px] font-semibold text-foreground text-center whitespace-nowrap">
-                              {showPrices ? formatMoneyShort(m.valueCop ?? 0) : `${m.orderCount} ped.`}
-                            </span>
-                            <div className="w-full flex items-end justify-center" style={{ height: '110px' }}>
-                              <div
-                                className={cn('w-full max-w-12 rounded-t-md transition-colors', tipOpen ? 'bg-primary-dark' : 'bg-primary/85')}
-                                style={{ height: `${Math.max(pct, m.orderCount > 0 ? 6 : 2)}%` }}
-                              />
-                            </div>
-                            <span className="text-xs font-medium text-foreground whitespace-nowrap">{m.label}</span>
-                            <span className="text-[11px] text-muted whitespace-nowrap">{m.orderCount} ped. · {numberFormatter.format(m.units)} und.</span>
+                          <div key={m.month} className="relative flex-1 min-w-16">
+                            <button
+                              type="button"
+                              aria-expanded={detailOpen}
+                              aria-controls={detailId}
+                              aria-label={`${m.label}: ${valueText}. Ver todas las métricas del mes`}
+                              onPointerEnter={() => setMonthTip(m.month)}
+                              onPointerLeave={() => setMonthTip((current) => (current === m.month ? null : current))}
+                              onFocus={() => setMonthTip(m.month)}
+                              onBlur={() => setMonthTip((current) => (current === m.month ? null : current))}
+                              onClick={() => setMonthDetail((current) => (current === m.month ? null : m.month))}
+                              onKeyDown={(event) => { if (event.key === 'Escape') { setMonthDetail(null); setMonthTip(null); } }}
+                              className="flex w-full flex-col items-center gap-1 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                            >
+                              <span className="text-[11px] font-semibold text-foreground text-center whitespace-nowrap">
+                                {showPrices ? formatMoneyShort(m.valueCop ?? 0) : `${m.orderCount} ped.`}
+                              </span>
+                              <span className="w-full flex items-end justify-center" style={{ height: '110px' }}>
+                                <span
+                                  className={cn('block w-full max-w-12 rounded-t-md transition-colors', tipOpen || detailOpen ? 'bg-primary-dark' : 'bg-primary/85')}
+                                  style={{ height: `${Math.max(pct, m.orderCount > 0 ? 6 : 2)}%` }}
+                                />
+                              </span>
+                              <span className="text-xs font-medium text-foreground whitespace-nowrap">{m.label}</span>
+                              <span className="text-[11px] text-muted whitespace-nowrap">{m.orderCount} ped. · {numberFormatter.format(m.units)} und.</span>
+                            </button>
                             {tipOpen && (
-                              <div aria-hidden="true" className={cn('absolute top-0 z-10 w-60 rounded-lg bg-foreground px-3 py-2 text-left text-xs leading-5 text-white shadow-lg', align)}>
-                                <p className="font-semibold">{m.label}</p>
-                                {details.map((line) => <p key={line}>{line}</p>)}
-                              </div>
+                              <span aria-hidden="true" className="pointer-events-none absolute left-1/2 top-0 z-10 -translate-x-1/2 whitespace-nowrap rounded-md bg-foreground px-2 py-1 text-xs font-semibold text-white shadow-lg">
+                                {valueText}
+                              </span>
                             )}
+                            <div id={detailId} hidden={!detailOpen} className={cn('absolute top-0 z-20 w-60 rounded-lg bg-foreground px-3 py-2 text-left text-xs leading-5 text-white shadow-lg', align)}>
+                              <p className="font-semibold">{m.label}</p>
+                              {details.map((line) => <p key={line}>{line}</p>)}
+                            </div>
                           </div>
                         );
                       })}
                     </div>
-                    <p className="text-[11px] text-muted -mt-2">Pasa el cursor o enfoca un mes para ver todas sus métricas.</p>
+                    <p className="text-[11px] text-muted -mt-2">Pasa el cursor sobre un mes para ver su valor; haz clic para ver todas sus métricas.</p>
 
                     <div className="overflow-x-auto" role="region" aria-label="Tabla de evolución mensual" tabIndex={0}>
                       <table className="w-full text-sm">
