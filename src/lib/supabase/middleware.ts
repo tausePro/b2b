@@ -160,7 +160,7 @@ export async function updateSession(request: NextRequest) {
     // Agent-readiness / SEO: siempre deben ser públicos
     '/robots.txt', '/sitemap.xml', '/llms.txt', '/.well-known',
     // PWA del portal: deben cargarse sin sesión.
-    '/sw.js', '/offline.html', '/manifest.webmanifest', '/pwa/',
+    '/sw.js', '/offline.html', '/manifest.webmanifest', '/pwa/', '/instalar',
   ];
   const landingPaths = ['/', '/servicios'];
 
