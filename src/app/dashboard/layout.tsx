@@ -8,7 +8,8 @@ import { Loader2 } from 'lucide-react';
 import { usePathname } from 'next/navigation';
 import { canAccessDashboardPath } from '@/lib/auth/routeAccess';
 import { createClient } from '@/lib/supabase/client';
-import type { PortalBranding } from '@/types';
+import { ROLE_CONFIG, type PortalBranding } from '@/types';
+import MobileNav from '@/components/layout/MobileNav';
 import { getBrandingCssVariables } from '@/lib/utils';
 
 export default function DashboardLayout({
@@ -25,11 +26,11 @@ export default function DashboardLayout({
     user?.empresa_id && (user.rol === 'comprador' || user.rol === 'aprobador')
   );
 
+  // Fuera del portal de clientes no se usa marca de empresa (se deriva, sin reiniciar estado en el efecto).
+  const activeBranding = isClientPortal ? portalBranding : null;
+
   useEffect(() => {
-    if (!user?.empresa_id || !isClientPortal) {
-      setPortalBranding(null);
-      return;
-    }
+    if (!user?.empresa_id || !isClientPortal) return;
 
     let cancelled = false;
 
@@ -75,8 +76,8 @@ export default function DashboardLayout({
       return undefined;
     }
 
-    return getBrandingCssVariables(portalBranding?.color_primario) as CSSProperties;
-  }, [isClientPortal, portalBranding?.color_primario]);
+    return getBrandingCssVariables(activeBranding?.color_primario) as CSSProperties;
+  }, [isClientPortal, activeBranding?.color_primario]);
 
   if (loading) {
     return (
@@ -94,7 +95,7 @@ export default function DashboardLayout({
     // para que page.tsx pueda mostrar el mensaje de error de "Perfil no encontrado"
     return (
       <div className="min-h-screen bg-background-light" style={portalStyle}>
-        <Header onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} portalBranding={portalBranding} />
+        <Header onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} portalBranding={activeBranding} />
         <main className="p-4 lg:p-6 min-h-[calc(100vh-4rem)] overflow-auto">
           {children}
         </main>
@@ -110,9 +111,9 @@ export default function DashboardLayout({
   if (!routeAllowed) {
     return (
       <div className="min-h-screen bg-background-light" style={portalStyle}>
-        <Header onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} portalBranding={portalBranding} />
+        <Header onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} portalBranding={activeBranding} />
         <div className="flex">
-          <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} portalBranding={portalBranding} />
+          <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} portalBranding={activeBranding} />
           <main className="flex-1 p-4 lg:p-6 min-h-[calc(100vh-4rem)] overflow-auto">
             <div className="max-w-xl rounded-xl border border-danger/30 bg-danger/5 p-6">
               <h2 className="text-lg font-semibold text-danger">Acceso no permitido</h2>
@@ -129,13 +130,14 @@ export default function DashboardLayout({
 
   return (
     <div className="min-h-screen bg-background-light" style={portalStyle}>
-      <Header onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} portalBranding={portalBranding} />
+      <Header onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} portalBranding={activeBranding} />
       <div className="flex">
-        <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} portalBranding={portalBranding} />
-        <main className="flex-1 p-4 lg:p-6 min-h-[calc(100vh-4rem)] overflow-auto">
+        <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} portalBranding={activeBranding} />
+        <main className="flex-1 min-w-0 p-4 pb-[calc(1rem+var(--mobile-nav-offset,0px))] lg:p-6 min-h-[calc(100vh-4rem)] overflow-auto">
           {children}
         </main>
       </div>
+      {ROLE_CONFIG[user.rol].isImprima && <MobileNav />}
     </div>
   );
 }

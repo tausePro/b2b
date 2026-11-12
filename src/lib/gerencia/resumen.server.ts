@@ -6,8 +6,8 @@ import { getBogotaCalendarDate, roundCurrency } from '@/lib/comisiones/bonoPlata
 import { odooDateTimeToBogotaDate } from '@/lib/compras/historial';
 import { FinancialDataError, getOdooReportCompany } from './finanzas.server';
 import {
-  buildExecutiveMonths, EMPTY_TOTALS, executiveRange, samePeriod,
-  type ExecutiveDraft, type ExecutiveSummary, type MonthTotals, type PeriodRange,
+  buildExecutiveMonths, daysBetween, EMPTY_TOTALS, executiveRange, lastDayOfMonth, samePeriod, shiftMonth, staleOrders,
+  type ExecutiveDraft, type ExecutiveOrderToInvoice, type ExecutiveSummary, type MonthTotals, type PeriodRange, type ZeroCostGoods,
 } from './resumen';
 
 type Row = Record<string, unknown>;
@@ -41,6 +41,21 @@ async function fetchSummary(session: OdooSession, company: { id: number; name: s
   ];
   const draftDomain = [['company_id', '=', company.id], ['state', '=', 'draft'], ['move_type', 'in', ['out_invoice', 'out_refund']]];
   const toInvoiceDomain = [['company_id', '=', company.id], ['order_id.state', '=', 'sale'], ['invoice_status', '=', 'to invoice']];
+  const previousFullMonth = { from: `${shiftMonth(today.slice(0, 7), -1)}-01`, to: lastDayOfMonth(shiftMonth(today.slice(0, 7), -1)) };
+  const currentMonth = { from: `${today.slice(0, 7)}-01`, to: today };
+  // Mercancía (no servicios) facturada con costo registrado en cero: mismo criterio del informe de rentabilidad.
+  const zeroCostDomain = (period: PeriodRange) => [
+    ['company_id', '=', company.id], ['parent_state', '=', 'posted'], ['move_id.move_type', 'in', ['out_invoice', 'out_refund']],
+    ['display_type', '=', 'product'], ['product_id', '!=', false], ['product_id.type', '!=', 'service'], ['purchase_price', '=', 0], ['balance', '!=', 0],
+    ['move_id.invoice_date', '>=', period.from], ['move_id.invoice_date', '<=', period.to],
+  ];
+  const zeroCost = (rows: Record<string, unknown>[], period: PeriodRange): ZeroCostGoods => ({
+    range: period, lineCount: Number(rows[0]?.__count ?? 0), sales: roundCurrency(-amount(rows[0]?.balance, 'mercancía con costo cero')),
+  });
+  const [zeroCostCurrent, zeroCostPrevious] = await Promise.all([
+    readGroup('account.move.line', zeroCostDomain(currentMonth), ['balance:sum'], [], { session }),
+    readGroup('account.move.line', zeroCostDomain(previousFullMonth), ['balance:sum'], [], { session }),
+  ]);
   const [monthly, previousMonthRows, previousYearRows, draftRows, draftGroups, toInvoiceTotals, toInvoiceOrders, toInvoiceAdvisors, orderCount] = await Promise.all([
     readGroup('account.move', invoices(range), SUM_FIELDS, ['invoice_date:month'], { session }),
     readGroup('account.move', invoices(previousMonthRange), SUM_FIELDS, [], { session }),
@@ -50,7 +65,7 @@ async function fetchSummary(session: OdooSession, company: { id: number; name: s
     }) as Promise<Row[]>,
     readGroup('account.move', draftDomain, ['amount_untaxed_signed:sum'], ['move_type'], { session }),
     readGroup('sale.order.line', toInvoiceDomain, ['untaxed_amount_to_invoice:sum'], [], { session }),
-    readGroup('sale.order.line', toInvoiceDomain, ['untaxed_amount_to_invoice:sum'], ['order_id'], { orderby: 'untaxed_amount_to_invoice desc', limit: 10, session }),
+    readGroup('sale.order.line', toInvoiceDomain, ['untaxed_amount_to_invoice:sum'], ['order_id'], { orderby: 'untaxed_amount_to_invoice desc', session }),
     readGroup('sale.order.line', toInvoiceDomain, ['untaxed_amount_to_invoice:sum'], ['salesman_id'], { orderby: 'untaxed_amount_to_invoice desc', session }),
     searchCount('sale.order', [['company_id', '=', company.id], ['state', '=', 'sale'], ['invoice_status', '=', 'to invoice']], session),
   ]);
@@ -77,14 +92,15 @@ async function fetchSummary(session: OdooSession, company: { id: number; name: s
   const orderIds = [...orderAmounts.keys()].filter((id): id is number => id !== null);
   const orderRows = orderIds.length ? await read('sale.order', orderIds, ['id', 'name', 'partner_id', 'user_id', 'date_order', 'company_id', 'state'], session) as Row[] : [];
   const orderById = new Map(orderRows.map(row => [Number(row.id), row]));
-  const orders = orderIds.map(id => {
+  const orders: ExecutiveOrderToInvoice[] = orderIds.map(id => {
     const row = orderById.get(id);
     if (!row || relationId(row.company_id) !== company.id || row.state !== 'sale') throw new FinancialDataError('No se pudo validar un pedido pendiente por facturar.');
+    const date = odooDateTimeToBogotaDate(row.date_order);
     return {
       id, name: String(row.name ?? ''), partnerName: relationName(row.partner_id) ?? 'Sin cliente', advisorName: relationName(row.user_id),
-      date: odooDateTimeToBogotaDate(row.date_order), amountToInvoice: orderAmounts.get(id)!,
+      date, ageDays: date ? Math.max(0, daysBetween(date, today)) : null, amountToInvoice: orderAmounts.get(id)!,
     };
-  });
+  }).sort((a, b) => b.amountToInvoice - a.amountToInvoice || a.name.localeCompare(b.name, 'es'));
 
   return {
     currency: 'COP', scope: 'full', company, asOfDate: today, generatedAt: new Date().toISOString(),
@@ -100,7 +116,9 @@ async function fetchSummary(session: OdooSession, company: { id: number; name: s
         advisorId: relationId(group.salesman_id), advisorName: relationName(group.salesman_id) ?? 'Sin asesora',
         amount: amount(group.untaxed_amount_to_invoice, 'pendiente por asesora'), lineCount: Number(group.__count ?? 0),
       })),
+      stale: staleOrders(orders),
     },
+    zeroCostGoods: { current: zeroCost(zeroCostCurrent, currentMonth), previousMonth: zeroCost(zeroCostPrevious, previousFullMonth) },
     warnings: [
       `Compañía Odoo consultada: ${company.name}.`,
       'Ventas, costo y utilidad: facturas publicadas, incluidas notas crédito, con los totales de cabecera de Odoo por fecha de factura.',

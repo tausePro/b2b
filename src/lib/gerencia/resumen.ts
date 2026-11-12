@@ -16,7 +16,11 @@ export interface ExecutiveMonth extends MonthTotals {
   profitVsPreviousYear: number | null;
 }
 export interface ExecutiveDraft { id: number; name: string; documentType: 'out_invoice' | 'out_refund'; partnerName: string; advisorName: string | null; date: string | null; untaxed: number }
-export interface ExecutiveOrderToInvoice { id: number; name: string; partnerName: string; advisorName: string | null; date: string | null; amountToInvoice: number }
+export interface ExecutiveOrderToInvoice { id: number; name: string; partnerName: string; advisorName: string | null; date: string | null; ageDays: number | null; amountToInvoice: number }
+export interface ZeroCostGoods { range: PeriodRange; lineCount: number; sales: number }
+export const STALE_ORDER_DAYS = 15;
+export type KpiPeriod = 'mes' | 'mes_anterior' | 'anio';
+export interface PeriodKpi { period: KpiPeriod; label: string; totals: MonthTotals; marginPercent: number | null; comparisons: { label: string; totals: MonthTotals }[] }
 export interface ExecutiveAdvisorAmount { advisorId: number | null; advisorName: string; amount: number; lineCount: number }
 export interface ExecutiveSummary {
   currency: 'COP';
@@ -27,7 +31,11 @@ export interface ExecutiveSummary {
   months: ExecutiveMonth[];
   currentPeriod: { range: PeriodRange; previousMonthRange: PeriodRange; previousYearRange: PeriodRange };
   drafts: { count: number; untaxed: number; invoices: number; creditNotes: number; items: ExecutiveDraft[] };
-  toInvoice: { orderCount: number; lineCount: number; untaxed: number; orders: ExecutiveOrderToInvoice[]; byAdvisor: ExecutiveAdvisorAmount[] };
+  toInvoice: {
+    orderCount: number; lineCount: number; untaxed: number; orders: ExecutiveOrderToInvoice[]; byAdvisor: ExecutiveAdvisorAmount[];
+    stale: { days: number; count: number; amount: number; orderNames: string[] };
+  };
+  zeroCostGoods: { current: ZeroCostGoods; previousMonth: ZeroCostGoods };
   warnings: string[];
 }
 
@@ -103,4 +111,60 @@ export function salesOnlySummary(summary: ExecutiveSummary): ExecutiveSummary {
       previousMonth: hide(month.previousMonth), previousYear: hide(month.previousYear),
     })),
   };
+}
+
+/** Días calendario entre dos fechas YYYY-MM-DD (negativo si `from` es posterior). */
+export function daysBetween(from: string, to: string): number {
+  parseDate(from);
+  parseDate(to);
+  return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000);
+}
+
+export function lastDayOfMonth(month: string): string {
+  const { year, month: value } = parseDate(`${month}-01`);
+  return `${month}-${pad(lastDay(year, value))}`;
+}
+
+/** Pedidos con saldo por facturar y más de `days` días desde su confirmación. */
+export function staleOrders(orders: readonly ExecutiveOrderToInvoice[], days = STALE_ORDER_DAYS) {
+  const stale = orders.filter(order => order.ageDays !== null && order.ageDays > days && order.amountToInvoice > 0);
+  return {
+    days, count: stale.length, amount: roundCurrency(stale.reduce((sum, order) => sum + order.amountToInvoice, 0)),
+    orderNames: [...stale].sort((a, b) => (b.ageDays ?? 0) - (a.ageDays ?? 0)).slice(0, 3).map(order => order.name),
+  };
+}
+
+const sumTotals = (rows: readonly MonthTotals[]): MonthTotals => ({
+  sales: roundCurrency(rows.reduce((sum, row) => sum + row.sales, 0)),
+  cost: roundCurrency(rows.reduce((sum, row) => sum + row.cost, 0)),
+  profit: roundCurrency(rows.reduce((sum, row) => sum + row.profit, 0)),
+  documents: rows.reduce((sum, row) => sum + row.documents, 0),
+});
+
+/**
+ * Indicadores por período a partir de los 12 meses ya consultados:
+ * mes en curso (vs mismo período), mes anterior (vs su mes anterior y año anterior)
+ * y año a la fecha (vs el mismo período del año anterior).
+ */
+export function buildPeriodKpis(months: readonly ExecutiveMonth[], formatMonth: (month: string) => string = month => month): PeriodKpi[] {
+  const [current, previous] = months;
+  if (!current || !previous) return [];
+  const year = current.month.slice(0, 4);
+  const ytd = months.filter(row => row.month.startsWith(`${year}-`));
+  const kpi = (period: KpiPeriod, label: string, totals: MonthTotals, comparisons: PeriodKpi['comparisons']): PeriodKpi => ({
+    period, label, totals, marginPercent: marginPercent(totals), comparisons,
+  });
+  return [
+    kpi('mes', `Mes en curso · ${formatMonth(current.month)}`, current, [
+      { label: formatMonth(previous.month), totals: current.previousMonth },
+      { label: formatMonth(shiftMonth(current.month, -12)), totals: current.previousYear },
+    ]),
+    kpi('mes_anterior', `Mes anterior · ${formatMonth(previous.month)}`, previous, [
+      { label: formatMonth(shiftMonth(previous.month, -1)), totals: previous.previousMonth },
+      { label: formatMonth(shiftMonth(previous.month, -12)), totals: previous.previousYear },
+    ]),
+    kpi('anio', `Año a la fecha · ${year}`, sumTotals(ytd), [
+      { label: `${Number(year) - 1} (mismo período)`, totals: sumTotals(ytd.map(row => row.previousYear)) },
+    ]),
+  ];
 }

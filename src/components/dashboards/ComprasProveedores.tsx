@@ -27,10 +27,10 @@ function CostPoint({ point }: { point: PurchaseCostPoint | null }) {
   return <><span className="font-semibold">{money.format(point.unitCost)}</span><span className="mt-1 block text-xs text-muted">{point.supplierName} · {formatDate(point.date)}</span></>;
 }
 
-export default function ComprasProveedores() {
+export default function ComprasProveedores({ initialProductId = null }: { initialProductId?: number | null }) {
   const [draft, setDraft] = useState('');
   const [search, setSearch] = useState('');
-  const [productId, setProductId] = useState<number | null>(null);
+  const [productId, setProductId] = useState<number | null>(initialProductId);
   const [results, setResults] = useState<Loaded<PurchaseSearchReport> | null>(null);
   const [history, setHistory] = useState<Loaded<PurchaseHistoryReport> | null>(null);
 

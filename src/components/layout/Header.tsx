@@ -2,7 +2,7 @@
 
 import { useAuth } from '@/contexts/AuthContext';
 import { useCart } from '@/contexts/CartContext';
-import { createClient } from '@/lib/supabase/client';
+import { useUnreadNotifications } from '@/lib/notifications/useUnreadNotifications';
 import BrandMark from '@/components/ui/BrandMark';
 import { ROLE_CONFIG, type PortalBranding } from '@/types';
 import {
@@ -17,8 +17,9 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import PwaHead from '@/components/pwa/PwaHead';
+import CommandPalette, { OPEN_SEARCH_EVENT } from '@/components/layout/CommandPalette';
 
 interface HeaderProps {
   onToggleSidebar: () => void;
@@ -31,74 +32,7 @@ export default function Header({ onToggleSidebar, portalBranding }: HeaderProps)
   const router = useRouter();
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [switchingCompany, setSwitchingCompany] = useState(false);
-  const [supabase] = useState(() => createClient());
-  const [unreadCount, setUnreadCount] = useState(0);
-
-  useEffect(() => {
-    if (!user) {
-      return;
-    }
-
-    let active = true;
-
-    const fetchUnreadCount = async () => {
-      const { count, error } = await supabase
-        .from('notificaciones')
-        .select('id', { count: 'exact', head: true })
-        .eq('usuario_id', user.id)
-        .eq('leida', false);
-
-      if (!active) return;
-
-      if (error) {
-        console.warn('Error cargando contador de notificaciones:', error);
-        setUnreadCount(0);
-        return;
-      }
-
-      setUnreadCount(count ?? 0);
-    };
-
-    void fetchUnreadCount();
-
-    const channel = supabase
-      .channel(`header-notificaciones-${user.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'notificaciones',
-          filter: `usuario_id=eq.${user.id}`,
-        },
-        () => {
-          void fetchUnreadCount();
-        }
-      )
-      .subscribe();
-
-    // Re-fetch cuando el usuario vuelve a la pestaña
-    const handleVisibility = () => {
-      if (document.visibilityState === 'visible') {
-        void fetchUnreadCount();
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibility);
-
-    // Polling cada 30s como respaldo
-    const interval = setInterval(() => {
-      if (document.visibilityState === 'visible') {
-        void fetchUnreadCount();
-      }
-    }, 30000);
-
-    return () => {
-      active = false;
-      document.removeEventListener('visibilitychange', handleVisibility);
-      clearInterval(interval);
-      void supabase.removeChannel(channel);
-    };
-  }, [supabase, user]);
+  const unreadCount = useUnreadNotifications(user?.id);
 
   if (!user) return null;
 
@@ -113,12 +47,15 @@ export default function Header({ onToggleSidebar, portalBranding }: HeaderProps)
       <PwaHead />
       {/* Izquierda: Toggle + Logo + Búsqueda */}
       <div className="flex items-center gap-4 flex-1">
-        <button
-          onClick={onToggleSidebar}
-          className="lg:hidden p-2 rounded-lg hover:bg-background-light transition-colors"
-        >
-          <Menu className="w-5 h-5 text-muted" />
-        </button>
+        {/* Perfiles internos navegan en el celular con la barra inferior ("Más"); el portal de clientes conserva el menú lateral. */}
+        {!ROLE_CONFIG[user.rol].isImprima && (
+          <button
+            onClick={onToggleSidebar}
+            className="lg:hidden p-2 rounded-lg hover:bg-background-light transition-colors"
+          >
+            <Menu className="w-5 h-5 text-muted" />
+          </button>
+        )}
 
         <Link href="/dashboard" className="flex items-center gap-3 shrink-0">
           {isClientPortal && portalBranding ? (
@@ -153,20 +90,37 @@ export default function Header({ onToggleSidebar, portalBranding }: HeaderProps)
           )}
         </Link>
 
-        <div className="hidden md:flex items-center flex-1 max-w-md ml-6">
-          <div className="relative w-full">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
-            <input
-              type="text"
-              placeholder="Buscar productos, pedidos..."
-              className="w-full pl-10 pr-4 py-2 bg-background-light border-0 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
-            />
+        {ROLE_CONFIG[user.rol].isImprima ? (
+          // Visible en todos los tamaños: el diálogo no puede estar dentro de un contenedor oculto; el botón de escritorio se oculta solo.
+          <div className="flex items-center md:flex-1 md:max-w-md md:ml-6">
+            <CommandPalette />
           </div>
-        </div>
+        ) : (
+          <div className="hidden md:flex items-center flex-1 max-w-md ml-6">
+            <div className="relative w-full">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
+              <input
+                type="text"
+                placeholder="Buscar productos, pedidos..."
+                className="w-full pl-10 pr-4 py-2 bg-background-light border-0 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Derecha: Acciones */}
       <div className="flex items-center gap-3">
+        {ROLE_CONFIG[user.rol].isImprima && (
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new Event(OPEN_SEARCH_EVENT))}
+            className="md:hidden p-2 rounded-lg hover:bg-background-light transition-colors"
+            aria-label="Buscar clientes, pedidos o productos"
+          >
+            <Search className="w-5 h-5 text-muted" aria-hidden="true" />
+          </button>
+        )}
         {companyMemberships.length > 1 && activeCompany && (
           <label className="flex min-w-0 items-center gap-1 rounded-lg border border-border bg-background-light px-1.5 py-1.5 sm:gap-2 sm:px-2">
             <Building2 className="hidden h-4 w-4 shrink-0 text-primary sm:block" />
