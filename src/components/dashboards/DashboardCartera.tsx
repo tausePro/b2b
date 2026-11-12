@@ -15,7 +15,7 @@ const heading = 'px-4 py-3 text-right font-medium text-muted';
 const button = 'inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-border bg-white px-3 py-2 text-sm font-medium hover:bg-background-light focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary';
 
 /** Dashboard del rol Cartera: solo cuentas por cobrar (saldos, vencidos, antigüedad y clientes con más deuda). */
-export default function DashboardCartera() {
+export default function DashboardCartera({ embedded = false }: { embedded?: boolean }) {
   const [refresh, setRefresh] = useState(0);
   const [state, setState] = useState<{ key: number; data: OpenBalanceReport | null; error: string | null } | null>(null);
 
@@ -39,11 +39,13 @@ export default function DashboardCartera() {
     <section aria-labelledby="dashboard-cartera" className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 id="dashboard-cartera" className="text-2xl font-bold text-foreground">Cartera</h1>
+          {embedded
+            ? <h2 id="dashboard-cartera" className="text-lg font-semibold text-foreground">Foto de la cartera por cobrar</h2>
+            : <h1 id="dashboard-cartera" className="text-2xl font-bold text-foreground">Cartera</h1>}
           <p className="mt-1 text-sm text-muted">{data ? `Cuentas por cobrar de ${data.company?.name ?? 'la compañía'} · datos de Odoo al ${dateFormatter.format(new Date(`${data.asOfDate}T00:00:00Z`))}` : 'Cuentas por cobrar de Odoo.'}</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Link href="/dashboard/cartera" className={button}>Ver detalle por documento<ArrowRight className="h-4 w-4" aria-hidden="true" /></Link>
+          {!embedded && <Link href="/dashboard/cartera" className={button}>Ver detalle por documento<ArrowRight className="h-4 w-4" aria-hidden="true" /></Link>}
           <button type="button" className={button} onClick={() => setRefresh(value => value + 1)}><RefreshCw className="h-4 w-4" aria-hidden="true" />Actualizar</button>
         </div>
       </div>

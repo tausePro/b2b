@@ -1,6 +1,7 @@
 'use client';
 
 import { Wallet } from 'lucide-react';
+import DashboardCartera from '@/components/dashboards/DashboardCartera';
 import { OpenBalances } from '@/components/dashboards/GerenciaFinanzas';
 import { useAuth } from '@/contexts/AuthContext';
 import { userHasAnyRole } from '@/lib/auth/roles';
@@ -18,6 +19,7 @@ export default function CarteraPage() {
           ? 'Cuentas por cobrar y por pagar de Odoo, con antigüedad y detalle por documento.'
           : 'Cuentas por cobrar de Odoo: facturas pendientes, vencidos por antigüedad y detalle por cliente.'}</p>
       </header>
+      {fullAccess && <DashboardCartera embedded />}
       <OpenBalances key={getBogotaCalendarDate()} userId={user.id} refresh={0} receivableOnly={!fullAccess} />
     </div>
   );

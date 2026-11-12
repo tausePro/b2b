@@ -25,6 +25,7 @@ const ROLE_PATH_PREFIXES: Record<UserRole, string[]> = {
   asesor: [
     '/dashboard/gestion-pedidos',
     '/dashboard/compras',
+    '/dashboard/catalogo',
     '/dashboard/clientes',
     '/dashboard/comisiones',
     '/dashboard/alertas',
