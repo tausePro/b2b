@@ -2,6 +2,8 @@
 
 import { useState, useSyncExternalStore } from 'react';
 import Image from 'next/image';
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import { Download, X } from 'lucide-react';
 import { readViewAsUiCookie } from '@/lib/auth/viewAs';
 import {
@@ -30,8 +32,10 @@ export default function InstallPrompt() {
   const key = useSyncExternalStore(subscribeNoop, deviceKey, () => '');
   const canInstall = useSyncExternalStore(subscribeInstallAvailability, canPromptInstall, () => false);
   const [hidden, setHidden] = useState(false);
+  // En la guía de instalación el aviso sobra: la página ya explica cómo instalar.
+  const onInstallGuide = usePathname() === '/instalar';
   const [busy, setBusy] = useState(false);
-  if (!key || hidden) return null;
+  if (!key || hidden || onInstallGuide) return null;
   const [ios, mobile, standalone, snoozed, viewAs] = key.split('').map(value => value === '1');
   if (standalone || snoozed || viewAs || (!ios && !canInstall)) return null;
 
@@ -63,7 +67,7 @@ export default function InstallPrompt() {
           <p id="pwa-instalar-titulo" className="font-semibold text-foreground">{mobile ? 'Instala Imprima en tu celular' : 'Instala Imprima en tu computador'}</p>
           <p className="mt-1 text-sm text-muted">
             {ios
-              ? <>Toca <strong>Compartir</strong> y luego <strong>Agregar a pantalla de inicio</strong>. Así podrás recibir avisos de tus pedidos.</>
+              ? <>Toca <strong>Compartir</strong> y luego <strong>Agregar a pantalla de inicio</strong>. Así podrás recibir avisos de tus pedidos. <Link href="/instalar" className="font-medium text-[#5c7004] underline underline-offset-2">Ver la guía paso a paso</Link></>
               : mobile
                 ? 'Ábrela como app desde tu pantalla de inicio y recibe avisos de tus pedidos.'
                 : 'Ábrela como aplicación en su propia ventana y recibe avisos de tus pedidos.'}
