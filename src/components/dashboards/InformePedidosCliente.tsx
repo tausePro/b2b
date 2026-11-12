@@ -17,6 +17,7 @@ import {
   type OrderReportRange,
 } from '@/lib/informes/pedidos';
 import { cn, formatCOP, formatDate } from '@/lib/utils';
+import { formatMoneyShort } from '@/lib/gerencia/formato';
 import type { EstadoPedido } from '@/types';
 import {
   AlertTriangle,
@@ -253,6 +254,7 @@ export default function InformePedidosCliente({
     return report.sedes.filter((sede) => sede.empresaId === effectiveEmpresaId);
   }, [report, effectiveEmpresaId]);
 
+  const [monthTip, setMonthTip] = useState<{ month: string; dismissed: boolean } | null>(null);
   const maxMonthMetric = useMemo(() => {
     if (!report || report.byMonth.length === 0) return 1;
     return Math.max(
@@ -600,28 +602,57 @@ export default function InformePedidosCliente({
                   </p>
                 ) : (
                   <>
-                    <div className="flex items-end gap-3 h-44 pt-4 px-2 border-b border-border pb-3 overflow-x-auto">
-                      {report.byMonth.map((m) => {
+                    {/* Sin altura fija: las columnas definen el alto y el valor superior no se recorta. */}
+                    <div className="flex items-end gap-3 pt-2 px-2 border-b border-border pb-3 overflow-x-auto">
+                      {report.byMonth.map((m, index) => {
                         const metricValue = showPrices ? (m.valueCop ?? 0) : m.orderCount;
                         const pct = maxMonthMetric > 0 ? (metricValue / maxMonthMetric) * 100 : 0;
+                        const details = [
+                          `${m.orderCount} ${m.orderCount === 1 ? 'pedido' : 'pedidos'}`,
+                          `${m.approvedCount} aprobados o procesados (${m.processedCount} en Odoo)`,
+                          m.rejectedCount > 0 ? `${m.rejectedCount} ${m.rejectedCount === 1 ? 'rechazado' : 'rechazados'}` : null,
+                          `${numberFormatter.format(m.units)} unidades`,
+                          showPrices ? `Valor total: ${formatCOP(m.valueCop ?? 0)}` : null,
+                          showPrices && m.avgTicketCop !== null ? `Ticket promedio: ${formatCOP(m.avgTicketCop)}` : null,
+                          `Tiempo de aprobación: ${formatDurationHours(m.avgApprovalHours)}`,
+                        ].filter((line): line is string => line !== null);
+                        const tipOpen = monthTip?.month === m.month && !monthTip.dismissed;
+                        const align = index === 0 ? 'left-0' : index === report.byMonth.length - 1 ? 'right-0' : 'left-1/2 -translate-x-1/2';
                         return (
-                          <div key={m.month} className="flex-1 min-w-16 flex flex-col items-center gap-1">
-                            <span className="text-[11px] font-semibold text-foreground text-center">
-                              {showPrices ? formatCOP(m.valueCop ?? 0) : `${m.orderCount} ped.`}
+                          <div
+                            key={m.month}
+                            role="img"
+                            tabIndex={0}
+                            aria-label={`${m.label}: ${details.join('; ')}`}
+                            onPointerEnter={() => setMonthTip({ month: m.month, dismissed: false })}
+                            onPointerLeave={() => setMonthTip((current) => (current?.month === m.month ? null : current))}
+                            onFocus={() => setMonthTip({ month: m.month, dismissed: false })}
+                            onBlur={() => setMonthTip((current) => (current?.month === m.month ? null : current))}
+                            onKeyDown={(event) => { if (event.key === 'Escape') setMonthTip({ month: m.month, dismissed: true }); }}
+                            className="group relative flex-1 min-w-16 flex flex-col items-center gap-1 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                          >
+                            <span className="text-[11px] font-semibold text-foreground text-center whitespace-nowrap">
+                              {showPrices ? formatMoneyShort(m.valueCop ?? 0) : `${m.orderCount} ped.`}
                             </span>
                             <div className="w-full flex items-end justify-center" style={{ height: '110px' }}>
                               <div
-                                className="w-full max-w-12 bg-primary/85 rounded-t-md transition-all"
+                                className={cn('w-full max-w-12 rounded-t-md transition-colors', tipOpen ? 'bg-primary-dark' : 'bg-primary/85')}
                                 style={{ height: `${Math.max(pct, m.orderCount > 0 ? 6 : 2)}%` }}
-                                title={`${m.label}: ${m.orderCount} pedidos`}
                               />
                             </div>
-                            <span className="text-xs font-medium text-foreground">{m.label}</span>
-                            <span className="text-[11px] text-muted">{m.orderCount} ped. · {numberFormatter.format(m.units)} und.</span>
+                            <span className="text-xs font-medium text-foreground whitespace-nowrap">{m.label}</span>
+                            <span className="text-[11px] text-muted whitespace-nowrap">{m.orderCount} ped. · {numberFormatter.format(m.units)} und.</span>
+                            {tipOpen && (
+                              <div aria-hidden="true" className={cn('absolute top-0 z-10 w-60 rounded-lg bg-foreground px-3 py-2 text-left text-xs leading-5 text-white shadow-lg', align)}>
+                                <p className="font-semibold">{m.label}</p>
+                                {details.map((line) => <p key={line}>{line}</p>)}
+                              </div>
+                            )}
                           </div>
                         );
                       })}
                     </div>
+                    <p className="text-[11px] text-muted -mt-2">Pasa el cursor o enfoca un mes para ver todas sus métricas.</p>
 
                     <div className="overflow-x-auto" role="region" aria-label="Tabla de evolución mensual" tabIndex={0}>
                       <table className="w-full text-sm">
