@@ -133,6 +133,10 @@ La utilidad bruta de ventas equivale al margen firmado de Odoo (`margin_signed`)
 
 Conciliación de octubre de 2026: venta 607.606.414,28, costo 400.610.438,47 y utilidad 206.995.975,81, iguales a Odoo. De las 41 líneas con costo cero, 33 son servicios (7.123.920) y 8 mercancía por revisar (1.966.300). La respuesta de octubre pasó de 714.681 a 245.392 bytes.
 
+## Detalle de pedidos por facturar (v2.14.51)
+
+- En el Resumen ejecutivo y en `/dashboard/por-facturar`, cada pedido se abre (botón con el nombre del pedido en escritorio, "Ver detalle" en el celular) y consulta en Odoo `GET /api/gerencia/pedido-por-facturar?id=<sale.order>` (Dirección y Super Admin, solo lectura): líneas con cantidad pedida, entregada, facturada y por facturar, valor por facturar, entregas pendientes y facturas en borrador del pedido.
+
 ## Tablero comercial (v2.14.49)
 
 - `/dashboard/tablero-comercial`: la asesora ve su tablero ("Mi tablero comercial", también en la barra inferior del celular); Dirección y Super Admin ven el equipo y abren el de cada asesora. Ventas del mes (facturas por `invoice_user_id`) contra el mismo período del mes y del año anterior, tendencia (±5 %), meta mensual con cumplimiento y proyección al cierre; clientes asignados en Odoo (`res.partner.user_id`), cuántos compraron, al día, en seguimiento, prioritarios y sin compras en 18 meses; frecuentes que dejaron de comprar; alertas "A quién contactar" con motivo explicable.
