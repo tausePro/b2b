@@ -133,6 +133,11 @@ La utilidad bruta de ventas equivale al margen firmado de Odoo (`margin_signed`)
 
 Conciliación de octubre de 2026: venta 607.606.414,28, costo 400.610.438,47 y utilidad 206.995.975,81, iguales a Odoo. De las 41 líneas con costo cero, 33 son servicios (7.123.920) y 8 mercancía por revisar (1.966.300). La respuesta de octubre pasó de 714.681 a 245.392 bytes.
 
+## Seguimiento de leads (v2.14.47)
+
+- `/admin/leads` y `/dashboard/leads` usan `LeadsDashboard` (propuesta de Leads): indicadores (sin contactar con plazo de 2 h, leads de 30 días vs los 30 anteriores, conversión con meta del 20 %, peso de Google Ads), embudo por estado que filtra, origen de los leads con su atribución, búsqueda, filtros en chips, vista Lista o Tablero y panel de detalle (acciones de WhatsApp, llamada y correo, estado, asesora, empaque personalizado, atribución y actividad). Lógica pura en `src/lib/leads/seguimiento.ts`.
+- La migración manual 056 agrega `leads.asignado_a`, `leads.contactado_at` y la tabla `lead_eventos`. Sin ella, todo funciona salvo la asignación, el tiempo de respuesta y el historial de notas (el API responde `features.seguimiento=false` y la nota se guarda en `leads.notas`). Al asignar, la asesora recibe un aviso push.
+
 ## Propuesta de Gerencia: escritorio y PWA (v2.14.42)
 
 - Menú agrupado (`src/lib/navigation/menu.ts`, sin JSX y probado contra `routeAccess`): Gerencia, Comercial, Operación y Sistema para Dirección; grupos equivalentes para Super Admin, asesoras, Compras, Cartera y Editor; el portal de clientes queda sin encabezados. Multi-rol fusiona grupos y quita repetidos. Alertas muestra el contador de notificaciones sin leer (`useUnreadNotifications`, una sola suscripción compartida con el encabezado).
