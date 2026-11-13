@@ -75,7 +75,7 @@ async function searchAll(session: OdooSession, model: string, domain: unknown[],
   }
 }
 
-async function buildBoards(admin: SupabaseClient, advisors: AdvisorRef[], today: string): Promise<AdvisorBoard[]> {
+async function buildBoards(admin: SupabaseClient, advisors: AdvisorRef[], today: string, tracking: boolean): Promise<AdvisorBoard[]> {
   const config = await getServerOdooConfig();
   if (!config) throw new FinancialDataError('No está configurada la conexión Odoo.', 503);
   const session = await authenticate(config);
@@ -90,8 +90,6 @@ async function buildBoards(admin: SupabaseClient, advisors: AdvisorRef[], today:
   const previousYear = samePeriod(today, -12);
   const historyFrom = new Date(Date.parse(`${today}T00:00:00Z`) - HISTORY_DAYS * 86_400_000).toISOString().slice(0, 10);
   const salesFrom = `${shiftMonth(month, -11)}-01`;
-  const tracking = await commercialTrackingEnabled(admin).catch(() => false);
-
   const [currentRows, previousMonthRows, previousYearRows, partners, history] = await Promise.all([
     readGroup('account.move', invoices(`${month}-01`, today), ['amount_untaxed_signed:sum'], ['invoice_user_id'], { session }),
     readGroup('account.move', invoices(previousMonth.from, previousMonth.to), ['amount_untaxed_signed:sum'], ['invoice_user_id'], { session }),
@@ -181,10 +179,12 @@ export async function loadCommercialBoards(admin: SupabaseClient, advisorIds?: s
   const advisors = await loadCommercialAdvisors(admin);
   const pick = (boards: AdvisorBoard[]) => boards.filter((board) => !advisorIds || advisorIds.includes(board.advisor.id));
   if (advisors.length === 0) return [];
-  const key = `${today}:${advisors.map((advisor) => `${advisor.id}=${advisor.odooUserId}`).join(',')}`;
+  // El estado de la migración 057 entra en la llave: al aplicarla, el tablero se recalcula sin esperar la caché.
+  const tracking = await commercialTrackingEnabled(admin).catch(() => false);
+  const key = `${today}:${tracking}:${advisors.map((advisor) => `${advisor.id}=${advisor.odooUserId}`).join(',')}`;
   const previous = cache.get(key);
   if (useCache && previous && previous.expires > Date.now()) return pick(await previous.promise);
-  const promise = buildBoards(admin, advisors, today);
+  const promise = buildBoards(admin, advisors, today, tracking);
   if (cache.size >= 4) cache.delete(cache.keys().next().value!);
   const entry = { expires: Infinity, promise };
   cache.set(key, entry);

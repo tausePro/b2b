@@ -28,15 +28,17 @@ export async function GET(request: NextRequest) {
   if (auth instanceof NextResponse) return auth;
   const canViewTeam = userHasAnyRole(auth.actor, ['direccion', 'super_admin']);
   const requested = request.nextUrl.searchParams.get('asesora');
+  // "Actualizar" en la pantalla: recalcula desde Odoo sin usar la caché de 5 minutos.
+  const useCache = request.nextUrl.searchParams.get('actualizar') !== '1';
   if (requested !== null && !UUID.test(requested)) return json({ error: 'La asesora solicitada no es válida.' }, 400);
   if (!canViewTeam && requested && requested.toLowerCase() !== auth.actor.id) return json({ error: 'Solo puedes consultar tu propio tablero.' }, 403);
   try {
     if (!canViewTeam || requested) {
-      const [board] = await loadCommercialBoards(auth.admin, [canViewTeam ? requested!.toLowerCase() : auth.actor.id]);
+      const [board] = await loadCommercialBoards(auth.admin, [canViewTeam ? requested!.toLowerCase() : auth.actor.id], useCache);
       if (!board) return json({ error: 'La asesora no tiene un vendedor de Odoo vinculado. Solicita a Dirección revisar el usuario.' }, 404);
       return json({ board, canViewTeam });
     }
-    const boards = await loadCommercialBoards(auth.admin);
+    const boards = await loadCommercialBoards(auth.admin, undefined, useCache);
     return json({ team: boards.map((board) => ({ ...board, alerts: board.alerts.slice(0, 5), frequentInactive: board.frequentInactive.slice(0, 3) })), canViewTeam });
   } catch (error) {
     return fail(error, 'get');
