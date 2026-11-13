@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, ArrowDownRight, ArrowLeft, ArrowRight, ArrowUpRight, Loader2, RefreshCw, Target, Users } from 'lucide-react';
 import type { AdvisorBoard, ClientRow } from '@/lib/comercial/tablero.server';
 import { ALERT_ACTIONS } from '@/lib/comercial/tablero';
@@ -216,11 +216,16 @@ export default function TableroComercial() {
   const [advisorId, setAdvisorId] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
   const [state, setState] = useState<{ key: string; data: Payload | null; error: string | null } | null>(null);
+  const forceRef = useRef(false);
   const key = `${advisorId ?? 'inicio'}:${revision}`;
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch(`/api/comercial/tablero${advisorId ? `?asesora=${advisorId}` : ''}`, { cache: 'no-store', signal: controller.signal })
+    const params = new URLSearchParams();
+    if (advisorId) params.set('asesora', advisorId);
+    if (forceRef.current) params.set('actualizar', '1');
+    forceRef.current = false;
+    fetch(`/api/comercial/tablero${params.size ? `?${params}` : ''}`, { cache: 'no-store', signal: controller.signal })
       .then(async (response) => {
         const data = await response.json().catch(() => null);
         if (!response.ok) throw new Error(data?.error ?? 'No se pudo cargar el tablero.');
@@ -241,7 +246,7 @@ export default function TableroComercial() {
           <h1 className="text-2xl font-semibold tracking-tight">{board ? `Tablero comercial · ${board.advisor.name}` : 'Tablero comercial'}</h1>
           <p className="mt-1 text-sm text-muted">Ventas del mes comparadas, clientes y alertas según el ritmo de compra de cada cliente.</p>
         </div>
-        <button type="button" onClick={() => setRevision((value) => value + 1)} aria-label="Actualizar" className="inline-flex min-h-11 items-center rounded-xl border border-border bg-white px-3 hover:bg-background-light"><RefreshCw className="h-4 w-4" aria-hidden="true" /></button>
+        <button type="button" onClick={() => { forceRef.current = true; setRevision((value) => value + 1); }} aria-label="Actualizar con los datos más recientes de Odoo" className="inline-flex min-h-11 items-center rounded-xl border border-border bg-white px-3 hover:bg-background-light"><RefreshCw className="h-4 w-4" aria-hidden="true" /></button>
       </div>
       {!current && <p role="status" className="flex items-center gap-2 text-sm text-muted"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />Calculando con Odoo; puede tardar unos segundos…</p>}
       {current?.error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{current.error}</p>}
