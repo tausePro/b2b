@@ -105,3 +105,19 @@ body {
     --mobile-nav-offset: calc(4rem + env(safe-area-inset-bottom));
   }
 }
+
+/* Celular y PWA: el sitio no se desplaza hacia los lados (clip no rompe los encabezados fijos). */
+html,
+body {
+  overflow-x: clip;
+  overscroll-behavior-x: none;
+}
+
+/* iOS acerca la página al enfocar campos con letra menor a 16 px y la deja desplazable; en celular se usa 16 px. */
+@media (max-width: 767.98px) {
+  input:not([type='checkbox']):not([type='radio']):not([type='range']),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
