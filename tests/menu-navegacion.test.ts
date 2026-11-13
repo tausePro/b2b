@@ -7,7 +7,7 @@ import type { UserRole } from '../src/types';
 test('menú agrupado: Dirección ve Gerencia, Comercial, Operación y Sistema como en la propuesta', () => {
   const groups = buildMenuGroups(['direccion']);
   assert.deepEqual(groups.map(group => group.label), ['Gerencia', 'Comercial', 'Operación', 'Sistema']);
-  assert.deepEqual(groups[0].items.map(item => item.label), ['Resumen Ejecutivo', 'Analítica Ventas', 'Cartera', 'Comisiones', 'Presupuestos']);
+  assert.deepEqual(groups[0].items.map(item => item.label), ['Resumen Ejecutivo', 'Analítica Ventas', 'Cartera', 'Comisiones', 'Presupuestos', 'Liquidación plataforma']);
   assert.deepEqual(groups[1].items.map(item => item.label), ['Clientes', 'Leads', 'Productos por cliente', 'Equipo Ventas']);
   assert.equal(groups[3].items.find(item => item.label === 'Alertas')?.badge, 'notificaciones');
 });

@@ -133,6 +133,11 @@ La utilidad bruta de ventas equivale al margen firmado de Odoo (`margin_signed`)
 
 Conciliación de octubre de 2026: venta 607.606.414,28, costo 400.610.438,47 y utilidad 206.995.975,81, iguales a Odoo. De las 41 líneas con costo cero, 33 son servicios (7.123.920) y 8 mercancía por revisar (1.966.300). La respuesta de octubre pasó de 714.681 a 245.392 bytes.
 
+## Liquidación de plataforma (v2.14.48)
+
+- `/dashboard/liquidacion-plataforma` (Dirección y Super Admin) calcula lo que Imprima paga por cliente de la plataforma según el acuerdo: cliente = empresa del portal desde el mes de su primer pedido aprobado; base = neto (sin IVA y menos notas crédito) facturado en Odoo en el mes calendario por líneas vinculadas a pedidos del portal; menos de $500.000 → $25.000, desde $500.000 → $50.000; con más de 2 meses calendario seguidos sin pedir no paga hasta que vuelva a pedir. Por defecto muestra el mes anterior (cerrado) para facturar; el mes en curso aparece como preliminar. Exporta CSV.
+- Lógica pura en `src/lib/plataforma/liquidacion.ts`; lectura en `liquidacion.server.ts` (solo lectura en Odoo y Supabase); API `GET /api/plataforma/liquidacion?mes=YYYY-MM`.
+
 ## Seguimiento de leads (v2.14.47)
 
 - `/admin/leads` y `/dashboard/leads` usan `LeadsDashboard` (propuesta de Leads): indicadores (sin contactar con plazo de 2 h, leads de 30 días vs los 30 anteriores, conversión con meta del 20 %, peso de Google Ads), embudo por estado que filtra, origen de los leads con su atribución, búsqueda, filtros en chips, vista Lista o Tablero y panel de detalle (acciones de WhatsApp, llamada y correo, estado, asesora, empaque personalizado, atribución y actividad). Lógica pura en `src/lib/leads/seguimiento.ts`.

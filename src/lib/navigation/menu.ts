@@ -27,6 +27,7 @@ export const MENU_BY_ROLE: Record<UserRole, MenuGroup[]> = {
     { label: 'Gerencia', items: [
       item('Resumen Ejecutivo', '/dashboard', 'dashboard'), item('Comisiones', '/dashboard/comisiones', 'money'),
       item('Presupuestos', '/dashboard/presupuestos', 'money'), item('Reportes', '/dashboard/reportes', 'reports'),
+      item('Liquidación plataforma', '/dashboard/liquidacion-plataforma', 'invoices'),
     ] },
     { label: 'Comercial', items: [item('Clientes', '/dashboard/clientes', 'users'), item('Catálogo', '/dashboard/catalogo', 'catalog')] },
     { label: 'Operación', items: [item('Pedidos', '/dashboard/pedidos', 'orders'), item('Compras con proveedores', '/dashboard/compras', 'truck')] },
@@ -58,6 +59,7 @@ export const MENU_BY_ROLE: Record<UserRole, MenuGroup[]> = {
     { label: 'Gerencia', items: [
       item('Resumen Ejecutivo', '/dashboard', 'dashboard'), item('Analítica Ventas', '/dashboard/analitica', 'trending'),
       item('Cartera', '/dashboard/cartera', 'wallet'), item('Comisiones', '/dashboard/comisiones', 'money'), item('Presupuestos', '/dashboard/presupuestos', 'money'),
+      item('Liquidación plataforma', '/dashboard/liquidacion-plataforma', 'invoices'),
     ] },
     { label: 'Comercial', items: [
       item('Clientes', '/dashboard/clientes', 'building'), item('Leads', '/dashboard/leads', 'userPlus'),
