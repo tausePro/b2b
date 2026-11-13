@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
-  AlertTriangle, ArrowDownRight, ArrowUpRight, BadgeDollarSign, ClipboardList, Clock, FilePen, Loader2, Package, Percent, RefreshCw, TrendingUp,
+  AlertTriangle, ArrowDownRight, ArrowUpRight, BadgeDollarSign, ChevronRight, ClipboardList, Clock, FilePen, Loader2, Package, Percent, RefreshCw, TrendingUp,
 } from 'lucide-react';
 import PedidosPorFacturar from '@/components/dashboards/PedidosPorFacturar';
 import { buildPeriodKpis, percentChange, type ExecutiveSummary, type KpiPeriod, type PeriodKpi } from '@/lib/gerencia/resumen';
@@ -233,6 +233,7 @@ export default function ResumenEjecutivo() {
                       {item.detail && <span className="mt-0.5 hidden text-xs text-muted sm:block">{item.detail}</span>}
                     </span>
                     <span className="shrink-0 text-sm font-semibold tabular-nums">{formatMoneyShort(item.amount)}</span>
+                    <span className="flex shrink-0 items-center gap-0.5 self-center text-xs font-medium text-muted" aria-hidden="true">Ver<ChevronRight className="h-4 w-4" /></span>
                   </Link>
                 </li>
               ))}

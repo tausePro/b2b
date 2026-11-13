@@ -16,9 +16,10 @@ const fullName = (row: { nombre?: string | null; apellido?: string | null } | nu
 export async function leadTrackingEnabled(): Promise<boolean> {
   if (trackingCache && trackingCache.expires > Date.now()) return trackingCache.value;
   const client = admin();
+  // Consulta normal (no `head`): con `head` Supabase no informa error cuando falta la tabla o la columna.
   const [columns, events] = await Promise.all([
-    client.from('leads').select('asignado_a, contactado_at', { head: true, count: 'exact' }).limit(1),
-    client.from('lead_eventos').select('id', { head: true, count: 'exact' }).limit(1),
+    client.from('leads').select('asignado_a, contactado_at').limit(1),
+    client.from('lead_eventos').select('id').limit(1),
   ]);
   const value = !columns.error && !events.error;
   trackingCache = { value, expires: Date.now() + (value ? 300_000 : 30_000) };

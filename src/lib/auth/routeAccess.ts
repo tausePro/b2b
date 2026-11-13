@@ -23,6 +23,7 @@ const ROLE_PATH_PREFIXES: Record<UserRole, string[]> = {
     '/dashboard/perfil',
   ],
   asesor: [
+    '/dashboard/tablero-comercial',
     '/dashboard/gestion-pedidos',
     '/dashboard/compras',
     '/dashboard/catalogo',
@@ -44,6 +45,7 @@ const ROLE_PATH_PREFIXES: Record<UserRole, string[]> = {
     '/dashboard/compras',
     '/dashboard/cartera',
     '/dashboard/productos-cliente',
+    '/dashboard/tablero-comercial',
     '/dashboard/liquidacion-plataforma',
     '/dashboard/por-facturar',
     '/dashboard/pedidos',
