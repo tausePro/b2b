@@ -20,7 +20,7 @@ test('tablero comercial: seguimiento al salir de su rango normal y prioritaria a
   assert.deepEqual(clientAlert('2026-08-06', '2026-08-30', pattern).level, 'seguimiento');
   const alert = clientAlert('2026-08-06', '2026-11-12', pattern);
   assert.deepEqual([alert.level, alert.daysSince, alert.followAfter, alert.priorityAfter, alert.usesPattern], ['prioritaria', 98, 18, 28, true]);
-  assert.equal(alert.reason, 'Compra cada ~14 días (normal 8–18); lleva 98');
+  assert.equal(alert.reason, 'Compra cada ~14 días (normal 8–18); lleva 98 días sin comprar');
 });
 
 test('tablero comercial: sin ritmo se usa 30 y 60 días; el ajuste por cliente manda sobre el ritmo', () => {

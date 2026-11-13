@@ -29,7 +29,9 @@ export const MENU_BY_ROLE: Record<UserRole, MenuGroup[]> = {
       item('Presupuestos', '/dashboard/presupuestos', 'money'), item('Reportes', '/dashboard/reportes', 'reports'),
       item('Liquidación plataforma', '/dashboard/liquidacion-plataforma', 'invoices'),
     ] },
-    { label: 'Comercial', items: [item('Clientes', '/dashboard/clientes', 'users'), item('Catálogo', '/dashboard/catalogo', 'catalog')] },
+    { label: 'Comercial', items: [
+      item('Tablero comercial', '/dashboard/tablero-comercial', 'trending'), item('Clientes', '/dashboard/clientes', 'users'), item('Catálogo', '/dashboard/catalogo', 'catalog'),
+    ] },
     { label: 'Operación', items: [item('Pedidos', '/dashboard/pedidos', 'orders'), item('Compras con proveedores', '/dashboard/compras', 'truck')] },
     { label: 'Sistema', items: [item('Panel Admin', '/admin', 'settings')] },
   ],
@@ -47,7 +49,8 @@ export const MENU_BY_ROLE: Record<UserRole, MenuGroup[]> = {
   ],
   asesor: [
     { label: 'Comercial', items: [
-      item('Dashboard', '/dashboard', 'dashboard'), item('Mis Clientes', '/dashboard/clientes', 'users'),
+      item('Dashboard', '/dashboard', 'dashboard'), item('Mi tablero comercial', '/dashboard/tablero-comercial', 'trending'),
+      item('Mis Clientes', '/dashboard/clientes', 'users'),
       item('Catálogo', '/dashboard/catalogo', 'catalog'), item('Bono Plataforma', '/dashboard/comisiones', 'money'),
     ] },
     { label: 'Operación', items: [
@@ -62,6 +65,7 @@ export const MENU_BY_ROLE: Record<UserRole, MenuGroup[]> = {
       item('Liquidación plataforma', '/dashboard/liquidacion-plataforma', 'invoices'),
     ] },
     { label: 'Comercial', items: [
+      item('Tablero comercial', '/dashboard/tablero-comercial', 'trending'),
       item('Clientes', '/dashboard/clientes', 'building'), item('Leads', '/dashboard/leads', 'userPlus'),
       item('Productos por cliente', '/dashboard/productos-cliente', 'package'), item('Equipo Ventas', '/dashboard/equipo', 'users'),
     ] },
@@ -115,6 +119,7 @@ export function isMenuItemActive(pathname: string, pattern: string): boolean {
 const SHORT_LABELS: Record<string, string> = {
   'Resumen Ejecutivo': 'Resumen', 'Compras con proveedores': 'Compras', 'Gestión Pedidos': 'Pedidos', 'Mis Clientes': 'Clientes',
   'Bono Plataforma': 'Bono', 'CMS Landing': 'CMS', 'Mis Pedidos': 'Pedidos', 'Panel Admin': 'Admin',
+  'Mi tablero comercial': 'Tablero', 'Tablero comercial': 'Tablero',
 };
 
 /** Barra inferior del celular: 4 destinos (Gerencia según la propuesta; los demás, sus primeras opciones del menú). */

@@ -133,6 +133,12 @@ La utilidad bruta de ventas equivale al margen firmado de Odoo (`margin_signed`)
 
 Conciliación de octubre de 2026: venta 607.606.414,28, costo 400.610.438,47 y utilidad 206.995.975,81, iguales a Odoo. De las 41 líneas con costo cero, 33 son servicios (7.123.920) y 8 mercancía por revisar (1.966.300). La respuesta de octubre pasó de 714.681 a 245.392 bytes.
 
+## Tablero comercial (v2.14.49)
+
+- `/dashboard/tablero-comercial`: la asesora ve su tablero ("Mi tablero comercial", también en la barra inferior del celular); Dirección y Super Admin ven el equipo y abren el de cada asesora. Ventas del mes (facturas por `invoice_user_id`) contra el mismo período del mes y del año anterior, tendencia (±5 %), meta mensual con cumplimiento y proyección al cierre; clientes asignados en Odoo (`res.partner.user_id`), cuántos compraron, al día, en seguimiento, prioritarios y sin compras en 18 meses; frecuentes que dejaron de comprar; alertas "A quién contactar" con motivo explicable.
+- Ritmo por cliente (`src/lib/comercial/tablero.ts`): con 3 compras o más en 18 meses, mediana y rango normal p25–p75 de los intervalos; seguimiento al superar max(p75, mediana) y prioritaria al doblar la mediana. Sin ritmo: 30 y 60 días. Dirección puede fijar un umbral por cliente.
+- Lectura en `tablero.server.ts` (solo lectura en Odoo, una sola lectura para todo el equipo, caché de 5 minutos). API `GET/POST/PUT /api/comercial/tablero` (tablero, gestión de alertas y metas/umbrales). La migración manual 057 crea `metas_comerciales`, `alertas_clientes_gestion` y `alertas_clientes_umbral`; sin ella el tablero funciona en solo lectura.
+
 ## Liquidación de plataforma (v2.14.48)
 
 - `/dashboard/liquidacion-plataforma` (Dirección y Super Admin) calcula lo que Imprima paga por cliente de la plataforma según el acuerdo: cliente = empresa del portal desde el mes de su primer pedido aprobado; base = neto (sin IVA y menos notas crédito) facturado en Odoo en el mes calendario por líneas vinculadas a pedidos del portal; menos de $500.000 → $25.000, desde $500.000 → $50.000; con más de 2 meses calendario seguidos sin pedir no paga hasta que vuelva a pedir. Por defecto muestra el mes anterior (cerrado) para facturar; el mes en curso aparece como preliminar. Exporta CSV.

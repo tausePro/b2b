@@ -9,6 +9,19 @@ export const MIN_PURCHASES_FOR_PATTERN = 3;
 export const TREND_STABLE_PERCENT = 5;
 
 export type AlertLevel = 'al_dia' | 'seguimiento' | 'prioritaria';
+
+/** Qué pasó con la alerta (lo marca la asesora; Dirección hace seguimiento). */
+export const ALERT_ACTIONS = [
+  { value: 'contactado', label: 'Cliente contactado' },
+  { value: 'hizo_pedido', label: 'Cliente hizo pedido' },
+  { value: 'pendiente', label: 'Pendiente de contactar' },
+  { value: 'no_requiere', label: 'No requiere pedido por ahora' },
+  { value: 'oportunidad', label: 'Oportunidad de venta' },
+  { value: 'otro', label: 'Otro motivo' },
+] as const;
+export type AlertActionValue = typeof ALERT_ACTIONS[number]['value'];
+
+export const isMonth = (value: string) => /^\d{4}-(0[1-9]|1[0-2])$/.test(value);
 export type TrendStatus = 'creciendo' | 'estable' | 'bajando';
 
 export interface PurchasePattern { purchases: number; medianDays: number; p25Days: number; p75Days: number }
@@ -58,7 +71,7 @@ export function clientAlert(
   const reason = override
     ? `Umbral ajustado: seguimiento a ${followAfter} días, prioritaria a ${priorityAfter}; lleva ${daysSince} días sin comprar`
     : pattern
-      ? `Compra cada ~${pattern.medianDays} días (normal ${pattern.p25Days}–${pattern.p75Days}); lleva ${daysSince}`
+      ? `Compra cada ~${pattern.medianDays} días (normal ${pattern.p25Days}–${pattern.p75Days}); lleva ${daysSince} días sin comprar`
       : `Sin ritmo definido (menos de ${MIN_PURCHASES_FOR_PATTERN} compras); lleva ${daysSince} días sin comprar`;
   return { level, daysSince, followAfter, priorityAfter, reason, usesPattern };
 }

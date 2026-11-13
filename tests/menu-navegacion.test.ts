@@ -8,7 +8,7 @@ test('menú agrupado: Dirección ve Gerencia, Comercial, Operación y Sistema co
   const groups = buildMenuGroups(['direccion']);
   assert.deepEqual(groups.map(group => group.label), ['Gerencia', 'Comercial', 'Operación', 'Sistema']);
   assert.deepEqual(groups[0].items.map(item => item.label), ['Resumen Ejecutivo', 'Analítica Ventas', 'Cartera', 'Comisiones', 'Presupuestos', 'Liquidación plataforma']);
-  assert.deepEqual(groups[1].items.map(item => item.label), ['Clientes', 'Leads', 'Productos por cliente', 'Equipo Ventas']);
+  assert.deepEqual(groups[1].items.map(item => item.label), ['Tablero comercial', 'Clientes', 'Leads', 'Productos por cliente', 'Equipo Ventas']);
   assert.equal(groups[3].items.find(item => item.label === 'Alertas')?.badge, 'notificaciones');
 });
 
@@ -38,7 +38,7 @@ test('barra inferior del celular: Gerencia según la propuesta y cada destino pe
   assert.deepEqual(buildMobileDestinations(['direccion']).map(item => [item.label, item.href]), [
     ['Resumen', '/dashboard'], ['Ventas', '/dashboard/analitica'], ['Pedidos', '/dashboard/por-facturar'], ['Cartera', '/dashboard/cartera'],
   ]);
-  assert.deepEqual(buildMobileDestinations(['asesor']).map(item => item.label), ['Dashboard', 'Clientes', 'Catálogo', 'Bono']);
+  assert.deepEqual(buildMobileDestinations(['asesor']).map(item => item.label), ['Dashboard', 'Tablero', 'Clientes', 'Catálogo']);
   assert.deepEqual(buildMobileDestinations(['cartera']).map(item => item.label), ['Dashboard', 'Cartera']);
   assert.deepEqual(buildMobileDestinations(['compras']).map(item => item.label), ['Compras', 'Pedidos', 'Catálogo']);
   for (const role of ['super_admin', 'direccion', 'asesor', 'compras', 'cartera'] as UserRole[]) {
