@@ -5,6 +5,12 @@ import { authorizeApiRoles } from '@/lib/auth/apiRouteGuards';
 import { LEAD_ID_PATTERN, parseAdminLeadQuery } from '@/lib/leads-query';
 import { safeEnqueueLeadNotifications } from '@/lib/notifications/leads';
 import {
+  LEAD_TRACKING_MIGRATION_MESSAGE, leadTrackingEnabled, loadAdvisorNames, loadLeadAdvisors, loadLeadEvents, recordLeadEvents,
+} from '@/lib/leads/seguimiento.server';
+import { LEAD_ESTADOS } from '@/lib/leads/seguimiento';
+import { safeSendPushToUsers } from '@/lib/push/push.server';
+import { buildPushPayload } from '@/lib/push/shared';
+import {
   LEAD_DUPLICATE_WINDOW_MS, LeadValidationError, isLeadHoneypotFilled, normalizeLeadSource, validateLeadContact,
 } from '@/lib/leads/validation';
 import {
@@ -257,7 +263,7 @@ export async function GET(request: NextRequest) {
     let options;
     try { options = parseAdminLeadQuery(searchParams); }
     catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : 'Consulta inválida.' }, { status: 400 }); }
-    const { leadId, limit, offset } = options;
+    const { leadId, limit, offset, since } = options;
     const estado = searchParams.get('estado');
     const fuente = searchParams.get('fuente');
     // fuente_prefix: filtra por prefijo (ej: 'producto_' matchea
@@ -272,6 +278,7 @@ export async function GET(request: NextRequest) {
       .range(offset, offset + limit - 1);
 
     if (leadId) query = query.eq('id', leadId);
+    if (since) query = query.gte('created_at', since);
     if (!leadId && estado && estado !== 'todos') query = query.eq('estado', estado);
     if (!leadId && fuente && fuente !== 'todos') {
       query = query.eq('fuente', fuente);
@@ -332,10 +339,26 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const results = leads.map((lead) => ({ ...lead, empaques_personalizado: detailByLeadId.get(lead.id) ?? null }));
-    return NextResponse.json(leadId ? { lead: results[0], warnings } : { leads: results, total: count, warnings }, {
-      headers: { 'Cache-Control': 'private, no-store', 'Referrer-Policy': 'no-referrer' },
-    });
+    // Seguimiento (migración 056): asesora asignada, historial y lista de asesoras para asignar.
+    const tracking = await leadTrackingEnabled().catch(() => false);
+    const assignedIds = leads.map((lead) => lead.asignado_a).filter((value): value is string => typeof value === 'string');
+    const advisorNames = tracking ? await loadAdvisorNames(assignedIds).catch(() => new Map<string, string>()) : new Map<string, string>();
+    const results = leads.map((lead) => ({
+      ...lead,
+      empaques_personalizado: detailByLeadId.get(lead.id) ?? null,
+      asignado_nombre: typeof lead.asignado_a === 'string' ? advisorNames.get(lead.asignado_a) ?? null : null,
+    }));
+    const features = { seguimiento: tracking };
+    const headers = { 'Cache-Control': 'private, no-store', 'Referrer-Policy': 'no-referrer' };
+    if (leadId) {
+      const eventos = await loadLeadEvents(results[0], tracking).catch(() => {
+        warnings.push('No se pudo cargar el historial de actividad.');
+        return [];
+      });
+      return NextResponse.json({ lead: results[0], eventos, features, warnings }, { headers });
+    }
+    const asesoras = tracking ? await loadLeadAdvisors().catch(() => []) : [];
+    return NextResponse.json({ leads: results, total: count, warnings, features, asesoras }, { headers });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Error al listar leads';
     return NextResponse.json({ error: message }, { status: 500 });
@@ -349,26 +372,61 @@ export async function PUT(request: NextRequest) {
     if (auth instanceof NextResponse) return auth;
 
     const body = await request.json();
-    const { id, estado, notas } = body;
+    const { id, estado, notas, asignado_a: assignedTo, nota } = body;
 
     if (typeof id !== 'string' || id.length !== 36 || !LEAD_ID_PATTERN.test(id)) return NextResponse.json({ error: 'ID de lead inválido' }, { status: 400 });
     if (estado !== undefined && !['nuevo', 'contactado', 'convertido', 'descartado'].includes(estado)) return NextResponse.json({ error: 'Estado de lead inválido' }, { status: 400 });
     if (notas !== undefined && notas !== null && typeof notas !== 'string') return NextResponse.json({ error: 'Las notas deben ser texto.' }, { status: 400 });
+    if (assignedTo !== undefined && assignedTo !== null && (typeof assignedTo !== 'string' || !LEAD_ID_PATTERN.test(assignedTo))) return NextResponse.json({ error: 'Asesora inválida.' }, { status: 400 });
+    if (nota !== undefined && (typeof nota !== 'string' || !nota.trim() || nota.length > 2000)) return NextResponse.json({ error: 'La nota debe tener entre 1 y 2.000 caracteres.' }, { status: 400 });
+
+    const tracking = await leadTrackingEnabled().catch(() => false);
+    if ((assignedTo !== undefined || nota !== undefined) && !tracking) return NextResponse.json({ error: LEAD_TRACKING_MIGRATION_MESSAGE }, { status: 409 });
+
+    const { data: current, error: currentError } = await supabaseAdmin.from('leads').select('*').eq('id', id).maybeSingle();
+    if (currentError) throw currentError;
+    if (!current) return NextResponse.json({ error: 'El lead ya no está disponible.' }, { status: 404 });
 
     const updateData: Record<string, unknown> = {};
-    if (estado !== undefined) updateData.estado = estado;
+    const events: { lead_id: string; tipo: 'nota' | 'estado' | 'asignacion'; detalle: string; usuario_id: string }[] = [];
+    const label = (value: string) => LEAD_ESTADOS.find((option) => option.value === value)?.label ?? value;
+    if (estado !== undefined && estado !== current.estado) {
+      updateData.estado = estado;
+      // Primer contacto: tiempo de respuesta desde la llegada del lead.
+      if (tracking && current.estado === 'nuevo' && !current.contactado_at) updateData.contactado_at = new Date().toISOString();
+      events.push({ lead_id: id, tipo: 'estado', detalle: `Estado: ${label(current.estado)} → ${label(estado)}`, usuario_id: auth.actor.id });
+    }
     if (notas !== undefined) updateData.notas = notas;
+    let assignedAdvisor: { id: string; nombre: string } | null = null;
+    if (assignedTo !== undefined && assignedTo !== (current.asignado_a ?? null)) {
+      if (assignedTo !== null) {
+        assignedAdvisor = (await loadLeadAdvisors()).find((advisor) => advisor.id === assignedTo) ?? null;
+        if (!assignedAdvisor) return NextResponse.json({ error: 'Solo se puede asignar a una asesora activa.' }, { status: 400 });
+      }
+      updateData.asignado_a = assignedTo;
+      events.push({ lead_id: id, tipo: 'asignacion', detalle: assignedAdvisor ? `Asignado a ${assignedAdvisor.nombre}` : 'Quedó sin asignar', usuario_id: auth.actor.id });
+    }
+    if (nota !== undefined) events.push({ lead_id: id, tipo: 'nota', detalle: nota.trim(), usuario_id: auth.actor.id });
 
-    const { data, error } = await supabaseAdmin
-      .from('leads')
-      .update(updateData)
-      .eq('id', id)
-      .select()
-      .single();
+    let lead = current;
+    if (Object.keys(updateData).length > 0) {
+      const { data, error } = await supabaseAdmin.from('leads').update(updateData).eq('id', id).select().single();
+      if (error) throw error;
+      lead = data;
+    }
+    if (tracking) await recordLeadEvents(events);
+    if (assignedAdvisor) {
+      await safeSendPushToUsers([{
+        usuarioId: assignedAdvisor.id,
+        payload: buildPushPayload({
+          title: 'Te asignaron un lead',
+          body: [lead.nombre, lead.empresa, lead.telefono].filter(Boolean).join(' · '),
+          url: '/dashboard', tag: `lead-asignado-${id}`,
+        }),
+      }]);
+    }
 
-    if (error) throw error;
-
-    return NextResponse.json({ lead: data });
+    return NextResponse.json({ lead: { ...lead, asignado_nombre: assignedAdvisor?.nombre ?? (lead.asignado_a ? undefined : null) } });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Error al actualizar lead';
     return NextResponse.json({ error: message }, { status: 500 });
