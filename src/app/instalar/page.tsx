@@ -9,6 +9,7 @@ import {
   canPromptInstall, isIosDevice, isStandaloneDisplay, promptInstall, subscribeInstallAvailability,
 } from '@/lib/pwa/install';
 import { cn } from '@/lib/utils';
+import PoweredByTause from '@/components/ui/PoweredByTause';
 
 type Platform = 'ios' | 'android' | 'desktop';
 const subscribeNoop = () => () => {};
@@ -162,6 +163,7 @@ export default function InstalarPage() {
         <p className="text-center text-sm">
           <Link href="/dashboard" className="font-medium text-[#5c7004] underline underline-offset-4">Ir al portal</Link>
         </p>
+        <PoweredByTause placement="instalar" className="text-center text-muted" />
       </div>
     </main>
   );

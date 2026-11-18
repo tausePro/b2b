@@ -1,8 +1,25 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  buildLeadSummary, formatHours, formatTimeAgo, isLeadOverdue, leadAttribution, leadSource, whatsappLink, type LeadTrackingInput,
+  buildAdvisorLeadStats, buildLeadSummary, formatHours, formatTimeAgo, isLeadOverdue, leadAttribution, leadSource, MANUAL_LEAD_SOURCE, whatsappLink, type LeadTrackingInput,
 } from '../src/lib/leads/seguimiento';
+
+test('leads: gestión por asesora y registro manual', () => {
+  const now = Date.parse('2026-11-17T20:00:00Z');
+  const lead = (estado: string, created_at: string, asignado_a: string | null, extra: Partial<LeadTrackingInput> = {}) => ({
+    id: `${asignado_a}-${created_at}`, nombre: '', empresa: null, email: null, telefono: null, mensaje: null, estado, fuente: MANUAL_LEAD_SOURCE, created_at,
+    gclid: null, utm_source: null, utm_medium: null, utm_campaign: null, asignado_a, asignado_nombre: asignado_a ? 'VANESA PATIÑO GALVIS' : null, ...extra,
+  });
+  assert.equal(leadSource(MANUAL_LEAD_SOURCE).label, 'Asesora · Registro manual');
+  const stats = buildAdvisorLeadStats([
+    lead('nuevo', '2026-11-17T10:00:00Z', 'v'), lead('contactado', '2026-11-16T10:00:00Z', 'v', { contactado_at: '2026-11-16T11:30:00Z' }),
+    lead('convertido', '2026-11-10T10:00:00Z', 'v', { contactado_at: '2026-11-10T10:30:00Z' }), lead('nuevo', '2026-11-17T19:00:00Z', null),
+  ], now);
+  assert.deepEqual(stats.map((row) => [row.name, row.total, row.uncontacted, row.overdue, row.contacted, row.converted, row.conversionPercent]), [
+    ['VANESA PATIÑO GALVIS', 3, 1, 1, 1, 1, 33.3], ['Sin asignar', 1, 1, 0, 0, 0, 0],
+  ]);
+  assert.equal(formatHours(stats[0].averageResponseHours!), '1 h');
+});
 
 test('leads: las fuentes reales se agrupan en orígenes legibles', () => {
   assert.equal(leadSource('empaques_hero').label, 'Empaques · Inicio');

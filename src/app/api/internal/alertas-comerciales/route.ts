@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
     const admin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false, autoRefreshToken: false } });
     const boards = await loadCommercialBoards(admin, undefined, false);
     const messages = boards.flatMap((board) => {
-      const pending = board.alerts.filter((alert) => !alert.lastAction);
+      const pending = board.alerts.filter((alert) => !alert.lastAction && alert.alert?.level !== 'inactivo');
       if (pending.length === 0) return [];
       const priority = pending.filter((alert) => alert.alert?.level === 'prioritaria').length;
       return [{

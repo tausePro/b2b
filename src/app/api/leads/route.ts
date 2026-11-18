@@ -2,6 +2,9 @@ import { createClient } from '@supabase/supabase-js';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { NextRequest, NextResponse } from 'next/server';
 import { authorizeApiRoles } from '@/lib/auth/apiRouteGuards';
+import { userHasAnyRole } from '@/lib/auth/roles';
+
+const LEAD_MANAGER_ROLES = ['super_admin', 'direccion', 'editor_contenido'] as const;
 import { LEAD_ID_PATTERN, parseAdminLeadQuery } from '@/lib/leads-query';
 import { safeEnqueueLeadNotifications } from '@/lib/notifications/leads';
 import {
@@ -256,8 +259,12 @@ export async function POST(request: NextRequest) {
 // GET — admin: listar leads
 export async function GET(request: NextRequest) {
   try {
-    const auth = await authorizeApiRoles(['super_admin', 'direccion', 'editor_contenido']);
+    const auth = await authorizeApiRoles(['super_admin', 'direccion', 'editor_contenido', 'asesor']);
     if (auth instanceof NextResponse) return auth;
+    // Dirección, Super Admin y Editor ven todos los leads; la asesora solo los asignados a ella (requiere la migración 056).
+    const fullAccess = userHasAnyRole(auth.actor, LEAD_MANAGER_ROLES);
+    const tracking = await leadTrackingEnabled().catch(() => false);
+    if (!fullAccess && !tracking) return NextResponse.json({ error: LEAD_TRACKING_MIGRATION_MESSAGE }, { status: 409 });
 
     const { searchParams } = request.nextUrl;
     let options;
@@ -278,6 +285,7 @@ export async function GET(request: NextRequest) {
       .range(offset, offset + limit - 1);
 
     if (leadId) query = query.eq('id', leadId);
+    if (!fullAccess) query = query.eq('asignado_a', auth.actor.id);
     if (since) query = query.gte('created_at', since);
     if (!leadId && estado && estado !== 'todos') query = query.eq('estado', estado);
     if (!leadId && fuente && fuente !== 'todos') {
@@ -340,7 +348,6 @@ export async function GET(request: NextRequest) {
     }
 
     // Seguimiento (migración 056): asesora asignada, historial y lista de asesoras para asignar.
-    const tracking = await leadTrackingEnabled().catch(() => false);
     const assignedIds = leads.map((lead) => lead.asignado_a).filter((value): value is string => typeof value === 'string');
     const advisorNames = tracking ? await loadAdvisorNames(assignedIds).catch(() => new Map<string, string>()) : new Map<string, string>();
     const results = leads.map((lead) => ({
@@ -348,7 +355,7 @@ export async function GET(request: NextRequest) {
       empaques_personalizado: detailByLeadId.get(lead.id) ?? null,
       asignado_nombre: typeof lead.asignado_a === 'string' ? advisorNames.get(lead.asignado_a) ?? null : null,
     }));
-    const features = { seguimiento: tracking };
+    const features = { seguimiento: tracking, alcance: fullAccess ? 'todos' : 'propios' };
     const headers = { 'Cache-Control': 'private, no-store', 'Referrer-Policy': 'no-referrer' };
     if (leadId) {
       const eventos = await loadLeadEvents(results[0], tracking).catch(() => {
@@ -357,7 +364,7 @@ export async function GET(request: NextRequest) {
       });
       return NextResponse.json({ lead: results[0], eventos, features, warnings }, { headers });
     }
-    const asesoras = tracking ? await loadLeadAdvisors().catch(() => []) : [];
+    const asesoras = tracking && fullAccess ? await loadLeadAdvisors().catch(() => []) : [];
     return NextResponse.json({ leads: results, total: count, warnings, features, asesoras }, { headers });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Error al listar leads';
@@ -368,11 +375,13 @@ export async function GET(request: NextRequest) {
 // PUT — admin: actualizar estado de lead
 export async function PUT(request: NextRequest) {
   try {
-    const auth = await authorizeApiRoles(['super_admin', 'direccion', 'editor_contenido']);
+    const auth = await authorizeApiRoles(['super_admin', 'direccion', 'editor_contenido', 'asesor']);
     if (auth instanceof NextResponse) return auth;
+    const fullAccess = userHasAnyRole(auth.actor, LEAD_MANAGER_ROLES);
 
     const body = await request.json();
     const { id, estado, notas, asignado_a: assignedTo, nota } = body;
+    if (!fullAccess && assignedTo !== undefined) return NextResponse.json({ error: 'La asignación de leads la hace Dirección.' }, { status: 403 });
 
     if (typeof id !== 'string' || id.length !== 36 || !LEAD_ID_PATTERN.test(id)) return NextResponse.json({ error: 'ID de lead inválido' }, { status: 400 });
     if (estado !== undefined && !['nuevo', 'contactado', 'convertido', 'descartado'].includes(estado)) return NextResponse.json({ error: 'Estado de lead inválido' }, { status: 400 });
@@ -385,7 +394,7 @@ export async function PUT(request: NextRequest) {
 
     const { data: current, error: currentError } = await supabaseAdmin.from('leads').select('*').eq('id', id).maybeSingle();
     if (currentError) throw currentError;
-    if (!current) return NextResponse.json({ error: 'El lead ya no está disponible.' }, { status: 404 });
+    if (!current || (!fullAccess && current.asignado_a !== auth.actor.id)) return NextResponse.json({ error: 'El lead ya no está disponible.' }, { status: 404 });
 
     const updateData: Record<string, unknown> = {};
     const events: { lead_id: string; tipo: 'nota' | 'estado' | 'asignacion'; detalle: string; usuario_id: string }[] = [];
@@ -421,7 +430,7 @@ export async function PUT(request: NextRequest) {
         payload: buildPushPayload({
           title: 'Te asignaron un lead',
           body: [lead.nombre, lead.empresa, lead.telefono].filter(Boolean).join(' · '),
-          url: '/dashboard', tag: `lead-asignado-${id}`,
+          url: `/dashboard/leads?lead=${id}`, tag: `lead-asignado-${id}`,
         }),
       }]);
     }

@@ -1,13 +1,14 @@
 import 'server-only';
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { authenticate, readGroup, searchRead, type OdooSession } from '@/lib/odoo/client';
+import { authenticate, read, readGroup, searchRead, type OdooSession } from '@/lib/odoo/client';
 import { getServerOdooConfig } from '@/lib/odoo/serverConfig';
 import { getBogotaCalendarDate, roundCurrency } from '@/lib/comisiones/bonoPlataforma';
 import { FinancialDataError, getOdooReportCompany } from '@/lib/gerencia/finanzas.server';
 import { percentChange, samePeriod, shiftMonth } from '@/lib/gerencia/resumen';
 import {
-  clientAlert, goalProgress, isRecovered, monthProjection, purchasePattern, trendStatus, valueSince, type ClientAlert, type PurchasePattern, type TrendStatus,
+  clientAlert, goalProgress, isRecovered, MIN_PURCHASES_FOR_PATTERN, monthProjection, purchasePattern, trendStatus, valueSince,
+  type ClientAlert, type PurchasePattern, type TrendStatus,
 } from './tablero';
 
 export interface AdvisorRef { id: string; name: string; odooUserId: number }
@@ -27,7 +28,7 @@ export interface ClientRow {
   partnerId: number; name: string; lastPurchase: string | null; purchases: number; sales12m: number;
   boughtThisMonth: boolean; pattern: PurchasePattern | null; alert: ClientAlert | null; lastAction: ClientAction | null;
 }
-export interface ClientCounts { assigned: number; boughtThisMonth: number; active: number; followUp: number; priority: number; withoutPurchases: number }
+export interface ClientCounts { assigned: number; boughtThisMonth: number; active: number; followUp: number; priority: number; inactive: number; withoutPurchases: number }
 export interface AdvisorBoard {
   advisor: AdvisorRef; today: string; sales: SalesSnapshot; clients: ClientCounts;
   alerts: ClientRow[]; frequentInactive: ClientRow[]; features: { gestion: boolean };
@@ -100,7 +101,7 @@ async function buildBoards(admin: SupabaseClient, advisors: AdvisorRef[], today:
   const previousYear = samePeriod(today, -12);
   const historyFrom = new Date(Date.parse(`${today}T00:00:00Z`) - HISTORY_DAYS * 86_400_000).toISOString().slice(0, 10);
   const salesFrom = `${shiftMonth(month, -11)}-01`;
-  const [currentRows, previousMonthRows, previousYearRows, partners, history] = await Promise.all([
+  const [currentRows, previousMonthRows, previousYearRows, partners, history, orderHistory] = await Promise.all([
     readGroup('account.move', invoices(`${month}-01`, today), ['amount_untaxed_signed:sum'], ['invoice_user_id'], { session }),
     readGroup('account.move', invoices(previousMonth.from, previousMonth.to), ['amount_untaxed_signed:sum'], ['invoice_user_id'], { session }),
     readGroup('account.move', invoices(previousYear.from, previousYear.to), ['amount_untaxed_signed:sum'], ['invoice_user_id'], { session }),
@@ -109,7 +110,29 @@ async function buildBoards(admin: SupabaseClient, advisors: AdvisorRef[], today:
       ['company_id', '=', company.id], ['state', '=', 'posted'], ['move_type', '=', 'out_invoice'], ['invoice_date', '>=', historyFrom], ['invoice_date', '<=', today],
       ['commercial_partner_id.user_id', 'in', userIds],
     ], ['amount_untaxed_signed:sum'], ['commercial_partner_id', 'invoice_date:day'], { session }),
+    // Pedidos confirmados: un cliente que pidió y aún no se le factura no está inactivo.
+    readGroup('sale.order', [
+      ['company_id', '=', company.id], ['state', 'in', ['sale', 'done']], ['date_order', '>=', `${historyFrom} 00:00:00`],
+      ['partner_id.commercial_partner_id.user_id', 'in', userIds],
+    ], ['amount_untaxed:sum'], ['partner_id', 'date_order:day'], { session }),
   ]);
+  const orderPartnerIds = [...new Set(orderHistory.map((row) => relationId(row.partner_id)).filter((id): id is number => id !== null))];
+  const commercialByPartner = new Map<number, number>();
+  for (let index = 0; index < orderPartnerIds.length; index += 200) {
+    for (const row of await read('res.partner', orderPartnerIds.slice(index, index + 200), ['id', 'commercial_partner_id'], session)) {
+      commercialByPartner.set(Number(row.id), relationId(row.commercial_partner_id) ?? Number(row.id));
+    }
+  }
+  const orderDates = new Map<number, Set<string>>();
+  for (const row of orderHistory) {
+    const partnerId = relationId(row.partner_id);
+    const day = (row.__range as Record<string, { from?: string }> | undefined)?.['date_order:day']?.from?.slice(0, 10);
+    if (!partnerId || !day) continue;
+    const commercialId = commercialByPartner.get(partnerId) ?? partnerId;
+    const dates = orderDates.get(commercialId) ?? new Set<string>();
+    dates.add(day);
+    orderDates.set(commercialId, dates);
+  }
   const byUser = (rows: Record<string, unknown>[]) => new Map(rows.map((row) => [relationId(row.invoice_user_id), { sales: money(row.amount_untaxed_signed), documents: Number(row.__count ?? 0) }]));
   const [current, lastMonth, lastYear] = [byUser(currentRows), byUser(previousMonthRows), byUser(previousYearRows)];
 
@@ -155,8 +178,10 @@ async function buildBoards(admin: SupabaseClient, advisors: AdvisorRef[], today:
       const partnerId = Number(partner.id);
       const entry = purchases.get(partnerId);
       const dates = [...new Set(entry?.dates ?? [])].sort();
-      const pattern = purchasePattern(dates);
-      const lastPurchase = dates.at(-1) ?? null;
+      const ordered = [...(orderDates.get(partnerId) ?? [])].sort();
+      // El ritmo se aprende de los pedidos cuando hay suficientes; si no, de las facturas.
+      const pattern = purchasePattern(ordered.length >= MIN_PURCHASES_FOR_PATTERN ? ordered : dates);
+      const lastPurchase = [dates.at(-1), ordered.at(-1)].filter((day): day is string => Boolean(day)).sort().at(-1) ?? null;
       const action = actionByPartner.get(partnerId) ?? null;
       // Cierre automático: si volvió a comprar después de la gestión, esa gestión cierra el episodio y cuenta como recuperado.
       const closed = Boolean(action && isRecovered(lastPurchase, action.ultimaCompra));
@@ -172,7 +197,7 @@ async function buildBoards(admin: SupabaseClient, advisors: AdvisorRef[], today:
         opportunities.value = roundCurrency(opportunities.value + (action.valor ?? 0));
       }
       return {
-        partnerId, name: String(partner.name ?? 'Cliente'), lastPurchase, purchases: dates.length, sales12m: entry?.sales12m ?? 0,
+        partnerId, name: String(partner.name ?? 'Cliente'), lastPurchase, purchases: Math.max(dates.length, ordered.length), sales12m: entry?.sales12m ?? 0,
         boughtThisMonth: Boolean(lastPurchase && lastPurchase >= `${month}-01`), pattern,
         alert: lastPurchase ? clientAlert(lastPurchase, today, pattern, thresholdByPartner.get(partnerId)) : null,
         lastAction: closed ? null : action,
@@ -183,8 +208,9 @@ async function buildBoards(admin: SupabaseClient, advisors: AdvisorRef[], today:
     const previousMonthSales = lastMonth.get(advisor.odooUserId)?.sales ?? 0;
     const goal = goalByAdvisor.get(advisor.id) ?? null;
     const changeVsPreviousMonth = percentChange(sales, previousMonthSales);
+    const rank = { prioritaria: 0, seguimiento: 1, inactivo: 2, al_dia: 3 } as const;
     const alerts = rows.filter((row) => row.alert && row.alert.level !== 'al_dia')
-      .sort((a, b) => Number(b.alert!.level === 'prioritaria') - Number(a.alert!.level === 'prioritaria') || b.sales12m - a.sales12m);
+      .sort((a, b) => rank[a.alert!.level] - rank[b.alert!.level] || b.sales12m - a.sales12m);
     return {
       advisor, today,
       sales: {
@@ -194,13 +220,13 @@ async function buildBoards(admin: SupabaseClient, advisors: AdvisorRef[], today:
       },
       clients: {
         assigned: rows.length, boughtThisMonth: rows.filter((row) => row.boughtThisMonth).length, active: level('al_dia'),
-        followUp: level('seguimiento'), priority: level('prioritaria'), withoutPurchases: rows.filter((row) => !row.lastPurchase).length,
+        followUp: level('seguimiento'), priority: level('prioritaria'), inactive: level('inactivo'), withoutPurchases: rows.filter((row) => !row.lastPurchase).length,
       },
       alerts,
       frequentInactive: alerts.filter((row) => row.purchases >= FREQUENT_MIN_PURCHASES).slice(0, 10),
       features: { gestion: tracking },
       management: {
-        unmanaged: alerts.filter((row) => !row.lastAction).length, managed30d, opportunities,
+        unmanaged: alerts.filter((row) => !row.lastAction && row.alert?.level !== 'inactivo').length, managed30d, opportunities,
         recovered: { count: recovered.length, value: roundCurrency(recovered.reduce((sum, client) => sum + client.valueSince, 0)) },
       },
       recovered: recovered.sort((a, b) => b.valueSince - a.valueSince),

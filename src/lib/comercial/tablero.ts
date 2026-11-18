@@ -6,9 +6,14 @@
 export const DEFAULT_FOLLOW_UP_DAYS = 30;
 export const DEFAULT_PRIORITY_DAYS = 60;
 export const MIN_PURCHASES_FOR_PATTERN = 3;
+/** Pisos para clientes muy recurrentes (compran cada pocos días): una pausa corta no es alerta prioritaria. */
+export const MIN_FOLLOW_UP_DAYS = 21;
+export const MIN_PRIORITY_DAYS = 45;
 export const TREND_STABLE_PERCENT = 5;
 
-export type AlertLevel = 'al_dia' | 'seguimiento' | 'prioritaria';
+export type AlertLevel = 'al_dia' | 'seguimiento' | 'prioritaria' | 'inactivo';
+/** Más de 6 meses sin comprar: cliente inactivo (se recupera aparte; no entra en la prioridad diaria). */
+export const INACTIVE_DAYS = 180;
 
 /** Qué pasó con la alerta (lo marca la asesora; Dirección hace seguimiento). */
 export const ALERT_ACTIONS = [
@@ -54,8 +59,9 @@ export function purchasePattern(invoiceDates: readonly string[]): PurchasePatter
 }
 
 /**
- * Alerta del cliente según su ritmo: seguimiento al pasar su rango normal (p75, mínimo la mediana)
- * y prioritaria al doblar su intervalo típico. Sin ritmo: regla general de 30 y 60 días (o el ajuste del cliente).
+ * Alerta del cliente según su ritmo: seguimiento al pasar su rango normal (p75, mínimo la mediana y 21 días)
+ * y prioritaria al doblar su intervalo típico (mínimo 45 días), para que los clientes recurrentes no queden como
+ * prioridad por una pausa corta. Sin ritmo: regla general de 30 y 60 días (o el ajuste del cliente, sin pisos).
  */
 export function clientAlert(
   lastPurchase: string,
@@ -65,9 +71,10 @@ export function clientAlert(
 ): ClientAlert {
   const daysSince = Math.max(0, daysBetweenDates(lastPurchase, today));
   const usesPattern = !override && pattern !== null;
-  const followAfter = override?.followUpDays ?? (pattern ? Math.max(pattern.p75Days, pattern.medianDays, 1) : DEFAULT_FOLLOW_UP_DAYS);
-  const priorityAfter = override?.priorityDays ?? (pattern ? Math.max(pattern.medianDays * 2, followAfter + 1) : DEFAULT_PRIORITY_DAYS);
-  const level: AlertLevel = daysSince > priorityAfter ? 'prioritaria' : daysSince > followAfter ? 'seguimiento' : 'al_dia';
+  const followAfter = override?.followUpDays ?? (pattern ? Math.max(pattern.p75Days, pattern.medianDays, MIN_FOLLOW_UP_DAYS) : DEFAULT_FOLLOW_UP_DAYS);
+  const priorityAfter = override?.priorityDays ?? (pattern ? Math.max(pattern.medianDays * 2, followAfter + 1, MIN_PRIORITY_DAYS) : DEFAULT_PRIORITY_DAYS);
+  const level: AlertLevel = daysSince > Math.max(INACTIVE_DAYS, priorityAfter) ? 'inactivo'
+    : daysSince > priorityAfter ? 'prioritaria' : daysSince > followAfter ? 'seguimiento' : 'al_dia';
   const reason = override
     ? `Umbral ajustado: seguimiento a ${followAfter} días, prioritaria a ${priorityAfter}; lleva ${daysSince} días sin comprar`
     : pattern

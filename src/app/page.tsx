@@ -16,6 +16,7 @@ import {
 } from '@/lib/landing/getContenido';
 import { getPublicCatalogRootCategories } from '@/lib/catalogoPublico';
 import { getHeroDynamicStats } from '@/lib/home/getHeroDynamicStats';
+import PoweredByTause from '@/components/ui/PoweredByTause';
 
 export async function generateMetadata(): Promise<Metadata> {
   try {
@@ -496,6 +497,7 @@ export default async function LandingPage() {
               <Link href="/terminos" className="hover:text-primary">Términos y Condiciones</Link>
               <Link href="/privacidad" className="hover:text-primary">Privacidad de Datos</Link>
             </div>
+            <PoweredByTause placement="landing" />
           </div>
         </div>
       </footer>

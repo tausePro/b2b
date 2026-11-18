@@ -7,7 +7,13 @@ import { ALERT_ACTIONS } from '@/lib/comercial/tablero';
 import { cn, formatCOP } from '@/lib/utils';
 
 type Payload = { board?: AdvisorBoard; team?: AdvisorBoard[]; canViewTeam: boolean };
-type AlertFilter = 'todas' | 'prioritaria' | 'seguimiento' | 'sin_gestion';
+type AlertFilter = 'todas' | 'prioritaria' | 'seguimiento' | 'inactivo' | 'sin_gestion';
+const LEVEL_STYLE = {
+  prioritaria: { label: 'Prioritaria', chip: 'bg-red-50 text-red-700', border: 'border-l-red-500' },
+  seguimiento: { label: 'Seguimiento', chip: 'bg-amber-50 text-amber-800', border: 'border-l-amber-400' },
+  inactivo: { label: 'Inactivo +6 meses', chip: 'bg-slate-100 text-slate-600', border: 'border-l-slate-300' },
+  al_dia: { label: 'Al día', chip: 'bg-emerald-50 text-emerald-800', border: 'border-l-emerald-400' },
+} as const;
 
 const card = 'rounded-2xl border border-border bg-white p-5';
 const input = 'min-h-11 w-full rounded-xl border border-border bg-white px-3 text-sm';
@@ -60,16 +66,16 @@ function AlertItem({ row, board, canEditThreshold, onSaved }: { row: ClientRow; 
   const [valor, setValor] = useState('');
   const [days, setDays] = useState({ followUp: String(row.alert?.followAfter ?? ''), priority: String(row.alert?.priorityAfter ?? '') });
   const [status, setStatus] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
-  const priority = row.alert?.level === 'prioritaria';
+  const style = LEVEL_STYLE[row.alert?.level ?? 'seguimiento'];
   const run = (promise: Promise<void>, success: string) => promise
     .then(() => { setStatus({ tone: 'ok', text: success }); setOpen(false); onSaved(); })
     .catch((error) => setStatus({ tone: 'error', text: error instanceof Error ? error.message : 'No se pudo guardar.' }));
   return (
-    <li className={cn('rounded-xl border border-l-4 border-border bg-white p-4', priority ? 'border-l-red-500' : 'border-l-amber-400')}>
+    <li className={cn('rounded-xl border border-l-4 border-border bg-white p-4', style.border)}>
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="flex flex-wrap items-center gap-2 font-semibold">{row.name}
-            <span className={cn('rounded-md px-1.5 py-0.5 text-[11px] font-medium', priority ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-800')}>{priority ? 'Prioritaria' : 'Seguimiento'}</span>
+            <span className={cn('rounded-md px-1.5 py-0.5 text-[11px] font-medium', style.chip)}>{style.label}</span>
           </p>
           <p className="mt-1 text-sm">{row.alert?.reason}</p>
           <p className="mt-1 text-xs text-muted">Última compra {row.lastPurchase ? dateLabel(row.lastPurchase) : '—'} · {formatCOP(row.sales12m)} en 12 meses · {row.purchases} compras en 18 meses</p>
@@ -120,10 +126,11 @@ function AlertItem({ row, board, canEditThreshold, onSaved }: { row: ClientRow; 
 function AdvisorView({ board, canEdit, onSaved }: { board: AdvisorBoard; canEdit: boolean; onSaved: () => void }) {
   const [filter, setFilter] = useState<AlertFilter>('todas');
   const { sales, clients } = board;
-  const alerts = board.alerts.filter((row) => filter === 'todas' || (filter === 'sin_gestion' ? !row.lastAction : row.alert?.level === filter));
+  const actionable = (row: ClientRow) => row.alert?.level === 'prioritaria' || row.alert?.level === 'seguimiento';
+  const alerts = board.alerts.filter((row) => filter === 'todas' ? actionable(row) : filter === 'sin_gestion' ? actionable(row) && !row.lastAction : row.alert?.level === filter);
   const filters: [AlertFilter, string, number][] = [
-    ['todas', 'Todas', board.alerts.length], ['prioritaria', 'Prioritarias', clients.priority], ['seguimiento', 'Seguimiento', clients.followUp],
-    ['sin_gestion', 'Sin gestionar', board.alerts.filter((row) => !row.lastAction).length],
+    ['todas', 'Por contactar', clients.priority + clients.followUp], ['prioritaria', 'Prioritarias', clients.priority], ['seguimiento', 'Seguimiento', clients.followUp],
+    ['sin_gestion', 'Sin gestionar', board.management.unmanaged], ['inactivo', 'Inactivos +6 meses', clients.inactive],
   ];
   return (
     <div className="space-y-6">
@@ -148,7 +155,7 @@ function AdvisorView({ board, canEdit, onSaved }: { board: AdvisorBoard; canEdit
           <h2 id="mis-clientes" className="flex items-center gap-2 text-sm text-muted"><Users className="h-4 w-4" aria-hidden="true" />Clientes asignados en Odoo</h2>
           <p className="mt-2 text-3xl font-semibold tabular-nums">{clients.assigned}</p>
           <dl className="mt-3 grid grid-cols-2 gap-2 text-sm">
-            {([['Compraron este mes', clients.boughtThisMonth, ''], ['Al día con su ritmo', clients.active, 'text-emerald-700'], ['En seguimiento', clients.followUp, 'text-amber-700'], ['Prioritarias', clients.priority, 'text-red-700'], ['Sin compras en 18 meses', clients.withoutPurchases, 'text-muted']] as const)
+            {([['Compraron este mes', clients.boughtThisMonth, ''], ['Al día con su ritmo', clients.active, 'text-emerald-700'], ['En seguimiento', clients.followUp, 'text-amber-700'], ['Prioritarias', clients.priority, 'text-red-700'], ['Inactivos +6 meses', clients.inactive, 'text-slate-600'], ['Sin compras en 18 meses', clients.withoutPurchases, 'text-muted']] as const)
               .map(([label, value, tone]) => <div key={label} className="rounded-xl bg-background-light p-3"><dt className="text-xs text-muted">{label}</dt><dd className={cn('text-lg font-semibold tabular-nums', tone)}>{value}</dd></div>)}
           </dl>
         </section>
@@ -160,7 +167,7 @@ function AdvisorView({ board, canEdit, onSaved }: { board: AdvisorBoard; canEdit
           <dl className="mt-3 grid grid-cols-2 gap-2 text-sm lg:grid-cols-4">
             <div className="rounded-xl bg-emerald-50 p-3"><dt className="text-xs text-emerald-800">Clientes recuperados</dt><dd className="text-lg font-semibold tabular-nums text-emerald-900">{board.management.recovered.count}</dd><dd className="text-xs text-emerald-800">{formatCOP(board.management.recovered.value)} comprados desde su regreso</dd></div>
             <div className="rounded-xl bg-background-light p-3"><dt className="text-xs text-muted">Oportunidades abiertas</dt><dd className="text-lg font-semibold tabular-nums">{board.management.opportunities.count}</dd><dd className="text-xs text-muted">{formatCOP(board.management.opportunities.value)} estimados</dd></div>
-            <div className="rounded-xl bg-background-light p-3"><dt className="text-xs text-muted">Alertas sin gestionar</dt><dd className="text-lg font-semibold tabular-nums text-amber-700">{board.management.unmanaged}</dd><dd className="text-xs text-muted">de {board.alerts.length} abiertas</dd></div>
+            <div className="rounded-xl bg-background-light p-3"><dt className="text-xs text-muted">Alertas sin gestionar</dt><dd className="text-lg font-semibold tabular-nums text-amber-700">{board.management.unmanaged}</dd><dd className="text-xs text-muted">de {board.clients.priority + board.clients.followUp} por contactar</dd></div>
             <div className="rounded-xl bg-background-light p-3"><dt className="text-xs text-muted">Clientes gestionados</dt><dd className="text-lg font-semibold tabular-nums">{board.management.managed30d}</dd><dd className="text-xs text-muted">en los últimos 30 días</dd></div>
           </dl>
           {board.recovered.length > 0 && (
@@ -226,7 +233,7 @@ function TeamView({ team, onOpen }: { team: AdvisorBoard[]; onOpen: (id: string)
             <p className="mt-2 text-2xl font-semibold tabular-nums">{formatCOP(board.sales.sales)}</p>
             <p className="text-xs text-muted">Mes anterior {pct(board.sales.changeVsPreviousMonth)} · año anterior {pct(board.sales.changeVsPreviousYear)}</p>
             <p className="mt-2 text-sm">{board.sales.goal ? `Meta ${formatCOP(board.sales.goal)} · ${board.sales.goalProgress?.toLocaleString('es-CO')} %` : 'Sin meta este mes'}</p>
-            <p className="mt-1 text-sm text-muted">{board.clients.boughtThisMonth} de {board.clients.assigned} clientes compraron · <span className="text-red-700">{board.clients.priority} prioritarias</span> · <span className="text-amber-700">{board.clients.followUp} seguimiento</span></p>
+            <p className="mt-1 text-sm text-muted">{board.clients.boughtThisMonth} de {board.clients.assigned} clientes compraron · <span className="text-red-700">{board.clients.priority} prioritarias</span> · <span className="text-amber-700">{board.clients.followUp} seguimiento</span> · {board.clients.inactive} inactivos</p>
             {board.features.gestion && (
               <p className="mt-1 text-sm text-muted">
                 <span className="text-emerald-800">{board.management.recovered.count} recuperados ({formatCOP(board.management.recovered.value)})</span> · {board.management.unmanaged} sin gestionar · {board.management.opportunities.count} oportunidades

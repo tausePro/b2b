@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { Building2, Package } from 'lucide-react';
 import WhatsAppBubble from './WhatsAppBubble';
 import LeadAttributionCapture from './LeadAttributionCapture';
+import PoweredByTause from '@/components/ui/PoweredByTause';
 
 // Dimensiones reales del asset public/logo-imprima-horizontal.png (198x79).
 // next/image exige width/height para preservar aspect ratio y evitar CLS;
@@ -99,6 +100,7 @@ export default function PublicLayout({ children }: PublicLayoutProps) {
               <Link href="/terminos" className="hover:text-primary">Términos y Condiciones</Link>
               <Link href="/privacidad" className="hover:text-primary">Privacidad</Link>
             </div>
+            <PoweredByTause placement="publico" />
           </div>
         </div>
       </footer>
