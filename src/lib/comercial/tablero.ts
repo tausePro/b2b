@@ -76,6 +76,18 @@ export function clientAlert(
   return { level, daysSince, followAfter, priorityAfter, reason, usesPattern };
 }
 
+/** Volvió a comprar después de la compra que tenía al gestionar su alerta: la alerta se cierra sola y cuenta como recuperado. */
+export function isRecovered(lastPurchase: string | null, purchaseWhenManaged: string | null): boolean {
+  return Boolean(lastPurchase && purchaseWhenManaged && lastPurchase > purchaseWhenManaged);
+}
+
+/** Valor comprado después de una fecha, a partir de las compras por día. */
+export function valueSince(dayAmounts: Iterable<readonly [string, number]>, since: string): number {
+  let total = 0;
+  for (const [day, amount] of dayAmounts) if (day > since) total += amount;
+  return Math.round(total * 100) / 100;
+}
+
 export function trendStatus(changePercent: number | null): TrendStatus | null {
   if (changePercent === null) return null;
   if (changePercent > TREND_STABLE_PERCENT) return 'creciendo';
