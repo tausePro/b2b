@@ -133,6 +133,12 @@ La utilidad bruta de ventas equivale al margen firmado de Odoo (`margin_signed`)
 
 Conciliación de octubre de 2026: venta 607.606.414,28, costo 400.610.438,47 y utilidad 206.995.975,81, iguales a Odoo. De las 41 líneas con costo cero, 33 son servicios (7.123.920) y 8 mercancía por revisar (1.966.300). La respuesta de octubre pasó de 714.681 a 245.392 bytes.
 
+## Leads para asesoras, alertas afinadas y crédito (v2.14.53)
+
+- Asesoras: "Mis leads" (`/dashboard/leads`) muestra solo los leads asignados a ellas (filtro en `GET/PUT /api/leads`; sin reasignar ni borrar). Cualquier perfil con acceso registra leads con "Nuevo lead" (`POST /api/leads/interno`, fuente `registro_asesora`): la asesora queda asignada; Dirección puede asignarlo. Evita duplicados por correo o teléfono (excepto descartados) y no envía correos de aviso. Dirección ve "Gestión por asesora" (leads, sin contactar, contactados, convertidos, descartados y respuesta media) y filtra por asesora.
+- Alertas del tablero comercial: los pedidos confirmados en Odoo cuentan como actividad (un cliente que pidió y no le han facturado no queda inactivo; el ritmo se aprende de los pedidos si hay 3 o más). Pisos para recurrentes: seguimiento desde 21 días y prioritaria desde 45. Más de 180 días sin comprar es "Inactivo +6 meses", aparte de la prioridad diaria y del aviso de las 8 a. m.
+- Asesoras sin "Catálogo" (no funcionaba en su perfil). "Powered by Tause" (texto, enlace a tause.co con UTM por ubicación) en el login, el pie de imprima.com.co y de Empaques, y `/instalar`.
+
 ## Tablero comercial, fase 2 (v2.14.52)
 
 - Cierre automático: si el cliente vuelve a comprar después de la compra registrada al gestionar su alerta (`alertas_clientes_gestion.ultima_compra`), la alerta se cierra sola y el cliente cuenta como recuperado, con el valor comprado desde su regreso (`isRecovered`, `valueSince`).

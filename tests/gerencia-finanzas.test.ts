@@ -104,12 +104,13 @@ test('gerencia y detalle financiero requieren Dirección o Super Admin, también
   assert.equal(canAccessDashboardPath('asesor', '/dashboard/comisiones'), true);
 });
 
-test('leads en el portal de gerencia: Dirección y Super Admin, también como rol extra; asesoras y clientes no', () => {
+test('leads en el portal: Dirección, Super Admin y asesoras (solo sus leads asignados, filtrados en el API); clientes no', () => {
   for (const path of ['/dashboard/leads', '/dashboard/leads/']) {
     assert.equal(canAccessDashboardPath('direccion', path), true);
     assert.equal(canAccessDashboardPath('super_admin', path), true);
+    assert.equal(canAccessDashboardPath('asesor', path), true);
     assert.equal(canAccessDashboardPath({ rol: 'asesor', rolesExtra: ['direccion'] }, path), true);
-    for (const role of ['asesor', 'comprador', 'aprobador', 'editor_contenido'] as const) assert.equal(canAccessDashboardPath(role, path), false);
+    for (const role of ['comprador', 'aprobador', 'editor_contenido'] as const) assert.equal(canAccessDashboardPath(role, path), false);
   }
   assert.equal(canAccessDashboardPath('editor_contenido', '/admin/leads'), true);
 });
