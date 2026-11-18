@@ -3,6 +3,10 @@
     {
       "path": "/api/internal/notificaciones-email/process",
       "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/internal/alertas-comerciales",
+      "schedule": "0 13 * * 1-5"
     }
   ]
 }
