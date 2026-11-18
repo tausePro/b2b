@@ -133,6 +133,12 @@ La utilidad bruta de ventas equivale al margen firmado de Odoo (`margin_signed`)
 
 Conciliación de octubre de 2026: venta 607.606.414,28, costo 400.610.438,47 y utilidad 206.995.975,81, iguales a Odoo. De las 41 líneas con costo cero, 33 son servicios (7.123.920) y 8 mercancía por revisar (1.966.300). La respuesta de octubre pasó de 714.681 a 245.392 bytes.
 
+## Tablero comercial, fase 2 (v2.14.52)
+
+- Cierre automático: si el cliente vuelve a comprar después de la compra registrada al gestionar su alerta (`alertas_clientes_gestion.ultima_compra`), la alerta se cierra sola y el cliente cuenta como recuperado, con el valor comprado desde su regreso (`isRecovered`, `valueSince`).
+- "Gestión del mes" en el tablero de cada asesora y en la vista de equipo: recuperados del mes y su valor, oportunidades abiertas, alertas sin gestionar y clientes gestionados en 30 días.
+- Aviso push diario: cron de Vercel `0 13 * * 1-5` (8 a. m. de Bogotá, lunes a viernes) a `/api/internal/alertas-comerciales`, protegido con `CRON_SECRET`; a cada asesora con alertas sin gestionar le llega cuántas tiene y por cuál empezar. Requiere que la asesora active las notificaciones en Mi Perfil.
+
 ## Detalle de pedidos por facturar (v2.14.51)
 
 - En el Resumen ejecutivo y en `/dashboard/por-facturar`, cada pedido se abre (botón con el nombre del pedido en escritorio, "Ver detalle" en el celular) y consulta en Odoo `GET /api/gerencia/pedido-por-facturar?id=<sale.order>` (Dirección y Super Admin, solo lectura): líneas con cantidad pedida, entregada, facturada y por facturar, valor por facturar, entregas pendientes y facturas en borrador del pedido.

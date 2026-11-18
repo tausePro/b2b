@@ -154,6 +154,30 @@ function AdvisorView({ board, canEdit, onSaved }: { board: AdvisorBoard; canEdit
         </section>
       </div>
 
+      {board.features.gestion && (
+        <section aria-labelledby="gestion-mes" className={card}>
+          <h2 id="gestion-mes" className="font-semibold">Gestión del mes</h2>
+          <dl className="mt-3 grid grid-cols-2 gap-2 text-sm lg:grid-cols-4">
+            <div className="rounded-xl bg-emerald-50 p-3"><dt className="text-xs text-emerald-800">Clientes recuperados</dt><dd className="text-lg font-semibold tabular-nums text-emerald-900">{board.management.recovered.count}</dd><dd className="text-xs text-emerald-800">{formatCOP(board.management.recovered.value)} comprados desde su regreso</dd></div>
+            <div className="rounded-xl bg-background-light p-3"><dt className="text-xs text-muted">Oportunidades abiertas</dt><dd className="text-lg font-semibold tabular-nums">{board.management.opportunities.count}</dd><dd className="text-xs text-muted">{formatCOP(board.management.opportunities.value)} estimados</dd></div>
+            <div className="rounded-xl bg-background-light p-3"><dt className="text-xs text-muted">Alertas sin gestionar</dt><dd className="text-lg font-semibold tabular-nums text-amber-700">{board.management.unmanaged}</dd><dd className="text-xs text-muted">de {board.alerts.length} abiertas</dd></div>
+            <div className="rounded-xl bg-background-light p-3"><dt className="text-xs text-muted">Clientes gestionados</dt><dd className="text-lg font-semibold tabular-nums">{board.management.managed30d}</dd><dd className="text-xs text-muted">en los últimos 30 días</dd></div>
+          </dl>
+          {board.recovered.length > 0 && (
+            <ol className="mt-4 divide-y divide-border border-t border-border">
+              {board.recovered.map((client) => (
+                <li key={client.partnerId} className="flex flex-wrap items-baseline justify-between gap-2 py-2.5 text-sm">
+                  <span className="min-w-0"><span className="font-medium">{client.name}</span>
+                    <span className="block text-xs text-muted">{actionLabel(client.estado)} el {dateLabel(client.managedAt)} · volvió a comprar el {dateLabel(client.lastPurchase)} (antes: {dateLabel(client.previousPurchase)})</span></span>
+                  <span className="font-semibold tabular-nums text-emerald-800">{formatCOP(client.valueSince)}</span>
+                </li>
+              ))}
+            </ol>
+          )}
+          <p className="mt-3 text-xs text-muted">Una alerta gestionada se cierra sola cuando el cliente vuelve a comprar, y ese cliente cuenta como recuperado.</p>
+        </section>
+      )}
+
       {board.frequentInactive.length > 0 && (
         <section aria-labelledby="frecuentes" className={card}>
           <h2 id="frecuentes" className="font-semibold">Clientes frecuentes que dejaron de comprar</h2>
@@ -203,6 +227,11 @@ function TeamView({ team, onOpen }: { team: AdvisorBoard[]; onOpen: (id: string)
             <p className="text-xs text-muted">Mes anterior {pct(board.sales.changeVsPreviousMonth)} · año anterior {pct(board.sales.changeVsPreviousYear)}</p>
             <p className="mt-2 text-sm">{board.sales.goal ? `Meta ${formatCOP(board.sales.goal)} · ${board.sales.goalProgress?.toLocaleString('es-CO')} %` : 'Sin meta este mes'}</p>
             <p className="mt-1 text-sm text-muted">{board.clients.boughtThisMonth} de {board.clients.assigned} clientes compraron · <span className="text-red-700">{board.clients.priority} prioritarias</span> · <span className="text-amber-700">{board.clients.followUp} seguimiento</span></p>
+            {board.features.gestion && (
+              <p className="mt-1 text-sm text-muted">
+                <span className="text-emerald-800">{board.management.recovered.count} recuperados ({formatCOP(board.management.recovered.value)})</span> · {board.management.unmanaged} sin gestionar · {board.management.opportunities.count} oportunidades
+              </p>
+            )}
             <button type="button" onClick={() => onOpen(board.advisor.id)} className="mt-3 inline-flex min-h-10 items-center gap-1 rounded-xl border border-border px-3 text-sm font-medium hover:bg-background-light">Ver tablero<ArrowRight className="h-4 w-4" aria-hidden="true" /></button>
           </li>
         ))}

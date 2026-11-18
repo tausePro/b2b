@@ -7,7 +7,7 @@ import { getBogotaCalendarDate, roundCurrency } from '@/lib/comisiones/bonoPlata
 import { FinancialDataError, getOdooReportCompany } from '@/lib/gerencia/finanzas.server';
 import { percentChange, samePeriod, shiftMonth } from '@/lib/gerencia/resumen';
 import {
-  clientAlert, goalProgress, monthProjection, purchasePattern, trendStatus, type ClientAlert, type PurchasePattern, type TrendStatus,
+  clientAlert, goalProgress, isRecovered, monthProjection, purchasePattern, trendStatus, valueSince, type ClientAlert, type PurchasePattern, type TrendStatus,
 } from './tablero';
 
 export interface AdvisorRef { id: string; name: string; odooUserId: number }
@@ -16,7 +16,13 @@ export interface SalesSnapshot {
   changeVsPreviousMonth: number | null; changeVsPreviousYear: number | null; trend: TrendStatus | null;
   goal: number | null; goalProgress: number | null; projection: number;
 }
-export interface ClientAction { estado: string; nota: string | null; fecha: string; autor: string | null; valor: number | null }
+export interface ClientAction { estado: string; nota: string | null; fecha: string; autor: string | null; valor: number | null; ultimaCompra: string | null }
+export interface RecoveredClient { partnerId: number; name: string; estado: string; managedAt: string; previousPurchase: string; lastPurchase: string; valueSince: number }
+export interface ManagementSummary {
+  unmanaged: number; managed30d: number;
+  opportunities: { count: number; value: number };
+  recovered: { count: number; value: number };
+}
 export interface ClientRow {
   partnerId: number; name: string; lastPurchase: string | null; purchases: number; sales12m: number;
   boughtThisMonth: boolean; pattern: PurchasePattern | null; alert: ClientAlert | null; lastAction: ClientAction | null;
@@ -25,6 +31,10 @@ export interface ClientCounts { assigned: number; boughtThisMonth: number; activ
 export interface AdvisorBoard {
   advisor: AdvisorRef; today: string; sales: SalesSnapshot; clients: ClientCounts;
   alerts: ClientRow[]; frequentInactive: ClientRow[]; features: { gestion: boolean };
+  /** Gestión del mes: sin gestionar, gestionadas (30 días), oportunidades abiertas y recuperados del mes. */
+  management: ManagementSummary;
+  /** Clientes que volvieron a comprar en el mes después de gestionar su alerta. */
+  recovered: RecoveredClient[];
 }
 
 const HISTORY_DAYS = 548;
@@ -103,14 +113,16 @@ async function buildBoards(admin: SupabaseClient, advisors: AdvisorRef[], today:
   const byUser = (rows: Record<string, unknown>[]) => new Map(rows.map((row) => [relationId(row.invoice_user_id), { sales: money(row.amount_untaxed_signed), documents: Number(row.__count ?? 0) }]));
   const [current, lastMonth, lastYear] = [byUser(currentRows), byUser(previousMonthRows), byUser(previousYearRows)];
 
-  const purchases = new Map<number, { dates: string[]; sales12m: number }>();
+  const purchases = new Map<number, { dates: string[]; sales12m: number; days: Map<string, number> }>();
   for (const row of history) {
     const partnerId = relationId(row.commercial_partner_id);
     const day = (row.__range as Record<string, { from?: string }> | undefined)?.['invoice_date:day']?.from?.slice(0, 10);
     if (!partnerId || !day) continue;
-    const entry = purchases.get(partnerId) ?? { dates: [], sales12m: 0 };
+    const entry = purchases.get(partnerId) ?? { dates: [], sales12m: 0, days: new Map<string, number>() };
+    const amount = money(row.amount_untaxed_signed);
     entry.dates.push(day);
-    if (day >= salesFrom) entry.sales12m = roundCurrency(entry.sales12m + money(row.amount_untaxed_signed));
+    entry.days.set(day, roundCurrency((entry.days.get(day) ?? 0) + amount));
+    if (day >= salesFrom) entry.sales12m = roundCurrency(entry.sales12m + amount);
     purchases.set(partnerId, entry);
   }
 
@@ -118,7 +130,7 @@ async function buildBoards(admin: SupabaseClient, advisors: AdvisorRef[], today:
   const [goals, thresholds, actions] = tracking ? await Promise.all([
     admin.from('metas_comerciales').select('asesor_id, valor').eq('mes', `${month}-01`),
     admin.from('alertas_clientes_umbral').select('odoo_partner_id, dias_seguimiento, dias_prioritaria').in('odoo_partner_id', partnerIds.length ? partnerIds : [0]),
-    admin.from('alertas_clientes_gestion').select('odoo_partner_id, estado, nota, valor_oportunidad, created_at, usuario:usuarios!alertas_clientes_gestion_usuario_id_fkey(nombre, apellido)')
+    admin.from('alertas_clientes_gestion').select('odoo_partner_id, estado, nota, valor_oportunidad, ultima_compra, created_at, usuario:usuarios!alertas_clientes_gestion_usuario_id_fkey(nombre, apellido)')
       .in('odoo_partner_id', partnerIds.length ? partnerIds : [0]).order('created_at', { ascending: false }).limit(5000),
   ]) : [null, null, null];
   const goalByAdvisor = new Map((goals?.data ?? []).map((row) => [row.asesor_id as string, Number(row.valor)]));
@@ -128,21 +140,42 @@ async function buildBoards(admin: SupabaseClient, advisors: AdvisorRef[], today:
     const partnerId = Number(row.odoo_partner_id);
     if (actionByPartner.has(partnerId)) continue;
     const user = Array.isArray(row.usuario) ? row.usuario[0] : row.usuario;
-    actionByPartner.set(partnerId, { estado: row.estado, nota: row.nota, fecha: row.created_at, autor: fullName(user as { nombre?: string | null; apellido?: string | null } | null) || null, valor: row.valor_oportunidad === null ? null : Number(row.valor_oportunidad) });
+    actionByPartner.set(partnerId, {
+      estado: row.estado, nota: row.nota, fecha: row.created_at, autor: fullName(user as { nombre?: string | null; apellido?: string | null } | null) || null,
+      valor: row.valor_oportunidad === null ? null : Number(row.valor_oportunidad), ultimaCompra: typeof row.ultima_compra === 'string' ? row.ultima_compra : null,
+    });
   }
+  const since30 = new Date(Date.parse(`${today}T00:00:00Z`) - 30 * 86_400_000).toISOString();
 
   return advisors.map((advisor) => {
+    const recovered: RecoveredClient[] = [];
+    let managed30d = 0;
+    const opportunities = { count: 0, value: 0 };
     const rows: ClientRow[] = partners.filter((partner) => relationId(partner.user_id) === advisor.odooUserId).map((partner) => {
       const partnerId = Number(partner.id);
       const entry = purchases.get(partnerId);
       const dates = [...new Set(entry?.dates ?? [])].sort();
       const pattern = purchasePattern(dates);
       const lastPurchase = dates.at(-1) ?? null;
+      const action = actionByPartner.get(partnerId) ?? null;
+      // Cierre automático: si volvió a comprar después de la gestión, esa gestión cierra el episodio y cuenta como recuperado.
+      const closed = Boolean(action && isRecovered(lastPurchase, action.ultimaCompra));
+      if (action && action.fecha >= since30) managed30d++;
+      if (closed && lastPurchase && lastPurchase >= `${month}-01`) {
+        recovered.push({
+          partnerId, name: String(partner.name ?? 'Cliente'), estado: action!.estado, managedAt: action!.fecha, previousPurchase: action!.ultimaCompra!,
+          lastPurchase, valueSince: valueSince(entry?.days ?? [], action!.ultimaCompra!),
+        });
+      }
+      if (action && !closed && action.estado === 'oportunidad' && action.fecha >= `${month}-01`) {
+        opportunities.count++;
+        opportunities.value = roundCurrency(opportunities.value + (action.valor ?? 0));
+      }
       return {
         partnerId, name: String(partner.name ?? 'Cliente'), lastPurchase, purchases: dates.length, sales12m: entry?.sales12m ?? 0,
         boughtThisMonth: Boolean(lastPurchase && lastPurchase >= `${month}-01`), pattern,
         alert: lastPurchase ? clientAlert(lastPurchase, today, pattern, thresholdByPartner.get(partnerId)) : null,
-        lastAction: actionByPartner.get(partnerId) ?? null,
+        lastAction: closed ? null : action,
       };
     });
     const level = (value: string) => rows.filter((row) => row.alert?.level === value).length;
@@ -166,6 +199,11 @@ async function buildBoards(admin: SupabaseClient, advisors: AdvisorRef[], today:
       alerts,
       frequentInactive: alerts.filter((row) => row.purchases >= FREQUENT_MIN_PURCHASES).slice(0, 10),
       features: { gestion: tracking },
+      management: {
+        unmanaged: alerts.filter((row) => !row.lastAction).length, managed30d, opportunities,
+        recovered: { count: recovered.length, value: roundCurrency(recovered.reduce((sum, client) => sum + client.valueSince, 0)) },
+      },
+      recovered: recovered.sort((a, b) => b.valueSince - a.valueSince),
     };
   });
 }
