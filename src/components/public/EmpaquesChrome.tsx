@@ -1,6 +1,7 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import { Building2, Search } from 'lucide-react';
+import PoweredByTause from '@/components/ui/PoweredByTause';
 
 type EmpaquesChromeProps = {
   sectionBasePath?: string;
@@ -90,8 +91,9 @@ export function EmpaquesFooter({ sectionBasePath = '', personalizedHref = '/empa
             <li><Link className="hover:text-[#9CBB06] hover:underline" href="/contacto">Comerciales</Link></li>
           </ul>
         </div>
-        <div className="border-t border-slate-200 pt-8 text-zinc-500 md:col-span-4">
-          © 2026 Imprima. Líderes en soluciones de empaque B2B.
+        <div className="flex flex-col gap-2 border-t border-slate-200 pt-8 text-zinc-500 md:col-span-4 md:flex-row md:items-center md:justify-between">
+          <span>© 2026 Imprima. Líderes en soluciones de empaque B2B.</span>
+          <PoweredByTause placement="empaques" />
         </div>
       </div>
     </footer>

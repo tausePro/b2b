@@ -8,13 +8,14 @@ import LeadDetail, { AttributionChip, type LeadRow } from '@/components/leads/Le
 import { normalizeSearchText } from '@/lib/busqueda/buscar';
 import { useLightDismiss } from '@/lib/ui/useLightDismiss';
 import {
-  ATTRIBUTION_LABELS, LEAD_CONTACT_SLA_HOURS, LEAD_CONVERSION_GOAL, LEAD_ESTADOS, LEAD_PERIOD_DAYS, buildLeadSummary, buildLeadsCsv,
+  ATTRIBUTION_LABELS, LEAD_CONTACT_SLA_HOURS, LEAD_CONVERSION_GOAL, LEAD_ESTADOS, LEAD_PERIOD_DAYS, buildAdvisorLeadStats, buildLeadSummary, buildLeadsCsv,
   formatHours, formatTimeAgo, hoursSince, isLeadOverdue, leadAttribution, leadSource, whatsappLink, type LeadAttribution, type LeadEstado,
 } from '@/lib/leads/seguimiento';
+import NuevoLeadDialog from '@/components/leads/NuevoLeadDialog';
 import { cn } from '@/lib/utils';
 
 type Chip = 'todos' | 'atrasados' | LeadEstado;
-type Loaded = { key: string; leads: LeadRow[]; tracking: boolean; advisors: { id: string; nombre: string }[]; warnings: string[]; error: string | null; now: number };
+type Loaded = { key: string; leads: LeadRow[]; tracking: boolean; ownOnly: boolean; advisors: { id: string; nombre: string }[]; warnings: string[]; error: string | null; now: number };
 
 const card = 'rounded-2xl border border-border bg-white';
 const ESTADO_TONE: Record<string, string> = { nuevo: 'bg-blue-50 text-blue-700', contactado: 'bg-amber-50 text-amber-800', convertido: 'bg-emerald-50 text-emerald-800', descartado: 'bg-background-light text-muted' };
@@ -63,6 +64,8 @@ export default function LeadsDashboard() {
   const [sourceFilter, setSourceFilter] = useState('todos');
   const [attributionFilter, setAttributionFilter] = useState<'todos' | LeadAttribution>('todos');
   const [view, setView] = useState<'lista' | 'tablero'>('lista');
+  const [advisorFilter, setAdvisorFilter] = useState('todas');
+  const [creating, setCreating] = useState(false);
   // Enlace directo desde los correos de aviso: ?lead=<uuid>
   const [selectedId, setSelectedId] = useState<string | null>(() => (typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('lead')));
   const wide = useSyncExternalStore(subscribeWide, () => window.matchMedia(WIDE_QUERY).matches, () => true);
@@ -80,11 +83,11 @@ export default function LeadsDashboard() {
         const payload = await response.json().catch(() => null);
         if (!response.ok) throw new Error(payload?.error ?? 'No se pudieron cargar los leads.');
         setData({
-          key, leads: Array.isArray(payload.leads) ? payload.leads : [], tracking: Boolean(payload.features?.seguimiento),
+          key, leads: Array.isArray(payload.leads) ? payload.leads : [], tracking: Boolean(payload.features?.seguimiento), ownOnly: payload.features?.alcance === 'propios',
           advisors: Array.isArray(payload.asesoras) ? payload.asesoras : [], warnings: Array.isArray(payload.warnings) ? payload.warnings : [], error: null, now: Date.now(),
         });
       })
-      .catch((error) => { if (!controller.signal.aborted) setData({ key, leads: [], tracking: false, advisors: [], warnings: [], error: error instanceof Error ? error.message : 'No se pudieron cargar los leads.', now: Date.now() }); });
+      .catch((error) => { if (!controller.signal.aborted) setData({ key, leads: [], tracking: false, ownOnly: false, advisors: [], warnings: [], error: error instanceof Error ? error.message : 'No se pudieron cargar los leads.', now: Date.now() }); });
     return () => controller.abort();
   }, [key, showAll]);
 
@@ -105,10 +108,12 @@ export default function LeadsDashboard() {
   const matchesChip = (lead: LeadRow, value: Chip) => value === 'todos' || (value === 'atrasados' ? isLeadOverdue(lead, now) : lead.estado === value);
   const matchesOthers = (lead: LeadRow) => (sourceFilter === 'todos' || leadSource(lead.fuente).label === sourceFilter)
     && (attributionFilter === 'todos' || leadAttribution(lead) === attributionFilter)
+    && (advisorFilter === 'todas' || (advisorFilter === 'sin_asignar' ? !lead.asignado_a : lead.asignado_a === advisorFilter))
     && (!needle || normalizeSearchText([lead.nombre, lead.empresa, lead.email, lead.telefono, lead.mensaje].filter(Boolean).join(' ')).includes(needle));
   const filtered = base.filter((lead) => matchesChip(lead, chip) && matchesOthers(lead));
   const chipCount = (value: Chip) => base.filter((lead) => matchesChip(lead, value) && matchesOthers(lead)).length;
   const maxSource = Math.max(1, ...summary.sources.map((source) => source.count));
+  const advisorStats = current && !current.ownOnly && current.tracking ? buildAdvisorLeadStats(base, now) : [];
 
   const updateLead = (patch: Partial<LeadRow> & { id: string }) => setData((previous) => previous && { ...previous, leads: previous.leads.map((lead) => (lead.id === patch.id ? { ...lead, ...patch } : lead)) });
   const removeLead = (id: string) => { setData((previous) => previous && { ...previous, leads: previous.leads.filter((lead) => lead.id !== id) }); setSelectedId(null); };
@@ -150,7 +155,7 @@ export default function LeadsDashboard() {
   };
 
   const detail = selectedId && current ? (
-    <LeadDetail key={selectedId} leadId={selectedId} now={now} tracking={current.tracking} advisors={current.advisors} canDelete={canDelete}
+    <LeadDetail key={selectedId} leadId={selectedId} now={now} tracking={current.tracking} canAssign={!current.ownOnly} advisors={current.advisors} canDelete={canDelete && !current.ownOnly}
       onClose={() => setSelectedId(null)} onUpdated={updateLead} onDeleted={removeLead} />
   ) : null;
 
@@ -159,9 +164,10 @@ export default function LeadsDashboard() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Leads</h1>
-          <p className="mt-1 text-sm text-muted">Contactos del sitio público y Empaques · {showAll ? 'todos los registros' : `últimos ${LEAD_PERIOD_DAYS} días`}</p>
+          <p className="mt-1 text-sm text-muted">{current?.ownOnly ? 'Leads asignados a ti' : 'Contactos del sitio público y Empaques'} · {showAll ? 'todos los registros' : `últimos ${LEAD_PERIOD_DAYS} días`}</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          {current?.tracking && <button type="button" onClick={() => setCreating(true)} className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-foreground px-4 text-sm font-semibold text-white hover:bg-foreground/90"><UserPlus className="h-4 w-4" aria-hidden="true" />Nuevo lead</button>}
           {user?.rol === 'super_admin' && <Link href="/admin/configuracion#leads-notificaciones" className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-border bg-white px-4 text-sm font-medium hover:bg-background-light"><Bell className="h-4 w-4" aria-hidden="true" />Notificaciones</Link>}
           <button type="button" disabled={filtered.length === 0} onClick={() => download(`leads-${new Date(now || 0).toISOString().slice(0, 10)}.csv`, buildLeadsCsv(filtered))} className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-border bg-white px-4 text-sm font-medium hover:bg-background-light disabled:opacity-50"><Download className="h-4 w-4" aria-hidden="true" />Exportar CSV</button>
           <button type="button" onClick={() => setRefresh((value) => value + 1)} className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-border bg-white px-3 text-sm font-medium hover:bg-background-light" aria-label="Actualizar"><RefreshCw className="h-4 w-4" aria-hidden="true" /></button>
@@ -245,6 +251,48 @@ export default function LeadsDashboard() {
           </section>
         </div>
 
+        {advisorStats.length > 0 && (
+          <section aria-labelledby="leads-asesoras" className={cn(card, 'p-5')}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 id="leads-asesoras" className="font-semibold">Gestión por asesora</h2>
+              <p className="text-xs text-muted">{showAll ? 'Todos los registros' : `Últimos ${LEAD_PERIOD_DAYS} días`} · clic en una asesora para ver sus leads</p>
+            </div>
+            <div className="mt-3 overflow-x-auto" role="region" aria-labelledby="leads-asesoras" tabIndex={0}>
+              <table className="w-full min-w-[40rem] text-sm">
+                <thead className="text-left text-xs text-muted">
+                  <tr>
+                    <th scope="col" className="py-2 pr-3 font-medium">Asesora</th>
+                    <th scope="col" className="px-3 py-2 text-right font-medium">Leads</th>
+                    <th scope="col" className="px-3 py-2 text-right font-medium">Sin contactar</th>
+                    <th scope="col" className="px-3 py-2 text-right font-medium">Contactados</th>
+                    <th scope="col" className="px-3 py-2 text-right font-medium">Convertidos</th>
+                    <th scope="col" className="px-3 py-2 text-right font-medium">Descartados</th>
+                    <th scope="col" className="py-2 pl-3 text-right font-medium">Respuesta media</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {advisorStats.map((row) => {
+                    const value = row.advisorId ?? 'sin_asignar';
+                    return (
+                      <tr key={value} className={cn('border-t border-border', advisorFilter === value && 'bg-primary/5')}>
+                        <th scope="row" className="py-2 pr-3 text-left font-medium">
+                          <button type="button" aria-pressed={advisorFilter === value} onClick={() => setAdvisorFilter(advisorFilter === value ? 'todas' : value)} className="text-left hover:underline focus-visible:outline-2 focus-visible:outline-primary">{row.name}</button>
+                        </th>
+                        <td className="px-3 py-2 text-right tabular-nums">{row.total}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{row.uncontacted}{row.overdue > 0 && <span className="ml-1 text-xs text-red-700">({row.overdue} fuera de plazo)</span>}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{row.contacted}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{row.converted}{row.conversionPercent !== null && <span className="ml-1 text-xs text-muted">({row.conversionPercent.toLocaleString('es-CO')} %)</span>}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{row.discarded}</td>
+                        <td className="py-2 pl-3 text-right tabular-nums">{row.averageResponseHours === null ? '—' : formatHours(row.averageResponseHours)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
+
         <div className="flex flex-wrap items-center gap-2">
           <label className="relative min-w-56 flex-1 sm:max-w-xs">
             <span className="sr-only">Buscar leads</span>
@@ -263,8 +311,16 @@ export default function LeadsDashboard() {
         </div>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <details className="relative">
-            <summary className="inline-flex min-h-10 cursor-pointer list-none items-center gap-2 rounded-full border border-dashed border-border bg-white px-3.5 text-sm font-medium"><SlidersHorizontal className="h-4 w-4" aria-hidden="true" />Fuente · Atribución{(sourceFilter !== 'todos' || attributionFilter !== 'todos') && ' (activo)'}</summary>
+            <summary className="inline-flex min-h-10 cursor-pointer list-none items-center gap-2 rounded-full border border-dashed border-border bg-white px-3.5 text-sm font-medium"><SlidersHorizontal className="h-4 w-4" aria-hidden="true" />Más filtros{(sourceFilter !== 'todos' || attributionFilter !== 'todos' || advisorFilter !== 'todas') && ' (activo)'}</summary>
             <div className="absolute left-0 z-20 mt-2 w-72 space-y-3 rounded-xl border border-border bg-white p-4 shadow-lg">
+              {current && !current.ownOnly && current.tracking && (
+                <label className="block text-sm font-medium">Asesora
+                  <select value={advisorFilter} onChange={(event) => setAdvisorFilter(event.target.value)} className="mt-1 w-full rounded-lg border border-border px-2 py-2 text-sm">
+                    <option value="todas">Todas</option><option value="sin_asignar">Sin asignar</option>
+                    {current.advisors.map((advisor) => <option key={advisor.id} value={advisor.id}>{advisor.nombre}</option>)}
+                  </select>
+                </label>
+              )}
               <label className="block text-sm font-medium">Fuente
                 <select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)} className="mt-1 w-full rounded-lg border border-border px-2 py-2 text-sm">
                   <option value="todos">Todas</option>{sources.map((source) => <option key={source} value={source}>{source}</option>)}
@@ -317,6 +373,11 @@ export default function LeadsDashboard() {
           </div>
         )}
       </>}
+
+      {current?.tracking && (
+        <NuevoLeadDialog open={creating} advisors={current.advisors} canAssign={!current.ownOnly} onClose={() => setCreating(false)}
+          onCreated={(id) => { setCreating(false); setSelectedId(id); setRefresh((value) => value + 1); }} />
+      )}
 
       <dialog ref={dialogRef} {...({ closedby: 'any' } as Record<string, string>)} aria-labelledby="lead-detalle-titulo"
         onClose={() => { if (!window.matchMedia(WIDE_QUERY).matches || view === 'tablero') setSelectedId(null); }}

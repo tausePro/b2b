@@ -18,9 +18,15 @@ test('tablero comercial: seguimiento al salir de su rango normal y prioritaria a
   const pattern = purchasePattern(BOOM);
   assert.deepEqual(clientAlert('2026-08-06', '2026-08-20', pattern).level, 'al_dia');
   assert.deepEqual(clientAlert('2026-08-06', '2026-08-30', pattern).level, 'seguimiento');
+  // Cliente recurrente (compra cada ~14 días): 30 días sin comprar es seguimiento, no prioridad (piso de 45 días).
+  assert.deepEqual(clientAlert('2026-08-06', '2026-09-05', pattern).level, 'seguimiento');
+  assert.deepEqual(clientAlert('2026-08-06', '2026-08-25', pattern).level, 'al_dia');
   const alert = clientAlert('2026-08-06', '2026-11-12', pattern);
-  assert.deepEqual([alert.level, alert.daysSince, alert.followAfter, alert.priorityAfter, alert.usesPattern], ['prioritaria', 98, 18, 28, true]);
+  assert.deepEqual([alert.level, alert.daysSince, alert.followAfter, alert.priorityAfter, alert.usesPattern], ['prioritaria', 98, 21, 45, true]);
   assert.equal(alert.reason, 'Compra cada ~14 días (normal 8–18); lleva 98 días sin comprar');
+  // Más de 6 meses sin comprar: inactivo (fuera de la prioridad diaria).
+  assert.equal(clientAlert('2026-08-06', '2027-02-03', pattern).level, 'inactivo');
+  assert.equal(clientAlert('2026-08-06', '2027-02-01', pattern).level, 'prioritaria');
 });
 
 test('tablero comercial: sin ritmo se usa 30 y 60 días; el ajuste por cliente manda sobre el ritmo', () => {

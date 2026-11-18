@@ -38,7 +38,9 @@ test('barra inferior del celular: Gerencia según la propuesta y cada destino pe
   assert.deepEqual(buildMobileDestinations(['direccion']).map(item => [item.label, item.href]), [
     ['Resumen', '/dashboard'], ['Ventas', '/dashboard/analitica'], ['Pedidos', '/dashboard/por-facturar'], ['Cartera', '/dashboard/cartera'],
   ]);
-  assert.deepEqual(buildMobileDestinations(['asesor']).map(item => item.label), ['Dashboard', 'Tablero', 'Clientes', 'Catálogo']);
+  assert.deepEqual(buildMobileDestinations(['asesor']).map(item => item.label), ['Dashboard', 'Tablero', 'Clientes', 'Bono']);
+  assert.equal(buildMenuGroups(['asesor']).flatMap(group => group.items).some(item => item.href === '/dashboard/catalogo'), false);
+  assert.equal(canAccessDashboardPath('asesor', '/dashboard/catalogo'), false);
   assert.deepEqual(buildMobileDestinations(['cartera']).map(item => item.label), ['Dashboard', 'Cartera']);
   assert.deepEqual(buildMobileDestinations(['compras']).map(item => item.label), ['Compras', 'Pedidos', 'Catálogo']);
   for (const role of ['super_admin', 'direccion', 'asesor', 'compras', 'cartera'] as UserRole[]) {

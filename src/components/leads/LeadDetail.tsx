@@ -38,10 +38,12 @@ export function AttributionChip({ lead }: { lead: Pick<LeadTrackingInput, 'gclid
 }
 
 /** Panel de detalle del lead: contacto, estado, asignación, empaque personalizado, atribución y actividad. */
-export default function LeadDetail({ leadId, now, tracking, advisors, canDelete, onClose, onUpdated, onDeleted }: {
+export default function LeadDetail({ leadId, now, tracking, canAssign, advisors, canDelete, onClose, onUpdated, onDeleted }: {
   leadId: string;
   now: number;
   tracking: boolean;
+  /** Dirección asigna; la asesora solo ve a quién está asignado. */
+  canAssign: boolean;
   advisors: { id: string; nombre: string }[];
   canDelete: boolean;
   onClose: () => void;
@@ -139,9 +141,9 @@ export default function LeadDetail({ leadId, now, tracking, advisors, canDelete,
           <dl className="grid grid-cols-[6.5rem_1fr] gap-x-3 gap-y-2.5 text-sm">
             <dt className="text-muted">Correo</dt><dd className="break-all">{lead.email || 'No registrado'}</dd>
             <dt className="text-muted">Teléfono</dt><dd>{lead.telefono || 'No registrado'}</dd>
-            <dt className="text-muted"><label htmlFor="lead-asesora">Asesora</label></dt>
+            <dt className="text-muted">{canAssign ? <label htmlFor="lead-asesora">Asesora</label> : 'Asesora'}</dt>
             <dd>
-              {tracking ? (
+              {tracking && !canAssign ? <span className="font-medium">{lead.asignado_nombre ?? 'Sin asignar'}</span> : tracking ? (
                 <select id="lead-asesora" value={lead.asignado_a ?? ''} disabled={saving !== null}
                   onChange={(event) => save('asesora', { asignado_a: event.target.value || null }, event.target.value ? 'Asesora asignada; le enviamos un aviso.' : 'Lead sin asignar.')}
                   className="w-full rounded-lg border border-border bg-white px-2 py-1.5 font-medium">

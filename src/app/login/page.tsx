@@ -1,37 +1,30 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { Loader2 } from 'lucide-react';
 import PwaHead from '@/components/pwa/PwaHead';
+import PoweredByTause from '@/components/ui/PoweredByTause';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [redirecting, setRedirecting] = useState(false);
   
   // Extraemos supabaseUser también, porque si existe en Auth pero no tiene perfil,
   // debemos redirigirlo igual al dashboard para que vea el error de "Perfil no encontrado".
   const { signIn, user, supabaseUser, loading: authLoading } = useAuth();
-  const router = useRouter();
+  const redirecting = !authLoading && Boolean(user || supabaseUser);
 
   // Redirigir automáticamente si el usuario ya está autenticado (ya sea completo o solo auth)
   useEffect(() => {
-    let mounted = true;
-    if (!authLoading && (user || supabaseUser)) {
-      setRedirecting(true);
-      const timer = setTimeout(() => {
-        if (mounted) window.location.href = '/dashboard';
-      }, 100);
-      return () => {
-        mounted = false;
-        clearTimeout(timer);
-      };
-    }
-  }, [user, supabaseUser, authLoading]);
+    if (!redirecting) return;
+    const timer = setTimeout(() => {
+      window.location.href = '/dashboard';
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [redirecting]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -173,6 +166,7 @@ export default function LoginPage() {
                 soporte TI
               </button>
             </p>
+            <PoweredByTause placement="login" className="mt-3 text-muted" />
           </div>
         </div>
       </div>

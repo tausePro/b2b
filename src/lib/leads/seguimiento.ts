@@ -56,7 +56,11 @@ const SOURCE_DETAILS: Record<string, [string, string | null]> = {
   whatsapp_bubble: ['WhatsApp', 'Burbuja'], contacto_whatsapp: ['WhatsApp', 'Contacto'],
   catalogo_banner: ['Catálogo', 'Banner'], catalogo_publico_sin_resultados: ['Catálogo', 'Sin resultados'], catalogo_publico_cta: ['Catálogo', 'CTA final'],
   contacto_formulario: ['Contacto', 'Formulario'],
+  registro_asesora: ['Asesora', 'Registro manual'],
 };
+
+/** Fuente de los leads que registra una asesora o Dirección desde el portal (prospección propia). */
+export const MANUAL_LEAD_SOURCE = 'registro_asesora';
 
 /** Fuente técnica (`empaques_producto_11448`) a un origen legible ("Empaques · Producto"). */
 export function leadSource(fuente: string): { group: string; detail: string | null; label: string } {
@@ -136,6 +140,31 @@ export function buildLeadSummary(leads: readonly LeadTrackingInput[], now: numbe
       return { kind, count: value, percent: percent(value, total) };
     }),
   };
+}
+
+export interface AdvisorLeadStats {
+  advisorId: string | null; name: string; total: number; uncontacted: number; overdue: number;
+  contacted: number; converted: number; discarded: number; conversionPercent: number | null; averageResponseHours: number | null;
+}
+
+/** Gestión de leads por asesora (para Dirección): asignados, sin contactar, contactados, convertidos y respuesta media. */
+export function buildAdvisorLeadStats(leads: readonly (LeadTrackingInput & { asignado_a?: string | null })[], now: number): AdvisorLeadStats[] {
+  const groups = new Map<string, (LeadTrackingInput & { asignado_a?: string | null })[]>();
+  for (const lead of leads) {
+    const key = lead.asignado_a ?? '';
+    groups.set(key, [...(groups.get(key) ?? []), lead]);
+  }
+  return [...groups].map(([key, items]) => {
+    const count = (estado: LeadEstado) => items.filter(lead => lead.estado === estado).length;
+    const responses = items.filter(lead => lead.contactado_at).map(lead => (Date.parse(lead.contactado_at!) - Date.parse(lead.created_at)) / 3_600_000).filter(value => value >= 0);
+    const converted = count('convertido');
+    return {
+      advisorId: key || null, name: key ? items.find(lead => lead.asignado_nombre)?.asignado_nombre ?? 'Asesora' : 'Sin asignar', total: items.length,
+      uncontacted: count('nuevo'), overdue: items.filter(lead => isLeadOverdue(lead, now)).length,
+      contacted: count('contactado'), converted, discarded: count('descartado'), conversionPercent: percent(converted, items.length),
+      averageResponseHours: responses.length ? responses.reduce((sum, value) => sum + value, 0) / responses.length : null,
+    };
+  }).sort((a, b) => Number(a.advisorId === null) - Number(b.advisorId === null) || b.total - a.total || a.name.localeCompare(b.name, 'es'));
 }
 
 /** Enlace de WhatsApp al teléfono del lead (E.164 o dígitos), con saludo prellenado. */

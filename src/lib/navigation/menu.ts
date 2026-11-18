@@ -51,7 +51,7 @@ export const MENU_BY_ROLE: Record<UserRole, MenuGroup[]> = {
     { label: 'Comercial', items: [
       item('Dashboard', '/dashboard', 'dashboard'), item('Mi tablero comercial', '/dashboard/tablero-comercial', 'trending'),
       item('Mis Clientes', '/dashboard/clientes', 'users'),
-      item('Catálogo', '/dashboard/catalogo', 'catalog'), item('Bono Plataforma', '/dashboard/comisiones', 'money'),
+      item('Bono Plataforma', '/dashboard/comisiones', 'money'), item('Mis leads', '/dashboard/leads', 'userPlus'),
     ] },
     { label: 'Operación', items: [
       item('Gestión Pedidos', '/dashboard/gestion-pedidos', 'package'), item('Compras con proveedores', '/dashboard/compras', 'truck'),
