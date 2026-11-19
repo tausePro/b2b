@@ -63,6 +63,12 @@ export default function NuevoLeadDialog({ open, advisors, canAssign, onClose, on
           <label className="block text-sm font-medium">Correo<input name="email" type="email" maxLength={254} autoComplete="off" className={input} /></label>
         </div>
         <label className="block text-sm font-medium">¿Qué necesita?<textarea name="mensaje" rows={3} maxLength={2000} className={`${input} py-2`} /></label>
+        <label className="block text-sm font-medium">Estado
+          <select name="estado" defaultValue="nuevo" className={input}>
+            <option value="nuevo">Nuevo: aún no lo he contactado</option>
+            <option value="contactado">Contactado: ya hablé con esta persona</option>
+          </select>
+        </label>
         {canAssign && (
           <label className="block text-sm font-medium">Asignar a
             <select name="asignado_a" defaultValue="" className={input}>
