@@ -83,8 +83,20 @@ export function leadAttribution(lead: Pick<LeadTrackingInput, 'gclid' | 'utm_sou
 export const hoursSince = (iso: string, now: number) => (now - Date.parse(iso)) / 3_600_000;
 
 /** Lead nuevo que lleva más del plazo sin contactar. */
-export function isLeadOverdue(lead: Pick<LeadTrackingInput, 'estado' | 'created_at'>, now: number, slaHours = LEAD_CONTACT_SLA_HOURS): boolean {
-  return lead.estado === 'nuevo' && hoursSince(lead.created_at, now) > slaHours;
+/** Lead nuevo del sitio web que lleva más del plazo sin contactar (los de prospección los registra la propia asesora). */
+export function isLeadOverdue(lead: Pick<LeadTrackingInput, 'estado' | 'created_at'> & { fuente?: string }, now: number, slaHours = LEAD_CONTACT_SLA_HOURS): boolean {
+  return lead.estado === 'nuevo' && lead.fuente !== MANUAL_LEAD_SOURCE && hoursSince(lead.created_at, now) > slaHours;
+}
+
+export type LeadOrigin = 'web' | 'prospeccion' | 'todos';
+export const LEAD_ORIGINS: { value: LeadOrigin; label: string }[] = [
+  { value: 'web', label: 'Sitio web' }, { value: 'prospeccion', label: 'Prospección' }, { value: 'todos', label: 'Todos' },
+];
+export const isManualLead = (lead: { fuente: string }) => lead.fuente === MANUAL_LEAD_SOURCE;
+
+/** Separa los leads del sitio web (formularios, WhatsApp, Empaques) de los que registran las asesoras. */
+export function filterByOrigin<T extends { fuente: string }>(leads: readonly T[], origin: LeadOrigin): T[] {
+  return origin === 'todos' ? [...leads] : leads.filter((lead) => isManualLead(lead) === (origin === 'prospeccion'));
 }
 
 export function formatTimeAgo(iso: string, now: number): string {

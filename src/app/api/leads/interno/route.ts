@@ -27,6 +27,8 @@ export async function POST(request: NextRequest) {
   try {
     const contact = validateLeadContact({ nombre: body.nombre, empresa: body.empresa, email: body.email, telefono: body.telefono, mensaje: body.mensaje });
     if (!await leadTrackingEnabled()) return json({ error: LEAD_TRACKING_MIGRATION_MESSAGE }, 409);
+    // Estado inicial: si la asesora ya habló con el prospecto lo registra como contactado.
+    const estado = body.estado === 'contactado' ? 'contactado' : 'nuevo';
     const requested = typeof body.asignado_a === 'string' && body.asignado_a ? body.asignado_a.toLowerCase() : null;
     if (requested && !LEAD_ID_PATTERN.test(requested)) return json({ error: 'Asesora inválida.' }, 400);
     const advisors = await loadLeadAdvisors();
@@ -48,13 +50,17 @@ export async function POST(request: NextRequest) {
     const { data: actor } = await client.from('usuarios').select('nombre, apellido').eq('id', auth.actor.id).maybeSingle();
     const actorName = [actor?.nombre, actor?.apellido].filter(Boolean).join(' ') || 'una asesora';
     const { data: lead, error } = await client.from('leads').insert({
-      ...contact, fuente: MANUAL_LEAD_SOURCE, estado: 'nuevo', whatsapp_enviado: false, asignado_a: assignee?.id ?? null,
+      ...contact, fuente: MANUAL_LEAD_SOURCE, estado, contactado_at: estado === 'contactado' ? new Date().toISOString() : null,
+      whatsapp_enviado: false, asignado_a: assignee?.id ?? null,
     }).select().single();
     if (error) throw error;
-    await recordLeadEvents([{
-      lead_id: lead.id, tipo: 'asignacion', usuario_id: auth.actor.id,
-      detalle: assignee ? (assignee.id === auth.actor.id ? `Registrado por ${actorName}` : `Registrado por ${actorName} y asignado a ${assignee.nombre}`) : `Registrado por ${actorName}, sin asignar`,
-    }]);
+    await recordLeadEvents([
+      {
+        lead_id: lead.id, tipo: 'asignacion', usuario_id: auth.actor.id,
+        detalle: assignee ? (assignee.id === auth.actor.id ? `Registrado por ${actorName}` : `Registrado por ${actorName} y asignado a ${assignee.nombre}`) : `Registrado por ${actorName}, sin asignar`,
+      },
+      ...(estado === 'contactado' ? [{ lead_id: lead.id, tipo: 'estado' as const, usuario_id: auth.actor.id, detalle: 'Registrado como contactado' }] : []),
+    ]);
     if (assignee && assignee.id !== auth.actor.id) {
       await safeSendPushToUsers([{ usuarioId: assignee.id, payload: buildPushPayload({
         title: 'Te asignaron un lead', body: [lead.nombre, lead.empresa, lead.telefono].filter(Boolean).join(' · '),

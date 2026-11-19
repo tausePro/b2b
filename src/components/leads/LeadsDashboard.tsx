@@ -8,8 +8,9 @@ import LeadDetail, { AttributionChip, type LeadRow } from '@/components/leads/Le
 import { normalizeSearchText } from '@/lib/busqueda/buscar';
 import { useLightDismiss } from '@/lib/ui/useLightDismiss';
 import {
-  ATTRIBUTION_LABELS, LEAD_CONTACT_SLA_HOURS, LEAD_CONVERSION_GOAL, LEAD_ESTADOS, LEAD_PERIOD_DAYS, buildAdvisorLeadStats, buildLeadSummary, buildLeadsCsv,
-  formatHours, formatTimeAgo, hoursSince, isLeadOverdue, leadAttribution, leadSource, whatsappLink, type LeadAttribution, type LeadEstado,
+  ATTRIBUTION_LABELS, LEAD_CONTACT_SLA_HOURS, LEAD_CONVERSION_GOAL, LEAD_ESTADOS, LEAD_ORIGINS, LEAD_PERIOD_DAYS, buildAdvisorLeadStats, buildLeadSummary, buildLeadsCsv,
+  filterByOrigin, formatHours, formatTimeAgo, hoursSince, isLeadOverdue, leadAttribution, leadSource, whatsappLink,
+  type LeadAttribution, type LeadEstado, type LeadOrigin,
 } from '@/lib/leads/seguimiento';
 import NuevoLeadDialog from '@/components/leads/NuevoLeadDialog';
 import { cn } from '@/lib/utils';
@@ -66,6 +67,8 @@ export default function LeadsDashboard() {
   const [view, setView] = useState<'lista' | 'tablero'>('lista');
   const [advisorFilter, setAdvisorFilter] = useState('todas');
   const [creating, setCreating] = useState(false);
+  // Origen: por defecto Dirección ve el sitio web (indicadores de pauta y plazo de 2 h); la asesora ve todos sus leads.
+  const [originChoice, setOriginChoice] = useState<LeadOrigin | null>(null);
   // Enlace directo desde los correos de aviso: ?lead=<uuid>
   const [selectedId, setSelectedId] = useState<string | null>(() => (typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('lead')));
   const wide = useSyncExternalStore(subscribeWide, () => window.matchMedia(WIDE_QUERY).matches, () => true);
@@ -100,9 +103,12 @@ export default function LeadsDashboard() {
 
   const current = data?.key === key ? data : null;
   const now = current?.now ?? 0;
-  const leads = useMemo(() => current?.leads ?? [], [current]);
+  const allLeads = useMemo(() => current?.leads ?? [], [current]);
+  const origin: LeadOrigin = originChoice ?? (current?.ownOnly ? 'todos' : 'web');
+  const leads = useMemo(() => filterByOrigin(allLeads, origin), [allLeads, origin]);
   const summary = useMemo(() => buildLeadSummary(leads, now), [leads, now]);
-  const base = showAll ? leads : leads.filter((lead) => Date.parse(lead.created_at) >= now - LEAD_PERIOD_DAYS * 86_400_000);
+  const inPeriod = (lead: LeadRow) => showAll || Date.parse(lead.created_at) >= now - LEAD_PERIOD_DAYS * 86_400_000;
+  const base = leads.filter(inPeriod);
   const sources = [...new Set(base.map((lead) => leadSource(lead.fuente).label))].sort((a, b) => a.localeCompare(b, 'es'));
   const needle = normalizeSearchText(search);
   const matchesChip = (lead: LeadRow, value: Chip) => value === 'todos' || (value === 'atrasados' ? isLeadOverdue(lead, now) : lead.estado === value);
@@ -113,7 +119,9 @@ export default function LeadsDashboard() {
   const filtered = base.filter((lead) => matchesChip(lead, chip) && matchesOthers(lead));
   const chipCount = (value: Chip) => base.filter((lead) => matchesChip(lead, value) && matchesOthers(lead)).length;
   const maxSource = Math.max(1, ...summary.sources.map((source) => source.count));
-  const advisorStats = current && !current.ownOnly && current.tracking ? buildAdvisorLeadStats(base, now) : [];
+  // La gestión por asesora incluye todo lo que maneja cada una (sitio web y prospección).
+  const advisorStats = current && !current.ownOnly && current.tracking ? buildAdvisorLeadStats(allLeads.filter(inPeriod), now) : [];
+  const originCount = (value: LeadOrigin) => filterByOrigin(allLeads.filter(inPeriod), value).length;
 
   const updateLead = (patch: Partial<LeadRow> & { id: string }) => setData((previous) => previous && { ...previous, leads: previous.leads.map((lead) => (lead.id === patch.id ? { ...lead, ...patch } : lead)) });
   const removeLead = (id: string) => { setData((previous) => previous && { ...previous, leads: previous.leads.filter((lead) => lead.id !== id) }); setSelectedId(null); };
@@ -164,7 +172,9 @@ export default function LeadsDashboard() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Leads</h1>
-          <p className="mt-1 text-sm text-muted">{current?.ownOnly ? 'Leads asignados a ti' : 'Contactos del sitio público y Empaques'} · {showAll ? 'todos los registros' : `últimos ${LEAD_PERIOD_DAYS} días`}</p>
+          <p className="mt-1 text-sm text-muted">
+            {current?.ownOnly ? 'Tus leads asignados · ' : ''}{origin === 'web' ? 'Contactos del sitio público y Empaques' : origin === 'prospeccion' ? 'Prospección registrada por las asesoras' : 'Sitio web y prospección'} · {showAll ? 'todos los registros' : `últimos ${LEAD_PERIOD_DAYS} días`}
+          </p>
         </div>
         <div className="flex flex-wrap gap-2">
           {current?.tracking && <button type="button" onClick={() => setCreating(true)} className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-foreground px-4 text-sm font-semibold text-white hover:bg-foreground/90"><UserPlus className="h-4 w-4" aria-hidden="true" />Nuevo lead</button>}
@@ -180,11 +190,23 @@ export default function LeadsDashboard() {
       {current?.warnings.map((warning) => <p key={warning} className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{warning}</p>)}
 
       {current && !current.error && <>
+        <div role="group" aria-label="Origen de los leads" className="inline-flex flex-wrap rounded-xl border border-border bg-white p-1">
+          {LEAD_ORIGINS.map((option) => (
+            <button key={option.value} type="button" aria-pressed={origin === option.value} onClick={() => setOriginChoice(option.value)}
+              className={cn('min-h-10 rounded-lg px-3.5 text-sm font-medium focus-visible:outline-2 focus-visible:outline-primary', origin === option.value ? 'bg-foreground text-white' : 'text-muted hover:text-foreground')}>
+              {option.label} <span className="ml-1 tabular-nums opacity-70">{originCount(option.value)}</span>
+            </button>
+          ))}
+        </div>
+
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <article className={cn(card, 'p-5', summary.overdue > 0 && 'border-red-200')}>
             <div className="flex items-start justify-between"><h2 className="text-sm text-muted">Sin contactar</h2><Inbox className="h-5 w-5 text-red-500" aria-hidden="true" /></div>
             <p className="mt-2 text-3xl font-semibold tabular-nums">{summary.uncontacted}</p>
-            <p className={cn('mt-2 text-xs', summary.overdue > 0 ? 'text-red-700' : 'text-muted')}>{summary.overdue > 0 ? `${summary.overdue} superan ${LEAD_CONTACT_SLA_HOURS} h de respuesta` : `Todos dentro del plazo de ${LEAD_CONTACT_SLA_HOURS} h`}</p>
+            <p className={cn('mt-2 text-xs', summary.overdue > 0 ? 'text-red-700' : 'text-muted')}>
+              {origin === 'prospeccion' ? 'Prospectos registrados que aún no se contactan'
+                : summary.overdue > 0 ? `${summary.overdue} del sitio web superan ${LEAD_CONTACT_SLA_HOURS} h de respuesta` : `Sitio web: todos dentro del plazo de ${LEAD_CONTACT_SLA_HOURS} h`}
+            </p>
           </article>
           <article className={cn(card, 'p-5')}>
             <div className="flex items-start justify-between"><h2 className="text-sm text-muted">Leads · {LEAD_PERIOD_DAYS} días</h2><UserPlus className="h-5 w-5 text-primary" aria-hidden="true" /></div>
