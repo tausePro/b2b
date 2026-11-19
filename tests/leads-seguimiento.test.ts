@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  buildAdvisorLeadStats, buildLeadSummary, formatHours, formatTimeAgo, isLeadOverdue, leadAttribution, leadSource, MANUAL_LEAD_SOURCE, whatsappLink, type LeadTrackingInput,
+  buildAdvisorLeadStats, buildLeadSummary, filterByOrigin, formatHours, formatTimeAgo, isLeadOverdue, leadAttribution, leadSource, MANUAL_LEAD_SOURCE, whatsappLink,
+  type LeadTrackingInput,
 } from '../src/lib/leads/seguimiento';
 
 test('leads: gestión por asesora y registro manual', () => {
@@ -16,9 +17,21 @@ test('leads: gestión por asesora y registro manual', () => {
     lead('convertido', '2026-11-10T10:00:00Z', 'v', { contactado_at: '2026-11-10T10:30:00Z' }), lead('nuevo', '2026-11-17T19:00:00Z', null),
   ], now);
   assert.deepEqual(stats.map((row) => [row.name, row.total, row.uncontacted, row.overdue, row.contacted, row.converted, row.conversionPercent]), [
-    ['VANESA PATIÑO GALVIS', 3, 1, 1, 1, 1, 33.3], ['Sin asignar', 1, 1, 0, 0, 0, 0],
+    // Los leads de prospección no entran en el plazo de 2 horas: ninguno queda "fuera de plazo".
+    ['VANESA PATIÑO GALVIS', 3, 1, 0, 1, 1, 33.3], ['Sin asignar', 1, 1, 0, 0, 0, 0],
   ]);
   assert.equal(formatHours(stats[0].averageResponseHours!), '1 h');
+});
+
+test('leads: la prospección se separa del sitio web y no entra en el plazo de 2 horas', () => {
+  const now = Date.parse('2026-11-18T22:00:00Z');
+  const web = { estado: 'nuevo', created_at: '2026-11-18T18:00:00Z', fuente: 'empaques_hero' };
+  const manual = { ...web, fuente: MANUAL_LEAD_SOURCE };
+  assert.equal(isLeadOverdue(web, now), true);
+  assert.equal(isLeadOverdue(manual, now), false);
+  assert.deepEqual(filterByOrigin([web, manual], 'web'), [web]);
+  assert.deepEqual(filterByOrigin([web, manual], 'prospeccion'), [manual]);
+  assert.equal(filterByOrigin([web, manual], 'todos').length, 2);
 });
 
 test('leads: las fuentes reales se agrupan en orígenes legibles', () => {
