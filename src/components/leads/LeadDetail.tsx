@@ -20,6 +20,8 @@ export interface LeadRow extends LeadTrackingInput {
   landing_url: string | null;
   click_at: string | null;
   empaques_personalizado: EmpaquesPersonalizadosDetalle | null;
+  /** Última nota de gestión (o la nota del sistema anterior), visible en la lista. */
+  ultima_nota?: { detalle: string; created_at: string | null; autor: string | null } | null;
 }
 export interface LeadEventView { id: string; tipo: string; detalle: string; created_at: string; autor: string | null }
 
@@ -81,7 +83,10 @@ export default function LeadDetail({ leadId, now, tracking, canAssign, advisors,
       const response = await fetch('/api/leads', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: lead.id, ...body }) });
       const data = await response.json().catch(() => null);
       if (!response.ok) throw new Error(data?.error ?? 'No se pudo guardar.');
-      onUpdated({ id: lead.id, ...data.lead, asignado_nombre: data.lead?.asignado_nombre === undefined ? lead.asignado_nombre : data.lead.asignado_nombre });
+      onUpdated({
+        id: lead.id, ...data.lead, asignado_nombre: data.lead?.asignado_nombre === undefined ? lead.asignado_nombre : data.lead.asignado_nombre,
+        ...(name === 'nota' ? { ultima_nota: { detalle: String(body.nota ?? body.notas ?? ''), created_at: new Date().toISOString(), autor: 'Tú' } } : {}),
+      });
       setMessage({ tone: 'ok', text: success });
       if (name === 'nota') setNote('');
       setRevision((value) => value + 1);
