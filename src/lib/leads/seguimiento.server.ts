@@ -74,6 +74,25 @@ export async function loadLeadEvents(lead: { id: string; created_at: string; fue
   return events.sort((a, b) => b.created_at.localeCompare(a.created_at));
 }
 
+export interface LeadLatestNote { detalle: string; created_at: string | null; autor: string | null }
+
+/** Última nota de gestión de cada lead (para mostrarla en la lista, como antes del rediseño). */
+export async function loadLatestNotes(leadIds: readonly string[]): Promise<Map<string, LeadLatestNote>> {
+  const notes = new Map<string, LeadLatestNote>();
+  const client = admin();
+  for (let index = 0; index < leadIds.length; index += 150) {
+    const { data, error } = await client.from('lead_eventos').select('lead_id, detalle, created_at, usuario:usuarios(nombre, apellido)')
+      .eq('tipo', 'nota').in('lead_id', leadIds.slice(index, index + 150)).order('created_at', { ascending: false }).limit(2000);
+    if (error) throw new Error(error.message);
+    for (const row of data ?? []) {
+      if (notes.has(row.lead_id)) continue;
+      const user = Array.isArray(row.usuario) ? row.usuario[0] : row.usuario;
+      notes.set(row.lead_id, { detalle: row.detalle, created_at: row.created_at, autor: fullName(user as { nombre?: string | null; apellido?: string | null } | null) });
+    }
+  }
+  return notes;
+}
+
 export async function recordLeadEvents(rows: { lead_id: string; tipo: 'nota' | 'estado' | 'asignacion'; detalle: string; usuario_id: string }[]) {
   if (rows.length === 0) return;
   const { error } = await admin().from('lead_eventos').insert(rows);

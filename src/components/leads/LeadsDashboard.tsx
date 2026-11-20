@@ -144,6 +144,12 @@ export default function LeadsDashboard() {
               {overdue && <span className="rounded-md bg-red-50 px-1.5 py-0.5 text-[11px] font-medium text-red-700">Sin contactar · {Math.floor(hoursSince(lead.created_at, now))} h</span>}
             </p>
             {!compact && lead.mensaje && <p className="mt-1 truncate text-sm text-foreground/80">{lead.mensaje}</p>}
+            {lead.ultima_nota && (
+              <p className={cn('mt-1.5 rounded-lg bg-amber-50/70 px-2.5 py-1.5 text-xs text-foreground/80', compact ? 'line-clamp-2' : 'truncate')}>
+                <span className="font-semibold">Nota:</span> {lead.ultima_nota.detalle}
+                {lead.ultima_nota.created_at && <span className="text-muted"> · {formatTimeAgo(lead.ultima_nota.created_at, now)}{lead.ultima_nota.autor ? ` · ${lead.ultima_nota.autor}` : ''}</span>}
+              </p>
+            )}
             {!compact && (
               <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
                 <span className="rounded-md bg-background-light px-2 py-0.5 font-medium">{leadSource(lead.fuente).label}</span>

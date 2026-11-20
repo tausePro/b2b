@@ -8,7 +8,8 @@ const LEAD_MANAGER_ROLES = ['super_admin', 'direccion', 'editor_contenido'] as c
 import { LEAD_ID_PATTERN, parseAdminLeadQuery } from '@/lib/leads-query';
 import { safeEnqueueLeadNotifications } from '@/lib/notifications/leads';
 import {
-  LEAD_TRACKING_MIGRATION_MESSAGE, leadTrackingEnabled, loadAdvisorNames, loadLeadAdvisors, loadLeadEvents, recordLeadEvents,
+  LEAD_TRACKING_MIGRATION_MESSAGE, leadTrackingEnabled, loadAdvisorNames, loadLatestNotes, loadLeadAdvisors, loadLeadEvents, recordLeadEvents,
+  type LeadLatestNote,
 } from '@/lib/leads/seguimiento.server';
 import { LEAD_ESTADOS } from '@/lib/leads/seguimiento';
 import { safeSendPushToUsers } from '@/lib/push/push.server';
@@ -350,7 +351,9 @@ export async function GET(request: NextRequest) {
     // Seguimiento (migración 056): asesora asignada, historial y lista de asesoras para asignar.
     const assignedIds = leads.map((lead) => lead.asignado_a).filter((value): value is string => typeof value === 'string');
     const advisorNames = tracking ? await loadAdvisorNames(assignedIds).catch(() => new Map<string, string>()) : new Map<string, string>();
+    const latestNotes = tracking && !leadId ? await loadLatestNotes(leads.map((lead) => lead.id)).catch(() => new Map<string, LeadLatestNote>()) : new Map<string, LeadLatestNote>();
     const results = leads.map((lead) => ({
+      ultima_nota: latestNotes.get(lead.id) ?? (lead.notas ? { detalle: lead.notas, created_at: null, autor: null } : null),
       ...lead,
       empaques_personalizado: detailByLeadId.get(lead.id) ?? null,
       asignado_nombre: typeof lead.asignado_a === 'string' ? advisorNames.get(lead.asignado_a) ?? null : null,
