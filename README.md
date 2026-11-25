@@ -133,6 +133,11 @@ La utilidad bruta de ventas equivale al margen firmado de Odoo (`margin_signed`)
 
 Conciliación de octubre de 2026: venta 607.606.414,28, costo 400.610.438,47 y utilidad 206.995.975,81, iguales a Odoo. De las 41 líneas con costo cero, 33 son servicios (7.123.920) y 8 mercancía por revisar (1.966.300). La respuesta de octubre pasó de 714.681 a 245.392 bytes.
 
+## Precios por cliente para asesoras (v2.14.56)
+
+- "Productos por cliente" (`/dashboard/productos-cliente`) también para asesoras, limitado a sus clientes asignados en Odoo (`res.partner.user_id` = su `odoo_user_id`; el buscador filtra y el detalle responde 403 si el cliente no es suyo; sin vendedor vinculado responde 409). Dirección y Super Admin ven todos.
+- Por producto: último precio unitario facturado (sin IVA, con descuento) con su fecha, y promedio ponderado del período (valor facturado / cantidad, sin notas crédito), con marca si el último subió o bajó más de 0,5 %. El Excel incluye ambos de referencia. Solo precio de venta: sin costo ni margen.
+
 ## Leads: sitio web separado de la prospección (v2.14.54)
 
 - En Leads, el selector "Sitio web / Prospección / Todos" (`filterByOrigin`) define los indicadores, el embudo, el origen y la lista. Dirección ve por defecto el sitio web y la asesora todos sus leads. La prospección (`registro_asesora`) no entra en el plazo de 2 horas (`isLeadOverdue`). "Gestión por asesora" cuenta ambos orígenes.

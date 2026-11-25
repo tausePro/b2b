@@ -10,6 +10,15 @@ import {
 const dateFormatter = new Intl.DateTimeFormat('es-CO', { dateStyle: 'medium', timeZone: 'UTC' });
 const quantity = new Intl.NumberFormat('es-CO', { maximumFractionDigits: 3 });
 const formatDate = (value: string | null) => (value ? dateFormatter.format(new Date(`${value}T00:00:00Z`)) : '—');
+const money = new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 2 });
+const formatPrice = (value: number | null) => (value === null ? '—' : money.format(value));
+/** Último precio frente al promedio del período: marca si subió o bajó más de 0,5 %. */
+function priceTrend(last: number | null, average: number | null) {
+  if (last === null || average === null || average <= 0) return null;
+  const change = (last - average) / average * 100;
+  if (Math.abs(change) < 0.5) return null;
+  return { up: change > 0, label: `${change > 0 ? '▲' : '▼'} ${Math.abs(change).toLocaleString('es-CO', { maximumFractionDigits: 1 })} % vs. promedio` };
+}
 const cell = 'px-4 py-3 text-right tabular-nums align-top';
 const heading = 'px-4 py-3 text-right font-medium text-muted';
 const input = 'mt-1 block w-full rounded-lg border border-border bg-white px-3 py-2 text-sm';
@@ -76,7 +85,7 @@ export default function ProductosCliente({ initialCustomerId = null }: { initial
     <div className="space-y-6">
       <header>
         <h1 className="flex items-center gap-2 text-2xl font-bold text-foreground"><PackageSearch className="h-6 w-6 text-primary" aria-hidden="true" />Productos por cliente</h1>
-        <p className="mt-1 text-sm text-muted">Busca un cliente de Odoo, revisa los productos que ha comprado y descarga la base para crear su lista de precios.</p>
+        <p className="mt-1 text-sm text-muted">Busca un cliente de Odoo, revisa los productos que ha comprado y a qué precio, y descarga la base para su lista de precios. Las asesoras ven solo sus clientes asignados en Odoo.</p>
       </header>
 
       {!detail && <>
@@ -131,7 +140,7 @@ export default function ProductosCliente({ initialCustomerId = null }: { initial
             <div className="overflow-auto rounded-xl border border-border bg-white" style={{ maxBlockSize: 'min(720px, 80vh)' }} role="region" aria-labelledby="productos-cliente-tabla" tabIndex={0}>
               <table className="w-full border-separate border-spacing-0 text-sm">
                 <caption id="productos-cliente-tabla" className="px-4 py-3 text-left font-semibold">Productos comprados del {formatDate(data.range.from)} al {formatDate(data.range.to)}</caption>
-                <thead className="sticky top-0 z-10 bg-background-light"><tr><th scope="col" className="px-4 py-3 text-left font-medium text-muted">SKU</th><th scope="col" className="px-4 py-3 text-left font-medium text-muted">Producto</th><th scope="col" className={heading}>Cantidad (neta)</th><th scope="col" className={heading}>Veces comprado</th><th scope="col" className={heading}>Última compra</th></tr></thead>
+                <thead className="sticky top-0 z-10 bg-background-light"><tr><th scope="col" className="px-4 py-3 text-left font-medium text-muted">SKU</th><th scope="col" className="px-4 py-3 text-left font-medium text-muted">Producto</th><th scope="col" className={heading}>Cantidad (neta)</th><th scope="col" className={heading}>Veces comprado</th><th scope="col" className={heading}>Última compra</th><th scope="col" className={heading}>Último precio (sin IVA)</th><th scope="col" className={heading}>Promedio</th></tr></thead>
                 <tbody>{data.products.map(product => (
                   <tr key={product.productId}>
                     <td className="border-t border-border px-4 py-3 align-top font-mono text-xs">{product.sku ?? '—'}</td>
@@ -139,6 +148,12 @@ export default function ProductosCliente({ initialCustomerId = null }: { initial
                     <td className={`${cell} border-t border-border`}>{quantity.format(product.quantity)} {product.unitName}{product.mixedUnits && <span className="mt-1 block text-xs text-amber-800">Unidades mixtas</span>}</td>
                     <td className={`${cell} border-t border-border`}>{product.purchaseCount}</td>
                     <td className={`${cell} border-t border-border`}>{formatDate(product.lastPurchase)}</td>
+                    <td className={`${cell} border-t border-border`}>
+                      <span className="font-semibold">{formatPrice(product.lastUnitPrice)}</span>
+                      {product.lastPriceDate && <span className="block text-xs text-muted">{formatDate(product.lastPriceDate)}</span>}
+                      {(() => { const trend = priceTrend(product.lastUnitPrice, product.averageUnitPrice); return trend && <span className={`block text-xs ${trend.up ? 'text-amber-800' : 'text-emerald-700'}`}>{trend.label}</span>; })()}
+                    </td>
+                    <td className={`${cell} border-t border-border`}>{formatPrice(product.averageUnitPrice)}</td>
                   </tr>
                 ))}</tbody>
               </table>
